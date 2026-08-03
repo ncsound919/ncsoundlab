@@ -1030,12 +1030,11 @@ export default function App() {
       return [...prev, newLayer];
     });
     setSelectedLayerId(newLayer.id);
-    return newLayer.id;
-
     if (audioBuffer) {
       // Direct call is safer than arbitrary timeout
       audioEngine.playLayer(newLayer);
     }
+    return newLayer.id;
   };
 
   const handleAddLayerWithPreset = (preset: any) => {

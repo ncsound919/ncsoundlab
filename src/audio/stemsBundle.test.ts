@@ -26,6 +26,13 @@ describe('stemsBundle — buildMarkersCsv', () => {
     expect(csv).toContain('"Beat ""1"""');
   });
 
+  it('collapses newlines in marker names so rows never split', () => {
+    const csv = buildMarkersCsv([{ name: 'Beat\n1\r\nA', startSec: 0 }]);
+    const lines = csv.trim().split('\n');
+    expect(lines).toHaveLength(2); // header + one data row
+    expect(lines[1]).toContain('Beat 1 A');
+  });
+
   it('emits timecodes for each row', () => {
     const csv = buildMarkersCsv([
       { name: 'Intro', startSec: 0 },

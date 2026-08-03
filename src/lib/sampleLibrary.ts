@@ -212,7 +212,7 @@ export async function saveLibrarySample(input: SaveLibrarySampleInput): Promise<
   const row: StoredSampleLibrarySample = {
     id,
     name: sanitiseSampleName(input.name),
-    fileName: input.fileName || deriveCleanFileName(input.fileName),
+    fileName: (input.fileName && input.fileName.trim()) || deriveCleanFileName(input.name),
     folderId: input.folderId ?? null,
     category: input.category || analysis.suggestedCategory || 'Perc',
     tags: Array.from(new Set((input.tags || []).map((t) => t.trim()).filter(Boolean))),
@@ -277,6 +277,9 @@ export async function updateLibrarySample(id: string, patch: UpdateLibrarySample
 
 export async function deleteLibrarySample(id: string): Promise<void> {
   await db.sampleLibrarySamples.delete(id);
+  // Always evict any cached AudioBuffer so a future import with the same id
+  // (or just to bound memory) does not replay stale decoded PCM.
+  clearLibrarySampleBufferCache(id);
 }
 
 // ---------------------------------------------------------------------------

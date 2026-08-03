@@ -141,9 +141,11 @@ function makePatterns(layerIds: string[]): Record<PatternId, Pattern> {
 const emptyArrangement = (): Arrangement => ({ totalBeats: 0, clips: [], tempoMap: [] });
 
 /**
- * Compute the length of a clip in beats. Each pattern is `stepLength / 4`
- * beats long (a 16-step pattern = 4 beats at 4/4). The clip's `beats`
- * already accounts for `loops`.
+ * Compute the length of a clip in beats. IMPORTANT invariant: `clip.beats` is
+ * the TOTAL rendered length — it already includes `loops` (see `ArrangementClip`
+ * in types.ts: "pattern length × loops"). So a 4-beat pattern looped 3× has
+ * `beats: 12, loops: 3`. `startBeat + beats` is therefore the true end; do NOT
+ * multiply by `loops` here or clips will double-count.
  */
 const clipEnd = (clip: ArrangementClip): number =>
   clip.startBeat + Math.max(0, clip.beats);

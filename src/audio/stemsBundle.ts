@@ -38,7 +38,9 @@ export const buildMarkersCsv = (rows: MarkerRow[], fps = 30): string => {
   const lines = rows.map((r) => {
     const start = secondsToTimecode(r.startSec, fps);
     const length = secondsToTimecode(r.lengthSec ?? 0, fps);
-    const name = r.name.replace(/"/g, '""');
+    // Escape quotes (RFC 4180) and collapse newlines so a marker name can
+    // never split the CSV row.
+    const name = r.name.replace(/"/g, '""').replace(/[\r\n]+/g, ' ');
     return `"${name}",${start},${length},${start}`;
   });
   return [header, ...lines].join('\n') + '\n';

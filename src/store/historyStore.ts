@@ -105,10 +105,12 @@ export const useHistoryStore = create<HistoryStore>((set, get) => {
     },
 
     cancelTransaction: () => {
-      // Drops the most recent pending commit (started by beginTransaction),
-      // undoing any edits made inside the transaction. Used by Escape / undo
-      // mid-edit flows. Pops the last history entry but does NOT push onto
-      // future (the user can still redo manually if desired).
+      // Discards the most recent pending commit (the coalesced result of all
+      // commits made since `beginTransaction`). This makes the transaction
+      // vanish from history WITHOUT pushing onto `future`, so an explicit
+      // `undo()` before cancel would re-apply it. Callers that want the live
+      // state rolled back too must re-apply the pre-transaction snapshot via
+      // the applier themselves — this store only manages the history stack.
       const { past } = get();
       if (past.length === 0) return;
       set({ past: past.slice(0, -1), transactionDepth: 0 });

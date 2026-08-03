@@ -176,13 +176,17 @@ export const detectBpm = (
   scores.sort((a, b) => b.score - a.score);
   const best = scores[0];
 
-  // Try the top candidates as either "1× lag = one beat" or "2× lag =
-  // one beat". Prefer candidates whose BPM lands in a common range.
+  // Try each top candidate with three interpretations of `lag`:
+  //   mul=0.5 — the lag is HALF a beat (a strong 1/2-note onset). The actual
+  //              beat is twice as long, so the true BPM is half the naive.
+  //   mul=1   — the lag is one beat. Direct.
+  //   mul=2   — the lag is TWO beats (weak onsets). The true BPM is double.
+  // Prefer candidates whose BPM lands in a common range.
   const COMMON_BPM_MIN = 70;
   const COMMON_BPM_MAX = 180;
   const candidates: { bpm: number; lag: number; score: number; mul: number }[] = [];
   for (const s of scores.slice(0, 20)) {
-    for (const mul of [1, 2]) {
+    for (const mul of [0.5, 1, 2]) {
       const bpm = (mul * 60 * buffer.sampleRate) / (s.lag * windowSize);
       if (bpm >= minBpm && bpm <= maxBpm * 2) {
         candidates.push({ bpm, lag: s.lag, score: s.score, mul });

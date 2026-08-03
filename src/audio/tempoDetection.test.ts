@@ -119,6 +119,15 @@ describe('tempoDetection — detectBpm', () => {
     expect(Math.abs(bpm - 140)).toBeLessThanOrEqual(4);
   });
 
+  it('recovers 90 BPM within ±4 BPM (regression: half-beat harmonic)', () => {
+    // 90 BPM = 0.667s/beat. Strong 1/2-beat onset peaks often dominate the
+    // autocorr at half the beat period. The detector must recognise this and
+    // halve the naive BPM rather than doubling it.
+    const buf = makeClickBuffer(90);
+    const { bpm } = detectBpm(buf);
+    expect(Math.abs(bpm - 90)).toBeLessThanOrEqual(4);
+  });
+
   it('returns multiple candidates', () => {
     const buf = makeClickBuffer(120);
     const result = detectBpm(buf);

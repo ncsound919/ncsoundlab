@@ -1,11 +1,8 @@
 import * as Tone from 'tone';
 import { audioEngine } from '../../lib/audioEngine';
 
-type Listener = (info: { type: 'tick' | 'bar'; position: number }) => void;
-
 class TransportHost {
   private initialized = false;
-  private listeners = new Set<Listener>();
 
   init(): void {
     if (this.initialized) return;
@@ -19,6 +16,10 @@ class TransportHost {
 
   isInitialized(): boolean {
     return this.initialized;
+  }
+
+  reset(): void {
+    this.initialized = false;
   }
 
   setBpm(bpm: number): void {
@@ -51,13 +52,6 @@ class TransportHost {
   getPosition(): number {
     return Tone.Transport.seconds;
   }
-
-  onTick(listener: Listener): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
 }
 
 const host = new TransportHost();
@@ -74,6 +68,5 @@ export function getTransport(): TransportHost {
 }
 
 export function resetTransport(): void {
-  (host as any).initialized = false;
-  (host as any).listeners = new Set();
+  host.reset();
 }

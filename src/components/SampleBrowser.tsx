@@ -18,6 +18,7 @@ import {
   renameLibraryFolder,
   deleteLibraryFolder,
   fetchLibrarySamples,
+  fetchLibrarySample,
   decodeLibrarySample,
   deleteLibrarySample,
   updateLibrarySample,
@@ -262,7 +263,7 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
             analysis,
             sizeBytes: file.size,
           });
-          const saved = await (await import('../lib/sampleLibrary')).fetchLibrarySample(id);
+          const saved = await fetchLibrarySample(id);
           if (saved) imported.push(saved);
         } catch (err: any) {
           setErrors((prev) => [...prev, `${file.name}: ${err?.message || 'decode failed'}`]);
