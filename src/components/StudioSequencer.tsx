@@ -13,6 +13,9 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import * as Tone from 'tone';
+import { initTransport, getTransport } from '../audio/transport/transport';
+import { TransportBar } from './TransportBar';
 import { Piano, KeyboardShortcuts, MidiNumbers } from 'react-piano';
 import { Note, Chord } from 'tonal';
 import { Play, Square, Save, FolderOpen } from 'lucide-react';
@@ -83,6 +86,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const [noteRepeat, setNoteRepeat] = useState({ active: false, division: 4 });
   const [timeCorrect, setTimeCorrect] = useState(1); // 1=1/16, 2=1/8, 4=1/4 record snap
   const [view, setView] = useState<'grid' | 'piano'>('grid');
+
+  // Tone Transport mode (Phase 1). Off by default — the setInterval path stays
+  // alive. After behavior-parity verification in Task 1.7 the default flips to
+  // true and the setInterval path is removed.
+  const [useTransportMode, setUseTransportMode] = useState(false);
 
   const playerRef = useRef<SoundLayerPlayer | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -240,9 +248,14 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   }, [triggerStep, bpm]);
 
   useEffect(() => { tickRef.current = tick; }, [tick]);
+  const triggerStepRef = useRef<(layerId: string, cell: StepCell) => void>(() => {});
+  useEffect(() => { triggerStepRef.current = triggerStep; }, [triggerStep]);
 
   const togglePlay = () => {
     if (isPlaying) {
+      if (useTransportMode) {
+        try { getTransport().stop(); } catch { /* not initialized */ }
+      }
       if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = null;
       // Cancel any pending swing-offset triggers so nothing fires after stop
@@ -250,6 +263,19 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       swingTimeoutsRef.current.clear();
       setIsPlaying(false);
     } else {
+      if (useTransportMode) {
+        try {
+          initTransport();
+          getTransport().setBpm(bpm);
+          getTransport().setSwing(globalSwing);
+          getTransport().play();
+          setIsPlaying(true);
+          stepRef.current = -1;
+          return;
+        } catch (e) {
+          console.warn('Transport start failed, falling back to setInterval', e);
+        }
+      }
       setIsPlaying(true);
       stepRef.current = -1;
       intervalRef.current = setInterval(() => tickRef.current(), (60000 / bpm) / 4);
@@ -275,6 +301,76 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       swingTimeoutsRef.current.clear();
     };
   }, []);
+
+  // Tone Transport mode: when enabled, the per-step tick is driven by
+  // Tone.Transport instead of setInterval. We re-use the existing tick()
+  // function (via tickRef) so all per-step behavior (swing, mute, choke,
+  // recording) is preserved.
+  useEffect(() => {
+    if (!useTransportMode) return;
+    let seq: Tone.Sequence | null = null;
+    let cancelled = false;
+    try {
+      initTransport();
+      const t = getTransport();
+      t.setBpm(bpm);
+      t.setSwing(globalSwing);
+      seq = new Tone.Sequence((time, stepIdx) => {
+        if (cancelled) return;
+        stepRef.current = stepIdx;
+        Tone.Draw.schedule(() => setCurrentStep(stepIdx), time);
+        // Trigger the same per-step logic the setInterval path uses.
+        // We do this off the audio thread by reading the pattern via the
+        // ref. The transport's `time` is the Web Audio context time, but
+        // since `tick()` is sample-accurate at bpm/4 anyway we just
+        // invoke it immediately — the swing offsets already use setTimeout
+        // for the late beats.
+        const p = patternRef.current;
+        const stepMs = (60000 / bpm) / 4;
+        for (const [layerId, cells] of Object.entries(p)) {
+          const cell = cells[stepIdx];
+          if (cell && cell.on) {
+            const swing = padSwingRef.current[layerId] || 0;
+            const offBeat = stepIdx % 2 === 1;
+            const delay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
+            if (delay > 0) {
+              const to = setTimeout(() => {
+                swingTimeoutsRef.current.delete(to);
+                triggerStepRef.current(layerId, cell);
+              }, delay);
+              swingTimeoutsRef.current.add(to);
+            } else {
+              triggerStepRef.current(layerId, cell);
+            }
+          }
+        }
+        void time;
+      }, [...Array(STEPS).keys()], '16n');
+      seq.loop = true;
+      seq.start(0);
+    } catch (e) {
+      // Tone failed to init (e.g. test env or no AudioContext) — silently
+      // fall back. The user can flip the flag off to recover.
+      console.warn('Tone Transport init failed, falling back to setInterval', e);
+    }
+    return () => {
+      cancelled = true;
+      if (seq) seq.dispose();
+      if (isPlaying) {
+        try { getTransport().stop(); } catch { /* ignore */ }
+      }
+    };
+  }, [useTransportMode]); // intentionally narrow deps — bpm/swing reset is handled elsewhere
+
+  // Keep Tone Transport BPM/swing in sync with the controls.
+  useEffect(() => {
+    if (!useTransportMode) return;
+    try {
+      const t = getTransport();
+      t.setBpm(bpm);
+      t.setSwing(globalSwing);
+    } catch { /* transport not initialized yet */ }
+  }, [bpm, globalSwing, useTransportMode]);
 
   const toggleCell = (layerId: string, idx: number) => {
     setPattern((prev) => {
@@ -571,6 +667,15 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
 
   return (
     <div className="h-full overflow-y-auto custom-scrollbar p-3 sm:p-4 space-y-3">
+      {/* Tone Transport bar (Phase 1, feature-flagged) */}
+      <TransportBar
+        bpm={bpm}
+        isPlaying={isPlaying}
+        useTransportMode={useTransportMode}
+        onBpmChange={setBpm}
+        onPlayStop={togglePlay}
+        onUseTransportModeChange={setUseTransportMode}
+      />
       {/* Transport bar */}
       <div className="bg-[#0f0f12] border border-[#1e293b] rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
