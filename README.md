@@ -92,6 +92,21 @@ Outputs:
 
 The desktop build is fully self-contained and offline. Kits, projects, and favorites persist locally via IndexedDB in the app's own WebView2 data folder.
 
+#### AAF export / import (Pro Tools)
+
+The Produce stage's **AAF** panel (desktop build only) exports every audible
+layer as a single self-contained `.aaf` — one audio track per stem, embedded
+PCM — and can import an `.aaf` back to recover tracks for A/B / tempo work.
+The writer emits a real SMPTE ST 377-1 AAF (OLE Compound File Binary) built on
+the `cfb` crate, byte-validated against pyaaf2.
+
+**Manual Pro Tools smoke test** (after `npm run tauri:build`):
+
+1. In the desktop app, Produce stage → AAF → Export (choose length).
+2. In Pro Tools: `File → Import → AAF…`, pick the `.aaf`.
+3. Confirm: one audio track per stem, at 48 kHz / 24-bit, clips start at 0,
+   no missing-media errors (PCM is embedded), and each clip plays back.
+
 ### Web demo (Vercel)
 
 The `vercel.json` in the repo root configures the SPA rewrite (deep links return `index.html`) and serves production security headers. Deploy with:

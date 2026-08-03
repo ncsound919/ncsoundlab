@@ -8,3 +8,11 @@ test-results/
 *.log
 .env*
 !.env.example
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/schemas
+
+# Generated AAF validation samples (written by `cargo run --example write_aaf`)
+*.aaf
+aaf_samples/

@@ -259,6 +259,12 @@ export interface SynthSettings {
   warmthEngine?: number;       // Master bus warmth/tape saturation (0 - 1)
   oversampling?: 1 | 2 | 4;
 
+  // Phase 6.6 — Juno-style filter families (multi-character analog models).
+  // When set, `filterFamily` selects which modeled filter the buffer synth uses
+  // instead of the default single ZDF ladder. Mirrors the Session Musician
+  // Juno module's `filterFamily` enum.
+  filterFamily?: 'moog_ladder' | 'sem_state_variable' | 'ms20_highpass_lowpass' | 'juno_roland' | 'prophet_curtis' | 'oberheim_multimode' | 'custom' | 'zdf';
+
   // Sound Designer Dream Upgrades (10 Specific Synth Parameters)
   unisonWidth?: number;        // Stereo width of unison voices (0 to 1)
   fmDepth?: number;            // Modulation index/depth (0 to 10.0)

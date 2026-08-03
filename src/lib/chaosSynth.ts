@@ -10,6 +10,7 @@ import {
   getVoiceAgeParameters,
   WarmthEngineDSP,
 } from '../audio/dsp/AnalogEngineDSP';
+import { createFilterFamily, type FilterFamily } from '../audio/dsp/FilterFamily';
 
 /**
  * Procedural Chaos Sound FX & Synthesis Engine.
@@ -154,6 +155,13 @@ export function generateChaosSynthBuffer(
   const warmthAmount = (settings.warmthEngine ?? 0.3) + vintageMacro * 0.3;
 
   const zdfFilter = new ZDFLadderFilter();
+  // Phase 6.6 — Juno-style filter family. When a modeled family is selected it
+  // replaces the default ZDF ladder; 'zdf' / 'custom' / undefined keep the
+  // original behavior.
+  const family = settings.filterFamily;
+  const familyFilter = family && family !== 'zdf' && family !== 'custom'
+    ? createFilterFamily(family)
+    : null;
   const warmthEngine = new WarmthEngineDSP();
 
   // Sound Designer Parameters
@@ -577,16 +585,21 @@ export function generateChaosSynthBuffer(
       shapedSample = shapedSample * (1 - vowelMix) + fSample * vowelMix;
     }
 
-    // Analog ZDF Ladder Filter Stage
+    // Analog ZDF Ladder Filter Stage (or modeled filter family)
     const cutoffHz = settings.filterCutoff ?? 3500;
     const filterRes = settings.filterResonance ?? 0.3;
-    let filteredSample = zdfFilter.process(
-      shapedSample,
-      cutoffHz,
-      filterRes,
-      filterDrive,
-      sampleRate
-    );
+    let filteredSample: number;
+    if (familyFilter) {
+      filteredSample = familyFilter.process(shapedSample, cutoffHz, filterRes, filterDrive, sampleRate);
+    } else {
+      filteredSample = zdfFilter.process(
+        shapedSample,
+        cutoffHz,
+        filterRes,
+        filterDrive,
+        sampleRate
+      );
+    }
 
     // Analog Warmth Engine & Asymmetric Bias Saturation with 2x Oversampling (Upgrade 5)
     let outputSample = 0;

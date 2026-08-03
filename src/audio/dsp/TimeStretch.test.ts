@@ -93,4 +93,73 @@ describe('TimeStretch — stretchSampleBuffer', () => {
     expect(timeFactor).toBeCloseTo(2, 2);
     expect(durationOf(buffer)).toBeGreaterThanOrEqual(1.8);
   });
+
+  it('silence in → silence out', () => {
+    const data = new Float32Array(16000);
+    const src = {
+      numberOfChannels: 1,
+      sampleRate: 16000,
+      length: 16000,
+      duration: 1,
+      getChannelData: () => data,
+      copyFromChannel: () => {},
+      copyToChannel: () => {},
+    } as unknown as AudioBuffer;
+    const { buffer } = stretchSampleBuffer(src, { timeFactor: 2 });
+    const out = buffer.getChannelData(0);
+    let maxAbs = 0;
+    for (let i = 0; i < out.length; i++) maxAbs = Math.max(maxAbs, Math.abs(out[i]));
+    expect(maxAbs).toBeLessThan(1e-9);
+  });
+
+  it('returns a new buffer reference (never mutates input)', () => {
+    const src = makeTone(0.5, 440);
+    const src0 = src.getChannelData(0);
+    const snapshot = new Float32Array(src0);
+    const { buffer } = stretchSampleBuffer(src, { timeFactor: 1.5 });
+    expect(buffer).not.toBe(src);
+    for (let i = 0; i < src0.length; i++) {
+      expect(src0[i]).toBe(snapshot[i]);
+    }
+  });
+
+  it('output is finite for typical inputs', () => {
+    const src = makeTone(0.5, 220);
+    const { buffer } = stretchSampleBuffer(src, { timeFactor: 1.5, pitchSemitones: 7 });
+    const out = buffer.getChannelData(0);
+    for (let i = 0; i < out.length; i++) {
+      expect(Number.isFinite(out[i])).toBe(true);
+    }
+  });
+
+  it('handles stereo input (two tone channels)', () => {
+    const length = 8000;
+    const left = new Float32Array(length);
+    const right = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+      left[i] = Math.sin((2 * Math.PI * 440 * i) / 16000) * 0.5;
+      right[i] = Math.sin((2 * Math.PI * 660 * i) / 16000) * 0.5;
+    }
+    const buffers = [left, right];
+    const src = {
+      numberOfChannels: 2,
+      sampleRate: 16000,
+      length,
+      duration: length / 16000,
+      getChannelData: (i: number) => buffers[i],
+      copyFromChannel: () => {},
+      copyToChannel: () => {},
+    } as unknown as AudioBuffer;
+    const { buffer } = stretchSampleBuffer(src, { timeFactor: 1.5 });
+    expect(buffer.numberOfChannels).toBe(2);
+    const outL = buffer.getChannelData(0);
+    const outR = buffer.getChannelData(1);
+    expect(outL.length).toBeGreaterThanOrEqual(Math.floor(length * 1.3));
+    // At least one channel should have signal.
+    let maxL = 0, maxR = 0;
+    for (let i = 0; i < outL.length; i++) maxL = Math.max(maxL, Math.abs(outL[i]));
+    for (let i = 0; i < outR.length; i++) maxR = Math.max(maxR, Math.abs(outR[i]));
+    expect(maxL).toBeGreaterThan(0.01);
+    expect(maxR).toBeGreaterThan(0.01);
+  });
 });

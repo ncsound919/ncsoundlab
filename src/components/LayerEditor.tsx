@@ -1544,7 +1544,7 @@ export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounc
                         onChange={(v) => updateSynthSetting('slopAmount', v)}
                       />
                       <Knob
-                        label="ZDF Ladder Drive"
+                        label="Filter Drive"
                         value={selectedLayer.synth.filterDrive ?? 0.2}
                         min={0}
                         max={1}
@@ -1561,6 +1561,37 @@ export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounc
                         color="#3b82f6"
                         onChange={(v) => updateSynthSetting('warmthEngine', v)}
                       />
+                    </div>
+
+                    {/* Phase 6.6 — Juno-style filter family selector */}
+                    <div className="col-span-3">
+                      <label className="text-[9px] font-mono font-bold uppercase tracking-widest text-slate-400 block mb-1.5">
+                        Filter Family
+                      </label>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
+                        {([
+                          { v: undefined, l: 'ZDF Ladder' },
+                          { v: 'moog_ladder', l: 'Moog 24dB' },
+                          { v: 'sem_state_variable', l: 'SEM 12dB' },
+                          { v: 'ms20_highpass_lowpass', l: 'MS-20' },
+                          { v: 'juno_roland', l: 'Juno' },
+                          { v: 'prophet_curtis', l: 'Prophet' },
+                          { v: 'oberheim_multimode', l: 'OB-X' },
+                        ] as const).map((opt) => (
+                          <button
+                            key={opt.l}
+                            type="button"
+                            onClick={() => updateSynthSetting('filterFamily', opt.v)}
+                            className={`px-2 py-1 rounded text-[9px] font-mono font-bold uppercase tracking-wider border transition-all ${
+                              (selectedLayer.synth.filterFamily ?? undefined) === opt.v
+                                ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
+                                : 'bg-[#121215] border-[#1e293b] text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            {opt.l}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>

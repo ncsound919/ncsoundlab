@@ -230,11 +230,11 @@ IndexedDB (Dexie) and inside `.nsl`, and loads onto a chosen channel or the mast
 
 ---
 
-## Phase 4 — Pro Tools interchange (stems + AAC reference import)
+## Phase 4 — Pro Tools interchange (stems + AAF reference import) ✅ DONE
 
 > Goal: round-trip audio with Pro Tools painlessly. Stems import as
 > auto-tracked multitrack WAVs; AAC references can be brought in to align
-> tempo or for A/B; AAF export for the desktop build (stretch goal).
+> tempo or for A/B; AAF export + import ships in the desktop build.
 
 ### Step 4.1 — Per-layer stem render
 
@@ -336,21 +336,34 @@ its BPM and possibly snap their project tempo to match.
 *Verify:* `detectBpmFromBuffer` recovers 120 / 140 BPM on synthetic
 click-track fixtures within ±2 BPM; project tempo updates correctly.
 
-### Step 4.5 — AAF export (Tauri desktop only — stretch)
+### Step 4.5 — AAF export + import (Tauri desktop) ✅ DONE
 
-*Context:* the desktop build (`src-tauri/`) ships Rust code. There's a
-mature Rust crate `aaf-rs` that can generate real AAF files. For Pro
-Tools users who specifically need AAF rather than stems, this bridges
-the gap.
+*Context:* the desktop build (`src-tauri/`) ships Rust code. A real AAF file
+is a SMPTE ST 377-1 OLE Compound File Binary whose directory tree is the AAF
+object graph (each object = a CFB storage with its class AUID as the CLSID and
+a `properties` stream). We implement it on top of the `cfb` crate
+(mdsteele/rust-cfb) using class/property/typedef AUIDs and the exact stream
+encodings from pyaaf2 (validated against Ardour's production AAF writer). The
+roadmap's original `aaf-rs` crate never shipped; the only Rust AAF crate
+(`oximedia-aaf`) writes a non-standard byte blob, so we wrote the real thing.
 
-*Context brief:*
+*Context brief (implemented):*
 
-- New Tauri command `export_aaf_session(payload)` that takes the
-  project + stems + markers + render of each stem and emits a real
-  AAF file with one audio track per stem.
-- The web build hides this UI / shows a "Available in desktop app"
-  badge.
-- Mark as a stretch goal — depends on `aaf-rs` API stability.
+- `src-tauri/src/aaf/` — `types.rs` (Auid/MobId/encoders/`mangle_name`),
+  `dict.rs` (class/property/typedef tables), `writer.rs` (properties + index
+  streams → CFB), `session.rs` (stem-export object graph), `reader.rs`
+  (import/round-trip), `commands.rs` (Tauri commands).
+- Tauri commands: `export_aaf_session(payload)` writes a self-contained `.aaf`
+  with one audio track per stem (embedded PCM + PCMDescriptor, linked by
+  MobID); `import_aaf_session(path)` recovers tracks from an AAF.
+- Frontend: `AafExportPanel.tsx` in the Produce stage — desktop-gated (web
+  build shows "desktop app only"); uses the Tauri dialog plugin for save/open.
+- AAF validates end-to-end with **pyaaf2**: 38 classdefs / 59 typedefs, one
+  CompositionMob track per stem, byte-exact PCM essence round-trip.
+
+*Verify:* `cargo test` round-trips export→import byte-exact; the produced file
+opens in pyaaf2 (the manual Pro Tools smoke test is documented in the
+README).
 
 ---
 
@@ -439,10 +452,11 @@ velocity lane toggle.
 - **Phase 2** (arrangement + tempo + automation) depends on 1.1 (honest stepLength) and the scheduler; independent of the mixer.
 - **Phase 3** (mixer/metering/sends) is audio-architecture work independent of sequencing; can start after 0.1
   (state gets serialized). Most parallelizable: 3.1/3.2 first, then 3.3/3.4/3.5 (sends need a channel).
-- **Phase 4** (stems + AAC reference + Pro Tools interchange) depends on
+- **Phase 4** (stems + AAC reference + AAF interchange) depends on
   3.1/3.4 (per-channel chain to render). 4.1 + 4.2 are the core path;
   4.3 + 4.4 (reference import + tempo detection) are independent of the
-  audio engine and can run in parallel.
+  audio engine and can run in parallel. 4.5 (real AAF writer on the `cfb`
+  crate) is desktop-only Rust work, independent of the web UI.
 - **Phase 5** (sampling/recording) is independent; 5.4 wants metronome/countIn wiring.
 - **Phase 6** (performance/MIDI) is independent but exercises Phase 1 store/velocity a lot.
 

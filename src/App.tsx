@@ -80,7 +80,7 @@ const LayerEditor = lazy(() => import('./components/LayerEditor').then(m => ({ d
 const LayerPresetBrowser = lazy(() => import('./components/LayerPresetBrowser').then(m => ({ default: m.LayerPresetBrowser })));
 
 const SystemCohesionDeck = lazy(() => import('./components/SystemCohesionDeck').then(m => ({ default: m.SystemCohesionDeck })));
-
+const AafExportPanel = lazy(() => import('./components/AafExportPanel').then(m => ({ default: m.AafExportPanel })));
 // Advanced Waveform Editing and Procedural Chaos Synthesis imports
 import { 
   reverseBuffer,
@@ -2670,6 +2670,17 @@ export default function App() {
                     }}
                   />
                 </Suspense>
+                {/* AAF / Pro Tools interchange (Phase 4.5, desktop-only) */}
+                <div className="absolute top-20 right-4 z-40">
+                  <Suspense fallback={null}>
+                    <AafExportPanel
+                      layers={layers}
+                      songName="My Song"
+                      bpm={patternStore.patterns[patternStore.activePatternId]?.bpm ?? 120}
+                      onToast={addToast}
+                    />
+                  </Suspense>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
