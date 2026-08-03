@@ -35,6 +35,13 @@ jobs:
 
       - name: Unit tests (vitest)
         run: npm test
+        env:
+          # evolutionEngine.test.ts is environment-sensitive: its fork-pool
+          # worker dies on constrained environments (2-core CI runners, tight
+          # /dev/shm, Windows commit-charge races) and Vitest v4 misreports the
+          # dead worker as a 5000ms "timeout". The test's own header designates
+          # CONSTRAINED_ENV=1 as the skip switch for exactly this case.
+          CONSTRAINED_ENV: 1
 
       - name: Build (vite)
         run: npm run build
