@@ -63,6 +63,42 @@ export interface SerializedRackState {
   modules: RackModule[];
 }
 
+export interface SerializedArrangementClip {
+  id: string;
+  patternId: string;
+  startBeat: number;
+  beats: number;
+  loops: number;
+  muted: boolean;
+  color?: string;
+}
+
+export interface SerializedTempoPoint {
+  tick: number;
+  bpm: number;
+}
+
+export interface SerializedAutomationPoint {
+  tick: number;
+  value: number;
+}
+
+export interface SerializedAutomationLane {
+  id: string;
+  target: string;
+  min: number;
+  max: number;
+  points: SerializedAutomationPoint[];
+}
+
+export type SerializedAutomationLanes = Record<string, SerializedAutomationLane[]>;
+
+export interface ArrangementSerialized {
+  totalBeats: number;
+  clips: SerializedArrangementClip[];
+  tempoMap?: SerializedTempoPoint[];
+}
+
 export interface ProjectDocument {
   format: typeof PROJECT_FORMAT_TAG;
   schemaVersion: number;
@@ -83,6 +119,18 @@ export interface ProjectDocument {
   patterns: Record<PatternId, SerializedPattern>;
   activePatternId: PatternId;
   songChain: ProjectSongChain;
+  /**
+   * Phase 2.1 — arrangement timeline. Optional in v1 (older docs without it
+   * fall back to `songChain`). Saved projects from prior commits are
+   * forward-compatible.
+   */
+  arrangement?: ArrangementSerialized;
+
+  /**
+   * Phase 2.3 — per-layer automation lanes. Optional. Older docs default to
+   * an empty record.
+   */
+  automation?: SerializedAutomationLanes;
 
   programs: Record<BankId, Program>;
   activeBank: BankId;
@@ -106,6 +154,8 @@ export interface SerializeProjectInput {
   patterns: Record<PatternId, Pattern>;
   activePatternId: PatternId;
   songChain: { order: string[] };
+  arrangement?: ArrangementSerialized;
+  automation?: SerializedAutomationLanes;
   programs: Record<BankId, Program>;
   activeBank: BankId;
   bpm: number;
@@ -166,6 +216,8 @@ export async function serializeProject(input: SerializeProjectInput): Promise<Pr
     patterns,
     activePatternId: input.activePatternId,
     songChain: { order: [...input.songChain.order] },
+    ...(input.arrangement ? { arrangement: input.arrangement } : {}),
+    ...(input.automation ? { automation: input.automation } : {}),
     programs: clonePrograms(input.programs),
     activeBank: input.activeBank,
   };
@@ -201,6 +253,8 @@ export interface DeserializeProjectResult {
   layers: SoundLayer[];
   patterns: Record<PatternId, Pattern>;
   programs: Record<BankId, Program>;
+  arrangement: ArrangementSerialized | null;
+  automation: SerializedAutomationLanes;
 }
 
 /**
@@ -227,6 +281,8 @@ export async function deserializeProject(
     layers,
     patterns,
     programs: clonePrograms(document.programs),
+    arrangement: document.arrangement ?? null,
+    automation: document.automation ?? {},
   };
 }
 
@@ -287,6 +343,7 @@ function normalizeV1(obj: RawProjectDocument): ProjectDocument {
   const programsRaw = (obj.programs ?? {}) as Record<string, Program>;
   const songChainRaw = (obj.songChain ?? { order: [] }) as ProjectSongChain;
   const masterRackRaw = (obj.masterRack ?? { modules: [] }) as SerializedRackState;
+  const arrangementRaw = (obj.arrangement ?? null) as ArrangementSerialized | null;
   return {
     format: PROJECT_FORMAT_TAG,
     schemaVersion: PROJECT_SCHEMA_VERSION,
@@ -319,6 +376,23 @@ function normalizeV1(obj: RawProjectDocument): ProjectDocument {
         return filtered.length > 0 ? filtered : (['A', 'B', 'C', 'D'] as PatternId[]);
       })(),
     },
+    arrangement: arrangementRaw && Array.isArray(arrangementRaw.clips) ? {
+      totalBeats: Math.max(0, numberOr(arrangementRaw.totalBeats, 0)),
+      clips: arrangementRaw.clips.map((c) => ({
+        id: typeof c.id === 'string' ? c.id : `c-${Math.random().toString(36).slice(2)}`,
+        patternId: ['A', 'B', 'C', 'D'].includes(c.patternId) ? c.patternId : 'A',
+        startBeat: Math.max(0, numberOr(c.startBeat, 0)),
+        beats: Math.max(0, numberOr(c.beats, 0)),
+        loops: Math.max(1, Math.floor(numberOr(c.loops, 1))),
+        muted: (c.muted as unknown) === true || (c.muted as unknown) === 1 || (c.muted as unknown) === 'true',
+        ...(typeof c.color === 'string' ? { color: c.color } : {}),
+      })),
+      tempoMap: Array.isArray(arrangementRaw.tempoMap)
+        ? arrangementRaw.tempoMap
+            .map((p) => ({ tick: Math.max(0, numberOr(p.tick, 0)), bpm: Math.max(20, Math.min(300, numberOr(p.bpm, 120))) }))
+            .sort((a, b) => a.tick - b.tick)
+        : [],
+    } : undefined,
     programs: {
       A: Array.isArray(programsRaw.A) ? programsRaw.A.slice() : Array.from({ length: 16 }, () => null),
       B: Array.isArray(programsRaw.B) ? programsRaw.B.slice() : Array.from({ length: 16 }, () => null),
@@ -326,7 +400,31 @@ function normalizeV1(obj: RawProjectDocument): ProjectDocument {
       D: Array.isArray(programsRaw.D) ? programsRaw.D.slice() : Array.from({ length: 16 }, () => null),
     },
     activeBank: sanitizeBankId(obj.activeBank),
+    automation: sanitizeAutomationLanes(obj.automation),
   };
+}
+
+function sanitizeAutomationLanes(value: unknown): SerializedAutomationLanes {
+  if (!value || typeof value !== 'object') return {};
+  const out: SerializedAutomationLanes = {};
+  for (const [layerId, rawLanes] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(rawLanes)) continue;
+    out[layerId] = rawLanes.map((lane: any, idx: number) => ({
+      id: typeof lane?.id === 'string' ? lane.id : `${layerId}-auto-${idx}`,
+      target: typeof lane?.target === 'string' ? lane.target : String(lane?.target ?? 'volume'),
+      min: numberOr(lane?.min, 0),
+      max: numberOr(lane?.max, 1),
+      points: Array.isArray(lane?.points)
+        ? lane.points
+            .map((p: any) => ({
+              tick: Math.max(0, numberOr(p?.tick, 0)),
+              value: numberOr(p?.value, 0),
+            }))
+            .sort((a: SerializedAutomationPoint, b: SerializedAutomationPoint) => a.tick - b.tick)
+        : [],
+    }));
+  }
+  return out;
 }
 
 function numberOr(value: unknown, fallback: number): number {

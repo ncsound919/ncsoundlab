@@ -272,3 +272,216 @@ describe('Phase 1.3 — pattern editing: copy/paste, duplicate, clear', () => {
     expect(usePatternStore.getState().patterns.A.layerRows.l1[0]).toEqual({ on: true });
   });
 });
+
+describe('Phase 2.1 — arrangement timeline', () => {
+  beforeEach(() => {
+    usePatternStore.getState().reset();
+  });
+
+  it('starts with an empty arrangement and the legacy default chain', () => {
+    const s = usePatternStore.getState();
+    expect(s.arrangement.clips).toEqual([]);
+    expect(s.arrangement.totalBeats).toBe(0);
+    expect(s.songChain.order).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('addClip appends a clip and updates totalBeats', () => {
+    const id = usePatternStore.getState().addClip({
+      patternId: 'A',
+      startBeat: 0,
+      beats: 4,
+      loops: 1,
+      muted: false,
+    });
+    const s = usePatternStore.getState();
+    expect(s.arrangement.clips).toHaveLength(1);
+    expect(s.arrangement.clips[0].id).toBe(id);
+    expect(s.arrangement.totalBeats).toBe(4);
+  });
+
+  it('moveClip re-anchors a clip on the timeline', () => {
+    const id = usePatternStore.getState().addClip({
+      patternId: 'A',
+      startBeat: 0,
+      beats: 4,
+      loops: 1,
+      muted: false,
+    });
+    usePatternStore.getState().moveClip(id, 8);
+    const s = usePatternStore.getState();
+    expect(s.arrangement.clips[0].startBeat).toBe(8);
+    expect(s.arrangement.totalBeats).toBe(12);
+  });
+
+  it('updateClip mutates fields and recomputes totalBeats', () => {
+    const id = usePatternStore.getState().addClip({
+      patternId: 'A',
+      startBeat: 0,
+      beats: 4,
+      loops: 1,
+      muted: false,
+    });
+    usePatternStore.getState().updateClip(id, { muted: true, beats: 8 });
+    const s = usePatternStore.getState();
+    expect(s.arrangement.clips[0].muted).toBe(true);
+    expect(s.arrangement.clips[0].beats).toBe(8);
+    expect(s.arrangement.totalBeats).toBe(8);
+  });
+
+  it('removeClip shrinks totalBeats and clears songChain on empty', () => {
+    const id = usePatternStore.getState().addClip({
+      patternId: 'A',
+      startBeat: 0,
+      beats: 4,
+      loops: 1,
+      muted: false,
+    });
+    usePatternStore.getState().removeClip(id);
+    const s = usePatternStore.getState();
+    expect(s.arrangement.clips).toHaveLength(0);
+    expect(s.arrangement.totalBeats).toBe(0);
+    expect(s.songChain.order).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('duplicateClip appends a copy at the original clip end', () => {
+    const id = usePatternStore.getState().addClip({
+      patternId: 'A',
+      startBeat: 0,
+      beats: 4,
+      loops: 1,
+      muted: false,
+    });
+    const dupId = usePatternStore.getState().duplicateClip(id);
+    expect(dupId).not.toBeNull();
+    const s = usePatternStore.getState();
+    expect(s.arrangement.clips).toHaveLength(2);
+    expect(s.arrangement.clips[1].startBeat).toBe(4);
+    expect(s.arrangement.totalBeats).toBe(8);
+  });
+
+  it('splitClipAtBeat creates two contiguous clips', () => {
+    const id = usePatternStore.getState().addClip({
+      patternId: 'A',
+      startBeat: 0,
+      beats: 8,
+      loops: 1,
+      muted: false,
+    });
+    usePatternStore.getState().splitClipAtBeat(id, 4);
+    const clips = usePatternStore.getState().arrangement.clips;
+    expect(clips).toHaveLength(2);
+    expect(clips[0].beats).toBe(4);
+    expect(clips[1].startBeat).toBe(4);
+    expect(clips[1].beats).toBe(4);
+  });
+
+  it('splitClipAtBeat refuses to split outside the clip', () => {
+    const id = usePatternStore.getState().addClip({
+      patternId: 'A',
+      startBeat: 0,
+      beats: 4,
+      loops: 1,
+      muted: false,
+    });
+    usePatternStore.getState().splitClipAtBeat(id, 0);
+    usePatternStore.getState().splitClipAtBeat(id, 4);
+    expect(usePatternStore.getState().arrangement.clips).toHaveLength(1);
+  });
+
+  it('deriveSongChain rebuilds the legacy order from clips, sorted by startBeat, repeated by loops', () => {
+    usePatternStore.getState().addClip({ patternId: 'B', startBeat: 4, beats: 4, loops: 2, muted: false });
+    usePatternStore.getState().addClip({ patternId: 'A', startBeat: 0, beats: 4, loops: 1, muted: false });
+    usePatternStore.getState().addClip({ patternId: 'C', startBeat: 12, beats: 4, loops: 1, muted: false });
+    const order = usePatternStore.getState().songChain.order;
+    expect(order).toEqual(['A', 'B', 'B', 'C']);
+  });
+
+  it('addClip updates songChain order via deriveSongChain', () => {
+    usePatternStore.getState().addClip({ patternId: 'B', startBeat: 0, beats: 4, loops: 1, muted: false });
+    expect(usePatternStore.getState().songChain.order).toContain('B');
+  });
+});
+
+describe('Phase 2.2 — tempo automation', () => {
+  beforeEach(() => {
+    usePatternStore.getState().reset();
+  });
+
+  it('starts with an empty tempoMap', () => {
+    expect(usePatternStore.getState().arrangement.tempoMap).toEqual([]);
+  });
+
+  it('addTempoPoint inserts and keeps the map sorted by tick', () => {
+    usePatternStore.getState().addTempoPoint({ tick: 8, bpm: 130 });
+    usePatternStore.getState().addTempoPoint({ tick: 0, bpm: 90 });
+    usePatternStore.getState().addTempoPoint({ tick: 16, bpm: 150 });
+    const map = usePatternStore.getState().arrangement.tempoMap;
+    expect(map.map((p) => p.tick)).toEqual([0, 8, 16]);
+    expect(map.map((p) => p.bpm)).toEqual([90, 130, 150]);
+  });
+
+  it('addTempoPoint replaces an existing point at the same tick', () => {
+    usePatternStore.getState().addTempoPoint({ tick: 4, bpm: 100 });
+    usePatternStore.getState().addTempoPoint({ tick: 4, bpm: 120 });
+    const map = usePatternStore.getState().arrangement.tempoMap;
+    expect(map).toHaveLength(1);
+    expect(map[0].bpm).toBe(120);
+  });
+
+  it('clamps BPM to 20..300', () => {
+    usePatternStore.getState().addTempoPoint({ tick: 0, bpm: 5 });
+    usePatternStore.getState().addTempoPoint({ tick: 4, bpm: 500 });
+    const map = usePatternStore.getState().arrangement.tempoMap;
+    expect(map[0].bpm).toBe(20);
+    expect(map[1].bpm).toBe(300);
+  });
+
+  it('updateTempoPoint mutates BPM at a tick', () => {
+    usePatternStore.getState().addTempoPoint({ tick: 4, bpm: 110 });
+    usePatternStore.getState().updateTempoPoint(4, 125);
+    expect(usePatternStore.getState().arrangement.tempoMap[0].bpm).toBe(125);
+  });
+
+  it('removeTempoPoint drops the matching tick', () => {
+    usePatternStore.getState().addTempoPoint({ tick: 4, bpm: 110 });
+    usePatternStore.getState().addTempoPoint({ tick: 8, bpm: 120 });
+    usePatternStore.getState().removeTempoPoint(4);
+    const map = usePatternStore.getState().arrangement.tempoMap;
+    expect(map).toHaveLength(1);
+    expect(map[0].tick).toBe(8);
+  });
+
+  it('clearTempoMap empties the map', () => {
+    usePatternStore.getState().addTempoPoint({ tick: 0, bpm: 100 });
+    usePatternStore.getState().addTempoPoint({ tick: 4, bpm: 120 });
+    usePatternStore.getState().clearTempoMap();
+    expect(usePatternStore.getState().arrangement.tempoMap).toEqual([]);
+  });
+
+  it('getBpmAtBeat returns the latest point <= beat', () => {
+    usePatternStore.getState().addTempoPoint({ tick: 0, bpm: 90 });
+    usePatternStore.getState().addTempoPoint({ tick: 4, bpm: 110 });
+    usePatternStore.getState().addTempoPoint({ tick: 12, bpm: 140 });
+    expect(usePatternStore.getState().getBpmAtBeat(0)).toBe(90);
+    expect(usePatternStore.getState().getBpmAtBeat(3)).toBe(90);
+    expect(usePatternStore.getState().getBpmAtBeat(4)).toBe(110);
+    expect(usePatternStore.getState().getBpmAtBeat(11)).toBe(110);
+    expect(usePatternStore.getState().getBpmAtBeat(12)).toBe(140);
+    expect(usePatternStore.getState().getBpmAtBeat(9999)).toBe(140);
+  });
+
+  it('getBpmAtBeat falls back to active pattern BPM when map is empty', () => {
+    usePatternStore.getState().setBpm(123);
+    expect(usePatternStore.getState().getBpmAtBeat(0)).toBe(123);
+    expect(usePatternStore.getState().getBpmAtBeat(99)).toBe(123);
+  });
+
+  it('recomputeArrangement preserves tempoMap when clips change', () => {
+    usePatternStore.getState().addTempoPoint({ tick: 0, bpm: 100 });
+    usePatternStore.getState().addTempoPoint({ tick: 8, bpm: 120 });
+    usePatternStore.getState().addClip({ patternId: 'A', startBeat: 0, beats: 4, loops: 1, muted: false });
+    const map = usePatternStore.getState().arrangement.tempoMap;
+    expect(map).toHaveLength(2);
+    expect(map[0].bpm).toBe(100);
+  });
+});

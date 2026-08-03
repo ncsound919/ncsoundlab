@@ -17,6 +17,7 @@ import * as Tone from 'tone';
 import { initTransport, getTransport } from '../audio/transport/transport';
 import { TransportBar } from './TransportBar';
 import { SongModePanel } from './SongModePanel';
+import { ArrangementPanel } from './ArrangementPanel';
 import { Piano, KeyboardShortcuts, MidiNumbers } from 'react-piano';
 import { Note, Chord } from 'tonal';
 import { Play, Square, Save, FolderOpen } from 'lucide-react';
@@ -849,6 +850,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         onMixdown={onMixdown}
       />
       {songModeActive && <SongModePanel onPlayFromSlot={() => { /* song starts from slot via transport */ }} />}
+      <ArrangementPanel />
       {!isRecordingAudio && lastRecordedBuffer && (
         <div className="flex gap-2 mt-2 text-sm">
           <span className="text-white/70 self-center">Slice take:</span>

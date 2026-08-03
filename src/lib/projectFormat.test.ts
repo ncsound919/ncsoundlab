@@ -321,3 +321,173 @@ describe('projectFormat — isProjectDirty', () => {
     expect(isProjectDirty(a, b)).toBe(true);
   });
 });
+
+describe('projectFormat — arrangement round-trip', () => {
+  it('serializes and rehydrates an arrangement with clips', async () => {
+    const layers = [makeSynthLayer('s1')];
+    const patterns = {
+      A: makePattern('A', ['s1']),
+      B: makePattern('B', ['s1']),
+      C: makePattern('C', ['s1']),
+      D: makePattern('D', ['s1']),
+    };
+    const arrangement = {
+      totalBeats: 12,
+      clips: [
+        { id: 'c1', patternId: 'A', startBeat: 0, beats: 4, loops: 1, muted: false },
+        { id: 'c2', patternId: 'B', startBeat: 4, beats: 4, loops: 2, muted: true },
+        { id: 'c3', patternId: 'C', startBeat: 12, beats: 4, loops: 1, muted: false },
+      ],
+    };
+    const doc = await serializeProject({
+      title: 'Arrangement',
+      appVersion: '1.0.0',
+      layers,
+      patterns,
+      activePatternId: 'A',
+      songChain: { order: ['A', 'B', 'B', 'C'] },
+      arrangement,
+      programs: {
+        A: ['s1', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+        B: Array.from({ length: 16 }, () => null),
+        C: Array.from({ length: 16 }, () => null),
+        D: Array.from({ length: 16 }, () => null),
+      },
+      activeBank: 'A',
+      bpm: 120,
+      timeSignature: [4, 4],
+      masterLevel: 0.8,
+      masterRack: { modules: [] },
+    });
+    expect(doc.arrangement).toBeDefined();
+    expect(doc.arrangement!.clips).toHaveLength(3);
+
+    const ctx = new AudioContext();
+    const hydrated = await deserializeProject(ctx, doc);
+    expect(hydrated.arrangement).not.toBeNull();
+    expect(hydrated.arrangement!.clips).toHaveLength(3);
+    expect(hydrated.arrangement!.clips[1].loops).toBe(2);
+    expect(hydrated.arrangement!.clips[1].muted).toBe(true);
+    // totalBeats is preserved verbatim (the runtime recomputes it via
+    // patternStore.recomputeArrangement when clips mutate).
+    expect(hydrated.arrangement!.totalBeats).toBe(12);
+  });
+
+  it('migrates a document without arrangement (backwards-compat)', () => {
+    const raw = {
+      format: PROJECT_FORMAT_TAG,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      title: 'Legacy',
+      layers: [],
+      patterns: { A: {}, B: {}, C: {}, D: {} },
+      programs: {},
+    };
+    const doc = migrate(raw);
+    expect(doc.arrangement).toBeUndefined();
+  });
+
+  it('sanitises a malformed arrangement on load', () => {
+    const raw = {
+      format: PROJECT_FORMAT_TAG,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      title: 'Malformed',
+      layers: [],
+      patterns: { A: {}, B: {}, C: {}, D: {} },
+      programs: {},
+      arrangement: {
+        totalBeats: 'garbage',
+        clips: [{ id: 'c1', patternId: 'X', startBeat: -3, beats: -10, loops: 0.5, muted: 1 }],
+      },
+    };
+    const doc = migrate(raw);
+    expect(doc.arrangement).toBeDefined();
+    const clip = doc.arrangement!.clips[0];
+    expect(clip.startBeat).toBe(0);
+    expect(clip.beats).toBe(0);
+    expect(clip.loops).toBe(1);
+    expect(clip.muted).toBe(true);
+    expect(clip.patternId).toBe('A'); // unknown patternId falls back to A
+  });
+});
+
+describe('projectFormat — automation round-trip', () => {
+  it('serializes and rehydrates per-layer automation lanes', async () => {
+    const layers = [makeSynthLayer('s1')];
+    const patterns = {
+      A: makePattern('A', ['s1']),
+      B: makePattern('B', ['s1']),
+      C: makePattern('C', ['s1']),
+      D: makePattern('D', ['s1']),
+    };
+    const automation = {
+      s1: [
+        { id: 'vol', target: 'volume', min: 0, max: 1.5, points: [
+          { tick: 0, value: 0.5 },
+          { tick: 8, value: 1.0 },
+          { tick: 16, value: 0.5 },
+        ] },
+      ],
+    };
+    const doc = await serializeProject({
+      title: 'Auto',
+      appVersion: '1.0.0',
+      layers,
+      patterns,
+      activePatternId: 'A',
+      songChain: { order: ['A'] },
+      automation,
+      programs: {
+        A: Array.from({ length: 16 }, () => null),
+        B: Array.from({ length: 16 }, () => null),
+        C: Array.from({ length: 16 }, () => null),
+        D: Array.from({ length: 16 }, () => null),
+      },
+      activeBank: 'A',
+      bpm: 120,
+      timeSignature: [4, 4],
+      masterLevel: 0.8,
+      masterRack: { modules: [] },
+    });
+    expect(doc.automation).toBeDefined();
+    expect(doc.automation!.s1).toHaveLength(1);
+
+    const ctx = new AudioContext();
+    const hydrated = await deserializeProject(ctx, doc);
+    expect(hydrated.automation.s1[0].target).toBe('volume');
+    expect(hydrated.automation.s1[0].points).toHaveLength(3);
+  });
+
+  it('migrates a document without automation (backwards-compat)', () => {
+    const raw = {
+      format: PROJECT_FORMAT_TAG,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      title: 'Legacy',
+      layers: [],
+      patterns: { A: {}, B: {}, C: {}, D: {} },
+      programs: {},
+    };
+    const doc = migrate(raw);
+    expect(doc.automation).toBeDefined();
+    expect(doc.automation).toEqual({});
+  });
+
+  it('sanitises a malformed lane on load', () => {
+    const raw = {
+      format: PROJECT_FORMAT_TAG,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      title: 'BadAuto',
+      layers: [],
+      patterns: { A: {}, B: {}, C: {}, D: {} },
+      programs: {},
+      automation: {
+        bad: [{ id: 123, target: 7, min: 'min', max: 'max', points: 'oops' }],
+      },
+    };
+    const doc = migrate(raw);
+    expect(doc.automation!.bad).toHaveLength(1);
+    const lane = doc.automation!.bad[0];
+    expect(typeof lane.id).toBe('string');
+    expect(lane.target).toBe('7'); // coerced to string
+    expect(lane.points).toEqual([]);
+  });
+});

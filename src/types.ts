@@ -689,6 +689,84 @@ export interface SongChain {
   order: string[]; // patternIds
 }
 
+/**
+ * Phase 2.1 — arrangement timeline.
+ *
+ * A song arrangement is a sequence of clips laid on a shared beat-timeline.
+ * Each clip references a pattern (from `patternStore`) and occupies
+ * `beats` beats starting at `startBeat`. `loops` lets one clip repeat
+ * (e.g. a 4-bar pattern played 8 times) without duplicating it.
+ *
+ * The legacy `SongChain.order` is derived from this for the existing
+ * mixdown/export path. The arrangement is the source of truth for new
+ * playback (when Phase 2.3 wires arrangement-aware scheduling).
+ */
+export interface ArrangementClip {
+  id: string;
+  patternId: string;
+  /** Clip start on the global beat-timeline. */
+  startBeat: number;
+  /** Clip length in beats (pattern length × loops). */
+  beats: number;
+  /** How many times this clip repeats back-to-back. */
+  loops: number;
+  muted: boolean;
+  /** Optional per-clip color (for timeline rendering). */
+  color?: string;
+}
+
+export interface Arrangement {
+  /** Total song length in beats (cached). Recomputed when clips change. */
+  totalBeats: number;
+  clips: ArrangementClip[];
+  /**
+   * Phase 2.2 — tempo automation. Sorted by `tick` ascending. Each point
+   * declares the BPM from `tick` onward until the next point. The first
+   * point's `tick` is normally 0.
+   */
+  tempoMap: TempoPoint[];
+}
+
+export interface TempoPoint {
+  /** Beat offset on the global timeline where this BPM starts. */
+  tick: number;
+  bpm: number;
+}
+
+/**
+ * Phase 2.3 — automation / CC lanes.
+ *
+ * Per-layer automation lanes live alongside the layer in the project
+ * document. Each lane targets one audio engine parameter (`volume`,
+ * `pan`, `sendLevel:<busId>`, etc.) and contains a sequence of points
+ * that the scheduler interpolates during playback.
+ */
+export type AutomationTarget =
+  | 'volume'
+  | 'pan'
+  | 'filterFreq'
+  | 'sendLevel:reverb'
+  | 'sendLevel:delay';
+
+export interface AutomationPoint {
+  /** Beat offset on the global timeline. */
+  tick: number;
+  /** Value in the lane's [min, max] range. */
+  value: number;
+}
+
+export interface AutomationLane {
+  id: string;
+  target: AutomationTarget;
+  min: number;
+  max: number;
+  points: AutomationPoint[];
+}
+
+export interface AutomationLanesByLayer {
+  [layerId: string]: AutomationLane[];
+}
+
 export interface SequenceExportV1 {
   format: 'ncsoundlab-mpc-sequence';
   version: 1;

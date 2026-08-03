@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   Pattern, PatternCell, SongChain, SequenceExportV1, SequenceExportV2,
+  Arrangement, ArrangementClip, TempoPoint,
 } from '../types';
 
 export const PATTERN_IDS = ['A', 'B', 'C', 'D'] as const;
@@ -52,6 +53,12 @@ interface PatternStore {
   patterns: Record<PatternId, Pattern>;
   activePatternId: PatternId;
   songChain: SongChain;
+  /**
+   * Phase 2.1 — arrangement timeline (clips on a shared beat-timeline).
+   * Legacy `songChain.order` is derived from this for the existing mixdown
+   * path; new playback will honour clips directly.
+   */
+  arrangement: Arrangement;
   setActivePattern: (id: PatternId) => void;
   setCell: (patternId: PatternId, layerId: string, stepIdx: number, cell: PatternCell) => void;
   setBpm: (bpm: number) => void;
@@ -89,6 +96,37 @@ interface PatternStore {
   copyCells: (patternId: PatternId, layerId?: string) => void;
   pasteCells: (patternId: PatternId, layerId?: string) => void;
   clearClipboard: () => void;
+
+  /**
+   * Phase 2.1 — arrangement helpers.
+   *
+   * `addClip`, `updateClip`, `removeClip`, `moveClip`: CRUD on the clip
+   * timeline. `moveClip` re-orders the clips array so the playback order is
+   * the array order; clips can overlap (e.g. layering a pad on top of a
+   * drum pattern) but `totalBeats` is the maximum clip end.
+   *
+   * `deriveSongChain` rebuilds the legacy `songChain.order` from the
+   * current clips (sorted by startBeat, each clip contributes its patternId
+   * once per loop). Useful for the existing mixdown / export pipeline.
+   */
+  addClip: (clip: Omit<ArrangementClip, 'id'>) => string;
+  updateClip: (id: string, updates: Partial<ArrangementClip>) => void;
+  removeClip: (id: string) => void;
+  moveClip: (id: string, newStartBeat: number) => void;
+  duplicateClip: (id: string) => string | null;
+  splitClipAtBeat: (id: string, beat: number) => void;
+  deriveSongChain: () => void;
+
+  /**
+   * Phase 2.2 — tempo automation. `tempoMap` is a sorted array of
+   * `{tick, bpm}` points; the scheduler interpolates BPM linearly between
+   * points. `getBpmAtBeat(beat)` is the runtime accessor.
+   */
+  addTempoPoint: (point: TempoPoint) => void;
+  updateTempoPoint: (tick: number, bpm: number) => void;
+  removeTempoPoint: (tick: number) => void;
+  clearTempoMap: () => void;
+  getBpmAtBeat: (beat: number) => number;
 }
 
 function makePatterns(layerIds: string[]): Record<PatternId, Pattern> {
@@ -100,10 +138,29 @@ function makePatterns(layerIds: string[]): Record<PatternId, Pattern> {
   };
 }
 
-export const usePatternStore = create<PatternStore>((set) => ({
+const emptyArrangement = (): Arrangement => ({ totalBeats: 0, clips: [], tempoMap: [] });
+
+/**
+ * Compute the length of a clip in beats. Each pattern is `stepLength / 4`
+ * beats long (a 16-step pattern = 4 beats at 4/4). The clip's `beats`
+ * already accounts for `loops`.
+ */
+const clipEnd = (clip: ArrangementClip): number =>
+  clip.startBeat + Math.max(0, clip.beats);
+
+const recomputeArrangement = (arr: Arrangement): Arrangement => {
+  const total = arr.clips.reduce((acc, c) => Math.max(acc, clipEnd(c)), 0);
+  return { ...arr, totalBeats: total };
+};
+
+const sortTempoMap = (points: TempoPoint[]): TempoPoint[] =>
+  [...points].sort((a, b) => a.tick - b.tick);
+
+export const usePatternStore = create<PatternStore>((set, get) => ({
   patterns: makePatterns([]),
   activePatternId: 'A',
   songChain: { order: ['A', 'B', 'C', 'D'] },
+  arrangement: emptyArrangement(),
 
   setActivePattern: (id) => set({ activePatternId: id }),
 
@@ -215,7 +272,7 @@ export const usePatternStore = create<PatternStore>((set) => ({
       return { songChain: { order } };
     }),
 
-  reset: () => set({ patterns: makePatterns([]), activePatternId: 'A', songChain: { order: ['A', 'B', 'C', 'D'] } }),
+  reset: () => set({ patterns: makePatterns([]), activePatternId: 'A', songChain: { order: ['A', 'B', 'C', 'D'] }, arrangement: emptyArrangement() }),
 
   copyPatternInto: (src, dst) =>
     set((s) => {
@@ -290,4 +347,139 @@ export const usePatternStore = create<PatternStore>((set) => ({
     }),
 
   clearClipboard: () => set({ clipboard: null }),
+
+  addClip: (clip) => {
+    const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const newClip: ArrangementClip = { id, ...clip };
+    set((s) => ({
+      arrangement: recomputeArrangement({ ...s.arrangement, clips: [...s.arrangement.clips, newClip] }),
+    }));
+    get().deriveSongChain();
+    return id;
+  },
+
+  updateClip: (id, updates) => {
+    set((s) => {
+      const clips = s.arrangement.clips.map((c) => (c.id === id ? { ...c, ...updates, id } : c));
+      return { arrangement: recomputeArrangement({ ...s.arrangement, clips }) };
+    });
+    get().deriveSongChain();
+  },
+
+  removeClip: (id) => {
+    set((s) => ({
+      arrangement: recomputeArrangement({
+        ...s.arrangement,
+        clips: s.arrangement.clips.filter((c) => c.id !== id),
+      }),
+    }));
+    get().deriveSongChain();
+  },
+
+  moveClip: (id, newStartBeat) => {
+    const beat = Math.max(0, newStartBeat);
+    set((s) => {
+      const clips = s.arrangement.clips.map((c) => (c.id === id ? { ...c, startBeat: beat } : c));
+      return { arrangement: recomputeArrangement({ ...s.arrangement, clips }) };
+    });
+    get().deriveSongChain();
+  },
+
+  duplicateClip: (id) => {
+    const state = get();
+    const src = state.arrangement.clips.find((c) => c.id === id);
+    if (!src) return null;
+    const dup: Omit<ArrangementClip, 'id'> = {
+      patternId: src.patternId,
+      startBeat: clipEnd(src),
+      beats: src.beats,
+      loops: src.loops,
+      muted: src.muted,
+      color: src.color,
+    };
+    return get().addClip(dup);
+  },
+
+  splitClipAtBeat: (id, beat) => {
+    const state = get();
+    const src = state.arrangement.clips.find((c) => c.id === id);
+    if (!src) return;
+    if (beat <= src.startBeat || beat >= clipEnd(src)) return;
+    const leftBeats = beat - src.startBeat;
+    const rightBeats = src.beats - leftBeats;
+    state.updateClip(id, { beats: leftBeats });
+    state.addClip({
+      patternId: src.patternId,
+      startBeat: beat,
+      beats: rightBeats,
+      loops: 1,
+      muted: src.muted,
+      color: src.color,
+    });
+  },  deriveSongChain: () => {
+    set((s) => {
+      const sorted = [...s.arrangement.clips].sort((a, b) => a.startBeat - b.startBeat);
+      const order: string[] = [];
+      for (const clip of sorted) {
+        for (let i = 0; i < Math.max(1, clip.loops); i++) {
+          order.push(clip.patternId);
+        }
+      }
+      return { songChain: { order: order.length > 0 ? order : ['A', 'B', 'C', 'D'] } };
+    });
+  },
+
+  addTempoPoint: (point) => {
+    set((s) => ({
+      arrangement: {
+        ...s.arrangement,
+        tempoMap: sortTempoMap([
+          ...s.arrangement.tempoMap.filter((p) => Math.abs(p.tick - point.tick) > 0.001),
+          { tick: Math.max(0, point.tick), bpm: Math.max(20, Math.min(300, point.bpm)) },
+        ]),
+      },
+    }));
+  },
+
+  updateTempoPoint: (tick, bpm) => {
+    set((s) => ({
+      arrangement: {
+        ...s.arrangement,
+        tempoMap: sortTempoMap(
+          s.arrangement.tempoMap.map((p) =>
+            Math.abs(p.tick - tick) < 0.001 ? { tick: p.tick, bpm: Math.max(20, Math.min(300, bpm)) } : p
+          )
+        ),
+      },
+    }));
+  },
+
+  removeTempoPoint: (tick) => {
+    set((s) => ({
+      arrangement: {
+        ...s.arrangement,
+        tempoMap: s.arrangement.tempoMap.filter((p) => Math.abs(p.tick - tick) > 0.001),
+      },
+    }));
+  },
+
+  clearTempoMap: () => {
+    set((s) => ({ arrangement: { ...s.arrangement, tempoMap: [] } }));
+  },
+
+  getBpmAtBeat: (beat) => {
+    const map = get().arrangement.tempoMap;
+    if (map.length === 0) {
+      return get().patterns[get().activePatternId].bpm;
+    }
+    // Find the latest point whose tick <= beat.
+    let active = map[0];
+    for (const p of map) {
+      if (p.tick <= beat) active = p;
+      else break;
+    }
+    return active.bpm;
+  },
 }));
