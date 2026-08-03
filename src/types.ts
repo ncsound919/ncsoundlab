@@ -663,6 +663,10 @@ export interface PatternCell {
   on: boolean;
   note?: number;
   velocity?: number;
+  /** Length of the note in steps. 1 = one step (default). Used by melodic triggers. */
+  duration?: number;
+  /** 0..1. A step is skipped if Math.random() > probability. Default 1 (always fire). */
+  probability?: number;
 }
 
 export interface Pattern {

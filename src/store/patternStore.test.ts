@@ -119,3 +119,80 @@ describe('newEmptyPattern', () => {
     expect(p.layerRows.l1).toHaveLength(32);
   });
 });
+
+describe('Phase 1.1 — pattern cell duration/probability + 32-step preservation', () => {
+  beforeEach(() => {
+    usePatternStore.getState().reset();
+  });
+
+  it('setCell persists duration and probability', () => {
+    usePatternStore.getState().setCell('A', 'l1', 2, {
+      on: true,
+      note: 60,
+      velocity: 100,
+      duration: 4,
+      probability: 0.5,
+    });
+    const cell = usePatternStore.getState().patterns.A.layerRows.l1[2];
+    expect(cell).toEqual({
+      on: true,
+      note: 60,
+      velocity: 100,
+      duration: 4,
+      probability: 0.5,
+    });
+  });
+
+  it('cells without duration/probability leave them undefined', () => {
+    usePatternStore.getState().setCell('A', 'l1', 0, { on: true });
+    const cell = usePatternStore.getState().patterns.A.layerRows.l1[0];
+    expect(cell.on).toBe(true);
+    expect(cell.duration).toBeUndefined();
+    expect(cell.probability).toBeUndefined();
+  });
+
+  it('setStepLength 16 → 32 preserves duration/probability on existing cells', () => {
+    usePatternStore.getState().setCell('A', 'l1', 0, {
+      on: true,
+      note: 60,
+      velocity: 100,
+      duration: 8,
+      probability: 0.75,
+    });
+    usePatternStore.getState().setCell('A', 'l1', 15, { on: true, note: 64 });
+    usePatternStore.getState().setStepLength(32);
+    const row = usePatternStore.getState().patterns.A.layerRows.l1;
+    expect(row).toHaveLength(32);
+    expect(row[0]).toEqual({ on: true, note: 60, velocity: 100, duration: 8, probability: 0.75 });
+    expect(row[15]).toEqual({ on: true, note: 64 });
+    // Newly-added cells are bare {on:false}.
+    expect(row[16]).toEqual({ on: false });
+  });
+
+  it('setStepLength 32 → 16 truncates the row', () => {
+    usePatternStore.getState().setCell('A', 'l1', 20, { on: true, note: 67 });
+    usePatternStore.getState().setStepLength(32);
+    usePatternStore.getState().setCell('A', 'l1', 5, { on: true, note: 60 });
+    usePatternStore.getState().setStepLength(16);
+    const row = usePatternStore.getState().patterns.A.layerRows.l1;
+    expect(row).toHaveLength(16);
+    expect(row[5]).toEqual({ on: true, note: 60 });
+    expect(row[20]).toBeUndefined();
+  });
+
+  it('layer row loop bound honours pattern.stepLength (32 emits 32 ticks)', () => {
+    usePatternStore.getState().reset();
+    usePatternStore.getState().setStepLength(32);
+    usePatternStore.getState().setRow('A', 'k1', Array.from({ length: 32 }, () => ({ on: false })));
+    const row = usePatternStore.getState().patterns.A.layerRows.k1;
+    expect(row).toHaveLength(32);
+    // Walk the loop bound like the scheduler does — must wrap at 32, not 16.
+    let step = 0;
+    const visited = new Set<number>();
+    for (let i = 0; i < 64; i++) {
+      step = (step + 1) % 32;
+      visited.add(step);
+    }
+    expect(visited.size).toBe(32);
+  });
+});

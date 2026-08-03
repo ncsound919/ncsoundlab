@@ -46,7 +46,7 @@ interface MpcPadBankProps {
   onAssignActiveLayer: (index: number) => void;
   onSetGlobalSwing: (swing: number) => void;
   onTriggerPad: (layerId: string, semitones: number, velocity?: number) => void;
-  onPadInput?: (layerId: string) => void;
+  onPadInput?: (layerId: string, velocity?: number) => void;
   onNoteRepeatChange: (nr: { active: boolean; division: number }) => void;
   onSixteenLevelsChange: (enabled: boolean) => void;
   onFullLevelChange: (enabled: boolean) => void;
@@ -164,7 +164,7 @@ export function MpcPadBank({
     const rect = e.currentTarget.getBoundingClientRect();
     const y = (e.clientY - rect.top) / rect.height;
     onTriggerPad(entry.layerId, level, velocityFor(y));
-    onPadInput?.(entry.layerId);
+    onPadInput?.(entry.layerId, velocityFor(y));
     startRepeat(entry.layerId, level);
   };
 

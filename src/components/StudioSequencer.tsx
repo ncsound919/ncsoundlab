@@ -21,7 +21,7 @@ import { Piano, KeyboardShortcuts, MidiNumbers } from 'react-piano';
 import { Note, Chord } from 'tonal';
 import { Play, Square, Save, FolderOpen } from 'lucide-react';
 import 'react-piano/dist/styles.css';
-import { SoundLayer } from '../types';
+import { SoundLayer, PatternCell } from '../types';
 import { audioEngine } from '../lib/audioEngine';
 import { SoundLayerPlayer } from '../audio/SoundLayerPlayer';
 import { MpcPadBank, PadEntry } from './MpcPadBank';
@@ -32,10 +32,10 @@ import { exportV2, importExport } from '../sequencerFormat';
 import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
 import { renderMixdown } from '../audio/transport/mixdown';
 
-const STEPS = 16;
+const DEFAULT_STEPS = 16;
 const PPQ = 96;
 
-type StepCell = { on: boolean; note?: number };
+type StepCell = PatternCell;
 
 interface StudioSequencerProps {
   layers: SoundLayer[];
@@ -122,6 +122,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const recordingRef = useRef(false);
   const activeRowRef = useRef<string | null>(null);
   const patternRef = useRef(pattern);
+  const stepLengthRef = useRef<16 | 32>(patternStepLength);
   const padSwingRef = useRef(padSwing);
   const padChokeRef = useRef(padChoke);
   const swingTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
@@ -134,6 +135,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   if (!playerRef.current) playerRef.current = new SoundLayerPlayer();
 
   useEffect(() => { patternRef.current = pattern; }, [pattern]);
+  useEffect(() => { stepLengthRef.current = patternStepLength; }, [patternStepLength]);
   useEffect(() => { padSwingRef.current = padSwing; }, [padSwing]);
   useEffect(() => { padChokeRef.current = padChoke; }, [padChoke]);
   useEffect(() => { timeCorrectRef.current = timeCorrect; }, [timeCorrect]);
@@ -231,17 +233,25 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     const layer = layers.find((l) => l.id === layerId);
     if (!layer || !isLayerAudible(layer)) return;
     if (cell.note !== undefined && playerRef.current) {
-      playerRef.current.playNote(layer, cell.note, 0.5);
+      // Step 1.1: honour per-cell velocity (Phase 1.2 captures it) and
+      // duration (multi-step melodic notes). The downstream SoundLayerPlayer
+      // and pad trigger scale the gain by `velocity` and play a longer note
+      // for `duration` steps.
+      const velocity = typeof cell.velocity === 'number' ? Math.max(0, Math.min(1, cell.velocity / 127)) : 1;
+      const durationSteps = typeof cell.duration === 'number' && cell.duration > 0 ? cell.duration : 1;
+      const noteDurSeconds = (durationSteps * (60000 / bpm)) / 4 / 1000;
+      playerRef.current.playNote(layer, cell.note, noteDurSeconds, velocity);
     } else {
       // Step-triggered layers honour MPC choke groups too, so open/closed
       // hi-hat style rows cut each other consistently with the pads.
       const choke = padChokeRef.current[layerId] || 0;
       audioEngine.triggerLayer(layer, undefined, choke > 0 ? `choke:${choke}` : undefined);
     }
-  }, [layers, isLayerAudible]);
+  }, [layers, isLayerAudible, bpm]);
 
   const tick = useCallback(() => {
-    const step = (stepRef.current + 1) % STEPS;
+    const stepLen = stepLengthRef.current;
+    const step = (stepRef.current + 1) % stepLen;
     stepRef.current = step;
     setCurrentStep(step);
     const p = patternRef.current;
@@ -249,6 +259,9 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     for (const [layerId, cells] of Object.entries(p)) {
       const cell = cells[step];
       if (cell && cell.on) {
+        // Probability: if cell.probability < 1, roll the dice and skip this hit.
+        const probability = cell.probability ?? 1;
+        if (probability < 1 && Math.random() > probability) continue;
         // MPC per-pad swing: delay off-beat 16ths (odd steps) by the pad's swing %
         const swing = padSwingRef.current[layerId] || 0;
         const offBeat = step % 2 === 1;
@@ -349,6 +362,8 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         for (const [layerId, cells] of Object.entries(p)) {
           const cell = cells[stepIdx];
           if (cell && cell.on) {
+            const probability = cell.probability ?? 1;
+            if (probability < 1 && Math.random() > probability) continue;
             const swing = padSwingRef.current[layerId] || 0;
             const offBeat = stepIdx % 2 === 1;
             const delay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
@@ -364,7 +379,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           }
         }
         void time;
-      }, [...Array(STEPS).keys()], '16n');
+      }, [...Array(stepLengthRef.current).keys()], '16n');
       seq.loop = true;
       seq.start(0);
     } catch (e) {
@@ -427,7 +442,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   }, [useTransportMode, songModeActive]);
 
   const toggleCell = (layerId: string, idx: number) => {
-    const row = pattern[layerId] || Array.from({ length: STEPS }, () => ({ on: false }));
+    const row = pattern[layerId] || Array.from({ length: stepLengthRef.current }, () => ({ on: false }));
     const next = row.map((c, i) => (i === idx ? { on: !c.on, note: c.note } : c));
     setRow(activePatternId, layerId, next);
   };
@@ -435,7 +450,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   // Piano-roll edit: set/clear a melodic note at (step, pitch) on a layer row.
   const toggleNote = useCallback((layerId: string, step: number, pitch: number) => {
     const row = usePatternStore.getState().patterns[usePatternStore.getState().activePatternId].layerRows[layerId]
-      || Array.from({ length: STEPS }, () => ({ on: false }));
+      || Array.from({ length: stepLengthRef.current }, () => ({ on: false }));
     const next = row.map((c, i) => {
       if (i !== step) return c;
       return c.on && c.note === pitch ? { on: false } : { on: true, note: pitch };
@@ -443,31 +458,39 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     setRow(activePatternId, layerId, next);
   }, [activePatternId, setRow]);
 
-  const recordNote = useCallback((midi: number) => {
+  const recordNote = useCallback((midi: number, velocity?: number) => {
     const rowId = activeRowRef.current;
     if (!rowId) return;
     const pid = usePatternStore.getState().activePatternId;
     // MPC Time Correct: snap the recorded step to the resolution grid
     const res = timeCorrectRef.current || 1;
     const rawStep = playingRef.current ? stepRef.current : 0;
-    const step = Math.max(0, Math.min(STEPS - 1, Math.round(rawStep / res) * res));
+    const stepLen = stepLengthRef.current;
+    const step = Math.max(0, Math.min(stepLen - 1, Math.round(rawStep / res) * res));
     const row = usePatternStore.getState().patterns[pid].layerRows[rowId]
-      || Array.from({ length: STEPS }, () => ({ on: false }));
-    const next = row.map((c, i) => (i === step ? { on: true, note: midi } : c));
+      || Array.from({ length: stepLen }, () => ({ on: false }));
+    const cellUpdate: PatternCell = { on: true, note: midi };
+    if (typeof velocity === 'number') cellUpdate.velocity = Math.max(0, Math.min(127, Math.round(velocity)));
+    const next = row.map((c, i) => (i === step ? { ...c, ...cellUpdate } : c));
     setRow(pid, rowId, next);
   }, [setRow]);
 
   // Pad-to-step: real pad hits while REC + playing write a drum trigger into
-  // the hit layer's row at the current step (Time Correct snapped).
-  const recordPadHit = useCallback((layerId: string) => {
+  // the hit layer's row at the current step (Time Correct snapped). The pad's
+  // live velocity (0..127, derived from pointer Y in MpcPadBank) is captured
+  // onto the cell so playback can scale the trigger loudness.
+  const recordPadHit = useCallback((layerId: string, velocity?: number) => {
     if (!recordingRef.current || !playingRef.current) return;
     const pid = usePatternStore.getState().activePatternId;
     const res = timeCorrectRef.current || 1;
     const rawStep = stepRef.current;
-    const step = Math.max(0, Math.min(STEPS - 1, Math.round(rawStep / res) * res));
+    const stepLen = stepLengthRef.current;
+    const step = Math.max(0, Math.min(stepLen - 1, Math.round(rawStep / res) * res));
     const row = usePatternStore.getState().patterns[pid].layerRows[layerId]
-      || Array.from({ length: STEPS }, () => ({ on: false }));
-    const next = row.map((c, i) => (i === step ? { on: true, note: undefined } : c));
+      || Array.from({ length: stepLen }, () => ({ on: false }));
+    const cellUpdate: PatternCell = { on: true };
+    if (typeof velocity === 'number') cellUpdate.velocity = Math.max(0, Math.min(127, Math.round(velocity)));
+    const next = row.map((c, i) => (i === step ? { ...c, ...cellUpdate } : c));
     setRow(pid, layerId, next);
   }, [setRow]);
 
@@ -476,16 +499,17 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     const res = Math.max(1, timeCorrect || 1);
     const pid = usePatternStore.getState().activePatternId;
     const prev = usePatternStore.getState().patterns[pid].layerRows;
+    const stepLen = stepLengthRef.current;
     const next: Record<string, StepCell[]> = {};
     for (const id of Object.keys(prev)) {
       const cells = prev[id];
       const snapped = new Map<number, StepCell>();
       cells.forEach((c, i) => {
         if (!c.on) return;
-        const s = Math.min(STEPS - 1, Math.max(0, Math.round(i / res) * res));
+        const s = Math.min(stepLen - 1, Math.max(0, Math.round(i / res) * res));
         if (!snapped.has(s)) snapped.set(s, c);
       });
-      const row: StepCell[] = Array.from({ length: STEPS }, () => ({ on: false }));
+      const row: StepCell[] = Array.from({ length: stepLen }, () => ({ on: false }));
       snapped.forEach((c, i) => { row[i] = { on: true, note: c.note }; });
       next[id] = row;
     }
@@ -511,18 +535,19 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     }
   }, []);
 
-  const playMidiNote = useCallback((midi: number) => {
+  const playMidiNote = useCallback((midi: number, velocity?: number) => {
     const rowId = activeRowRef.current;
     const layer = layers.find((l) => l.id === rowId);
     if (!layer || !isLayerAudible(layer)) return;
     if (layer.type === 'synth' && playerRef.current) {
-      playerRef.current.playNote(layer, midi, 0.6);
+      const v01 = typeof velocity === 'number' ? Math.max(0, Math.min(1, velocity / 127)) : 1;
+      playerRef.current.playNote(layer, midi, 0.6, v01);
     } else {
       audioEngine.triggerLayer(layer);
     }
     setActiveNotes((prev) => (prev.includes(midi) ? prev : [...prev, midi]));
     if (recordingRef.current && playingRef.current) {
-      recordNote(midi);
+      recordNote(midi, velocity);
     }
   }, [layers, recordNote, isLayerAudible]);
 
@@ -530,17 +555,17 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     setActiveNotes((prev) => prev.filter((n) => n !== midi));
   }, []);
 
-  const handlePlayNoteInput = useCallback((midi: number) => {
+  const handlePlayNoteInput = useCallback((midi: number, velocity?: number) => {
     // Fires only on real user input (mouse/touch/QWERTY) — used for recording.
     if (recordingRef.current && playingRef.current) {
-      recordNote(midi);
+      recordNote(midi, velocity);
     }
   }, [recordNote]);
 
   const clearPattern = () => {
     const pid = usePatternStore.getState().activePatternId;
     for (const layer of layers) {
-      setRow(pid, layer.id, Array.from({ length: STEPS }, () => ({ on: false })));
+      setRow(pid, layer.id, Array.from({ length: stepLengthRef.current }, () => ({ on: false })));
     }
   };
 
@@ -947,7 +972,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           <div className="min-w-[620px] p-2.5 space-y-1">
             {/* Step headers */}
             <div className="flex items-center gap-1 pl-24">
-              {Array.from({ length: STEPS }, (_, i) => (
+              {Array.from({ length: patternStepLength }, (_, i) => (
                 <div
                   key={i}
                   className={`flex-1 text-center text-[8px] font-mono font-bold py-0.5 rounded ${
@@ -960,7 +985,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
             </div>
 
             {layers.filter((l) => l.enabled).map((layer) => {
-              const row = pattern[layer.id] || Array.from({ length: STEPS }, () => ({ on: false }));
+              const row = pattern[layer.id] || Array.from({ length: patternStepLength }, () => ({ on: false }));
               const isActive = activeRowId === layer.id;
               return (
                 <div key={layer.id} className="flex items-center gap-1">
@@ -1015,6 +1040,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
               currentStep={currentStep}
               activeLayerId={activeRowId}
               onToggleNote={toggleNote}
+              stepLength={patternStepLength}
             />
           </div>
         )}
@@ -1054,7 +1080,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           const choke = padChoke[layerId] || 0;
           triggerLayerWithSemitone(layerId, semitones, velocity || 1, choke > 0 ? `choke:${choke}` : undefined);
         }}
-        onPadInput={(layerId) => recordPadHit(layerId)}
+        onPadInput={(layerId, velocity) => recordPadHit(layerId, velocity)}
         onNoteRepeatChange={setNoteRepeat}
         onSixteenLevelsChange={setSixteenLevels}
         onFullLevelChange={setFullLevel}

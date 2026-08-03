@@ -111,7 +111,13 @@ export const usePatternStore = create<PatternStore>((set) => ({
       const p = s.patterns[s.activePatternId];
       const layerRows: Record<string, PatternCell[]> = {};
       for (const [k, row] of Object.entries(p.layerRows)) {
-        layerRows[k] = row.length === len ? row.slice() : Array.from({ length: len }, (_, i) => row[i] ?? { on: false });
+        layerRows[k] = row.length === len
+          ? row.slice()
+          : Array.from({ length: len }, (_, i) => {
+              const existing = row[i];
+              if (existing) return { ...existing };
+              return { on: false };
+            });
       }
       return { patterns: { ...s.patterns, [s.activePatternId]: { ...p, stepLength: len, layerRows } } };
     }),

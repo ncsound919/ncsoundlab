@@ -73,8 +73,10 @@ export class SoundLayerPlayer {
    * Play a MIDI note for a SoundLayer.
    * MIDI note 60 = Middle C (C4 = ~261.63Hz or 0 semitone offset).
    * MIDI note 69 = A4 (440Hz).
+   * `velocity` is 0..1 (linearly scaled to 0..127 MIDI velocity when stored
+   * on the pattern cell). Defaults to 1.
    */
-  playNote(layer: SoundLayer, noteNumber: number = 60, duration: number = 1.0): void {
+  playNote(layer: SoundLayer, noteNumber: number = 60, duration: number = 1.0, velocity: number = 1.0): void {
     if (!layer.enabled) return;
 
     const ctx = baseAudioEngine.getContext();
@@ -85,10 +87,16 @@ export class SoundLayerPlayer {
     }
 
     const startTime = ctx.currentTime;
-    
+
     // Calculate custom gain override from setGain (dB to linear)
     const dbGain = this.getGain(layer.id);
     const customLinearGain = dbToGain(dbGain);
+
+    // Velocity scales the per-note gain linearly (0..1) on top of the layer's
+    // base gain. A velocity of 0 is allowed (audible silence) for explicit
+    // "step is on but quiet" entries.
+    const velocityGain = safeAudioValue(velocity, 1);
+    const noteGain = customLinearGain * velocityGain;
 
     // Create primary oscillator or sample source
     let sourceNode: AudioBufferSourceNode | OscillatorNode;
@@ -126,7 +134,7 @@ export class SoundLayerPlayer {
     const safeAttack = Math.max(0.005, env.attack ?? 0.005);
     const safeDecay = Math.max(0.005, env.decay ?? 0.1);
     const safeRelease = Math.max(0.005, env.release ?? 0.1);
-    const peakGain = Math.max(0, customLinearGain);
+    const peakGain = Math.max(0, noteGain);
     const sustainGain = Math.max(0, peakGain * (env.sustain ?? 0.8));
 
     noteGainNode.gain.cancelScheduledValues(startTime);

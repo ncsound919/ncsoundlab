@@ -12,7 +12,7 @@ import React, { useMemo } from 'react';
 import { Note } from 'tonal';
 import { SoundLayer } from '../types';
 
-const STEPS = 16;
+const DEFAULT_STEPS = 16;
 const ROW_H = 16;
 const LOW_PITCH = 36; // C2
 const HIGH_PITCH = 84; // C6
@@ -45,9 +45,11 @@ interface PianoRollProps {
   currentStep: number;
   activeLayerId: string | null;
   onToggleNote: (layerId: string, step: number, pitch: number) => void;
+  stepLength?: 16 | 32;
 }
 
-export function PianoRoll({ layers, pattern, currentStep, activeLayerId, onToggleNote }: PianoRollProps) {
+export function PianoRoll({ layers, pattern, currentStep, activeLayerId, onToggleNote, stepLength = DEFAULT_STEPS }: PianoRollProps) {
+  const steps = stepLength;
   const enabled = layers.filter((l) => l.enabled);
 
   // A cell's pitch: the stored midi note, else a fixed drum pitch per row.
@@ -73,7 +75,7 @@ export function PianoRoll({ layers, pattern, currentStep, activeLayerId, onToggl
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!activeLayerId) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = Math.max(0, Math.min(STEPS - 1, Math.floor(((e.clientX - rect.left) / rect.width) * STEPS)));
+    const x = Math.max(0, Math.min(steps - 1, Math.floor(((e.clientX - rect.left) / rect.width) * steps)));
     const y = e.clientY - rect.top;
     const pitch = HIGH_PITCH - Math.floor(y / ROW_H);
     if (pitch < LOW_PITCH || pitch > HIGH_PITCH) return;
@@ -103,7 +105,7 @@ export function PianoRoll({ layers, pattern, currentStep, activeLayerId, onToggl
       <div className="flex-1 min-w-0">
         {/* Step header */}
         <div className="flex gap-px mb-0.5">
-          {Array.from({ length: STEPS }, (_, i) => (
+          {Array.from({ length: steps }, (_, i) => (
             <div
               key={i}
               className={`flex-1 text-center text-[8px] font-mono font-bold ${i === currentStep ? 'text-yellow-400' : 'text-slate-600'}`}
@@ -144,9 +146,9 @@ export function PianoRoll({ layers, pattern, currentStep, activeLayerId, onToggl
                 n.step === currentStep ? 'ring-2 ring-white shadow-[0_0_8px_rgba(255,255,255,0.5)]' : ''
               }`}
               style={{
-                left: `${(n.step / STEPS) * 100}%`,
+                left: `${(n.step / steps) * 100}%`,
                 top: (HIGH_PITCH - n.pitch) * ROW_H + 2,
-                width: `${100 / STEPS}%`,
+                width: `${100 / steps}%`,
                 height: ROW_H - 4,
               }}
             />
@@ -155,7 +157,7 @@ export function PianoRoll({ layers, pattern, currentStep, activeLayerId, onToggl
           {/* Playhead */}
           <div
             className="absolute top-0 bottom-0 w-px bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.8)] pointer-events-none"
-            style={{ left: `${((currentStep + 0.5) / STEPS) * 100}%` }}
+            style={{ left: `${((currentStep + 0.5) / steps) * 100}%` }}
           />
         </div>
       </div>
