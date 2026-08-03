@@ -766,6 +766,14 @@ export class AudioEngine {
     return this.context;
   }
 
+  getMasterRackInput(): GainNode | null {
+    return this.masterRackInput;
+  }
+
+  getMasterRackOutput(): GainNode | null {
+    return this.masterRackOutput;
+  }
+
   getAnalyser() {
     return this.analyserNode;
   }

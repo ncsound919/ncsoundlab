@@ -19,6 +19,11 @@ class MockAudioContext {
 vi.stubGlobal('AudioContext', MockAudioContext);
 vi.stubGlobal('webkitAudioContext', MockAudioContext);
 
+// jsdom does not expose Web Audio node constructors. Stub the ones used in
+// runtime instanceof checks so smoke tests can assert against them.
+class MockGainNode {}
+vi.stubGlobal('GainNode', MockGainNode);
+
 // Mock AudioEngine
 const createAudioEngineMock = () => {
   const mock = {
@@ -28,7 +33,9 @@ const createAudioEngineMock = () => {
     setMasterGain: vi.fn(),
     setMasterLevel: vi.fn(),
     setMasterPan: vi.fn(),
-    getContext: vi.fn(() => new MockAudioContext())
+    getContext: vi.fn(() => new MockAudioContext()),
+    getMasterRackInput: vi.fn(() => new MockGainNode()),
+    getMasterRackOutput: vi.fn(() => new MockGainNode())
   };
   
   return new Proxy(mock, {
