@@ -17,6 +17,50 @@ export type { ProjectDocument } from './projectFormat';
 /** SoundKitSample without the non-serializable AudioBuffer. */
 export type StoredSoundKitSample = Omit<SoundKitSample, 'audioBuffer'>;
 
+/**
+ * Phase 5.1 — persistent sample library entries. Sample audio is stored as
+ * base64 WAV (`sampleData`) so the browser tab + an offline IndexedDB cache
+ * can hold the entire user library. `sampleMeta` records sample-rate/channels
+ * at encode time so re-decoding is exact.
+ */
+export interface StoredSampleLibrarySample {
+  id: string;
+  name: string;
+  fileName: string;
+  folderId: string | null;
+  category: string;
+  tags: string[];
+  key?: string;
+  bpm?: number;
+  gain: number;
+  pitch: number;
+  sampleData: string;
+  sampleMeta: { sampleRate: number; channels: number; length: number };
+  analysis?: StoredSampleAnalysis;
+  sizeBytes?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Lightweight analysis snapshot (no AudioBuffer). */
+export interface StoredSampleAnalysis {
+  peakDb: number;
+  rmsDb: number;
+  durationSeconds: number;
+  sampleRate: number;
+  channels: number;
+  transientSharpness: number;
+  estimatedKey?: string;
+  suggestedCategory: string;
+}
+
+export interface StoredSampleLibraryFolder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  createdAt: string;
+}
+
 /** SoundKit without non-serializable sample buffers. */
 export type StoredSoundKit = Omit<SoundKit, 'samples'> & {
   ownerId: string;
@@ -44,6 +88,13 @@ class SoundLabDB extends Dexie {
   soundProjects!: Table<SavedSoundProject, string>;
   favorites!: Table<Favorite, string>;
   projectDocuments!: Table<ProjectDocument, string>;
+  /**
+   * Phase 5.1 — persistent user sample library. Two tables: folders for a
+   * lightweight tree (parentId-driven), and the actual samples indexed by
+   * folder so a folder listing is a single `where('folderId').equals(id)` query.
+   */
+  sampleLibraryFolders!: Table<StoredSampleLibraryFolder, string>;
+  sampleLibrarySamples!: Table<StoredSampleLibrarySample, string>;
 
   constructor() {
     super('soundlab-db');
@@ -58,6 +109,12 @@ class SoundLabDB extends Dexie {
     // Step 0.4 deprecates it.
     this.version(2).stores({
       projectDocuments: 'id, title, updatedAt',
+    });
+    // Phase 5.1: persistent sample library. Additive — does not affect any
+    // existing table, so older projects continue to load unchanged.
+    this.version(3).stores({
+      sampleLibraryFolders: 'id, parentId, createdAt',
+      sampleLibrarySamples: 'id, folderId, category, updatedAt, createdAt',
     });
   }
 }
