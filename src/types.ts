@@ -174,6 +174,10 @@ export interface FXSettings {
   lfoTarget?: 'filterFreq' | 'filter2Freq' | 'pitch' | 'pan' | 'distortion' | 'res';
   lfoSync?: boolean;
   lfoDivision?: '1/4' | '1/8' | '1/16' | '1/32' | '1/8t' | '1/16t';
+
+  // Phase 3.4 — per-layer parametric EQ. Optional; older layers default to
+  // no bands and bypass the EQ section entirely.
+  eq?: import('./audio/eqBands').EQBand[];
 }
 
 export interface SynthSettings {

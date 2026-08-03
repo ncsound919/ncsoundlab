@@ -22,6 +22,7 @@ import { Fader } from './Fader';
 import { Knob } from './Knob';
 import { ChannelStrip } from './ChannelStrip';
 import { SendsPanel } from './SendsPanel';
+import { LayerEQPanel } from './LayerEQPanel';
 import { audioEngine as sharedAudioEngine } from '../audio/AudioEngine';
 import { audioEngine } from '../lib/audioEngine';
 import { computeMeterLevel, makeScratchBuffer } from '../audio/metering';
@@ -236,6 +237,18 @@ export function LayerMixer({
 
         {/* Phase 3.3 — FX bus returns panel sits next to the master strip */}
         <SendsPanel buses={['reverb', 'delay']} />
+
+        {/* Phase 3.4 — per-layer parametric EQ editor for the selected layer */}
+        {selectedLayerId && (() => {
+          const sel = layers.find((l) => l.id === selectedLayerId);
+          if (!sel) return null;
+          return (
+            <LayerEQPanel
+              bands={sel.fx.eq}
+              onChange={(bands) => onUpdateLayer(sel.id, { fx: { ...sel.fx, eq: bands } })}
+            />
+          );
+        })()}
 
         {/* Master Output Channel Strip */}
         <div className="w-40 flex-shrink-0 flex flex-col justify-between bg-[#0e0e11] border border-orange-500/20 rounded-2xl p-3 select-none relative shadow-[0_0_15px_rgba(249,115,22,0.05)]">

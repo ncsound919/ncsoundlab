@@ -233,11 +233,14 @@ export const ChannelStrip: React.FC<ChannelStripProps> = ({
       )}
 
       {/* EQ badge (Phase 3.4 — per-layer parametric EQ) */}
-      {typeof eqBands === 'number' && eqBands > 0 && (
-        <div className="bg-[#0c0c0e] border border-[#1b1b1e] rounded-xl p-1 mb-3 text-center" title={`${eqBands}-band parametric EQ on this channel`}>
-          <span className="text-[8px] font-mono font-bold text-emerald-400 uppercase tracking-widest">EQ · {eqBands} BAND</span>
+      {(typeof eqBands === 'number' && eqBands > 0) ||
+      (layer.fx?.eq && layer.fx.eq.some((b) => b.enabled !== false)) ? (
+        <div className="bg-[#0c0c0e] border border-[#1b1b1e] rounded-xl p-1 mb-3 text-center" title="Parametric EQ on this channel">
+          <span className="text-[8px] font-mono font-bold text-emerald-400 uppercase tracking-widest">
+            EQ · {(layer.fx?.eq ?? []).filter((b) => b.enabled !== false).length || eqBands || 0} BAND
+          </span>
         </div>
-      )}
+      ) : null}
 
       {/* Vertical Fader Section with VU Peak Indicator */}
       <div className="flex items-stretch justify-center h-44 gap-3 bg-[#0a0a0c] p-2 rounded-xl border border-[#1b1b1e]">
