@@ -16,6 +16,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as Tone from 'tone';
 import { initTransport, getTransport } from '../audio/transport/transport';
 import { TransportBar } from './TransportBar';
+import { SongModePanel } from './SongModePanel';
 import { Piano, KeyboardShortcuts, MidiNumbers } from 'react-piano';
 import { Note, Chord } from 'tonal';
 import { Play, Square, Save, FolderOpen } from 'lucide-react';
@@ -75,6 +76,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const patternStepLength = usePatternStore((s) => s.patterns[s.activePatternId].stepLength);
   const setTimeSignature = usePatternStore((s) => s.setTimeSignature);
   const setStepLength = usePatternStore((s) => s.setStepLength);
+  const songChain = usePatternStore((s) => s.songChain.order);
   const setRow = usePatternStore((s) => s.setRow);
   const ensureLayerRow = usePatternStore((s) => s.ensureLayerRow);
   const storeSetBpm = usePatternStore((s) => s.setBpm);
@@ -104,6 +106,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   // The setInterval path is retained as a fallback — the TransportBar checkbox
   // lets users switch back if Tone audio misbehaves in a given environment.
   const [useTransportMode, setUseTransportMode] = useState(true);
+  const [songModeActive, setSongModeActive] = useState(false);
 
   const playerRef = useRef<SoundLayerPlayer | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -380,6 +383,41 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       t.setSwing(globalSwing);
     } catch { /* transport not initialized yet */ }
   }, [bpm, globalSwing, useTransportMode]);
+
+  // Song mode: every bar boundary, advance the active pattern to the next
+  // pattern in the chain. The Tone.Sequence reads patternRef.current, which
+  // tracks the active pattern, so the next bar plays the new pattern.
+  useEffect(() => {
+    if (!useTransportMode || !songModeActive) return;
+    let scheduledId: number | null = null;
+    let cancelled = false;
+    let cursor = usePatternStore.getState().songChain.order.indexOf(usePatternStore.getState().activePatternId);
+    if (cursor < 0) cursor = 0;
+    try {
+      initTransport();
+      const t = getTransport();
+      scheduledId = Tone.Transport.scheduleRepeat((time) => {
+        if (cancelled) return;
+        const chain = usePatternStore.getState().songChain.order;
+        if (chain.length === 0) return;
+        cursor = (cursor + 1) % chain.length;
+        const next = chain[cursor];
+        usePatternStore.getState().setActivePattern(next as 'A' | 'B' | 'C' | 'D');
+        // Re-apply the new pattern's BPM to the transport at this bar.
+        const np = usePatternStore.getState().patterns[next as 'A' | 'B' | 'C' | 'D'];
+        if (np) getTransport().setBpm(np.bpm);
+        void time;
+      }, '1m');
+    } catch (e) {
+      console.warn('Song mode scheduling failed', e);
+    }
+    return () => {
+      cancelled = true;
+      if (scheduledId !== null) {
+        try { Tone.Transport.clear(scheduledId); } catch { /* ignore */ }
+      }
+    };
+  }, [useTransportMode, songModeActive]);
 
   const toggleCell = (layerId: string, idx: number) => {
     const row = pattern[layerId] || Array.from({ length: STEPS }, () => ({ on: false }));
@@ -687,12 +725,15 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         useTransportMode={useTransportMode}
         timeSignature={patternTimeSignature}
         stepLength={patternStepLength}
+        songModeActive={songModeActive}
         onBpmChange={setBpm}
         onPlayStop={togglePlay}
         onUseTransportModeChange={setUseTransportMode}
         onTimeSignatureChange={setTimeSignature}
         onStepLengthChange={setStepLength}
+        onSongModeToggle={() => setSongModeActive((v) => !v)}
       />
+      {songModeActive && <SongModePanel onPlayFromSlot={() => { /* song starts from slot via transport */ }} />}
       {/* Transport bar */}
       <div className="bg-[#0f0f12] border border-[#1e293b] rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">

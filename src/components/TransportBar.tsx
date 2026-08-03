@@ -6,11 +6,13 @@ interface TransportBarProps {
   useTransportMode: boolean;
   timeSignature: [number, number];
   stepLength: 16 | 32;
+  songModeActive: boolean;
   onBpmChange: (bpm: number) => void;
   onPlayStop: () => void;
   onUseTransportModeChange: (on: boolean) => void;
   onTimeSignatureChange: (b: 3 | 4 | 6, n: 4 | 8) => void;
   onStepLengthChange: (len: 16 | 32) => void;
+  onSongModeToggle: () => void;
 }
 
 export function TransportBar({
@@ -19,11 +21,13 @@ export function TransportBar({
   useTransportMode,
   timeSignature,
   stepLength,
+  songModeActive,
   onBpmChange,
   onPlayStop,
   onUseTransportModeChange,
   onTimeSignatureChange,
   onStepLengthChange,
+  onSongModeToggle,
 }: TransportBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-3 px-3 py-2 bg-black/40 border border-white/10 rounded">
@@ -53,6 +57,14 @@ export function TransportBar({
           onChange={(e) => onUseTransportModeChange(e.target.checked)}
         />
         Tone Transport
+      </label>
+      <label className="flex items-center gap-2 text-sm text-white/80">
+        <input
+          type="checkbox"
+          checked={songModeActive}
+          onChange={onSongModeToggle}
+        />
+        Song Mode
       </label>
       <label className="flex items-center gap-2 text-sm text-white/80">
         Time Sig
