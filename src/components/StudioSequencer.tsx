@@ -29,6 +29,7 @@ import { PianoRoll } from './PianoRoll';
 import { useSequencerStore, BANK_IDS, BankId } from '../store/sequencerStore';
 import { usePatternStore } from '../store/patternStore';
 import { exportV2, importExport } from '../sequencerFormat';
+import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
 
 const STEPS = 16;
 const PPQ = 96;
@@ -40,6 +41,8 @@ interface StudioSequencerProps {
   selectedLayerId: string | null;
   onSelectLayer: (id: string) => void;
   onUpdateLayer?: (id: string, updates: Partial<SoundLayer>) => void;
+  onAddLayer?: (buffer: AudioBuffer, name?: string) => void;
+  onAddSlicedLayers?: (buffers: AudioBuffer[]) => void;
 }
 
 const FIRST_NOTE = MidiNumbers.fromNote('c3');
@@ -51,7 +54,7 @@ const keyboardShortcuts = KeyboardShortcuts.create({
   keyboardConfig: KeyboardShortcuts.HOME_ROW,
 });
 
-export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpdateLayer }: StudioSequencerProps) {
+export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpdateLayer, onAddLayer, onAddSlicedLayers }: StudioSequencerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
@@ -107,6 +110,9 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   // lets users switch back if Tone audio misbehaves in a given environment.
   const [useTransportMode, setUseTransportMode] = useState(true);
   const [songModeActive, setSongModeActive] = useState(false);
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [lastRecordedBuffer, setLastRecordedBuffer] = useState<AudioBuffer | null>(null);
+  const audioCaptureRef = useRef<ReturnType<typeof createAudioCapture> | null>(null);
 
   const playerRef = useRef<SoundLayerPlayer | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -704,6 +710,39 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     reader.readAsText(file);
   };
 
+  // Mic / instrument audio recording via getUserMedia + MediaRecorder.
+  const onRecordAudio = async () => {
+    if (isRecordingAudio) {
+      if (!audioCaptureRef.current) return;
+      try {
+        const blob = await audioCaptureRef.current.stop();
+        const ctx = audioEngine.getContext();
+        if (!ctx) throw new Error('AudioContext unavailable');
+        const buffer = await audioCaptureRef.current.decodeBlobToBuffer(blob, ctx);
+        setLastRecordedBuffer(buffer);
+        if (onAddLayer) onAddLayer(buffer, 'Mic Take');
+      } catch (e) {
+        console.warn('Audio recording stop failed', e);
+      }
+      setIsRecordingAudio(false);
+    } else {
+      if (!audioCaptureRef.current) audioCaptureRef.current = createAudioCapture();
+      try {
+        await audioCaptureRef.current.start();
+        setIsRecordingAudio(true);
+      } catch (e) {
+        console.warn('Mic permission denied or unsupported', e);
+      }
+    }
+  };
+
+  // Auto-slice the last recorded take across N pads.
+  const onSlice = (buffer: AudioBuffer, n: number) => {
+    const slices = sliceBufferIntoPads(buffer, n);
+    if (onAddSlicedLayers) onAddSlicedLayers(slices);
+    setLastRecordedBuffer(null);
+  };
+
   // Live chord label for the notes currently held on the piano (tonal)
   const chordLabel = useCallback(() => {
     const pcs = activeNotes
@@ -726,14 +765,42 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         timeSignature={patternTimeSignature}
         stepLength={patternStepLength}
         songModeActive={songModeActive}
+        isRecordingAudio={isRecordingAudio}
         onBpmChange={setBpm}
         onPlayStop={togglePlay}
         onUseTransportModeChange={setUseTransportMode}
         onTimeSignatureChange={setTimeSignature}
         onStepLengthChange={setStepLength}
         onSongModeToggle={() => setSongModeActive((v) => !v)}
+        onRecordAudio={onRecordAudio}
       />
       {songModeActive && <SongModePanel onPlayFromSlot={() => { /* song starts from slot via transport */ }} />}
+      {!isRecordingAudio && lastRecordedBuffer && (
+        <div className="flex gap-2 mt-2 text-sm">
+          <span className="text-white/70 self-center">Slice take:</span>
+          <button
+            type="button"
+            onClick={() => onSlice(lastRecordedBuffer, 16)}
+            className="px-3 py-1 rounded bg-cyan-700 hover:bg-cyan-600 text-white"
+          >
+            Slice 16
+          </button>
+          <button
+            type="button"
+            onClick={() => onSlice(lastRecordedBuffer, 32)}
+            className="px-3 py-1 rounded bg-cyan-700 hover:bg-cyan-600 text-white"
+          >
+            Slice 32
+          </button>
+          <button
+            type="button"
+            onClick={() => setLastRecordedBuffer(null)}
+            className="px-3 py-1 rounded bg-white/10 text-white/70"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       {/* Transport bar */}
       <div className="bg-[#0f0f12] border border-[#1e293b] rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">

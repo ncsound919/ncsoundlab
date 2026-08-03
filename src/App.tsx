@@ -2560,6 +2560,10 @@ export default function App() {
                     selectedLayerId={selectedLayerId}
                     onSelectLayer={setSelectedLayerId}
                     onUpdateLayer={updateLayer}
+                    onAddLayer={(buffer: AudioBuffer, name?: string) => addLayer('sample', buffer, name)}
+                    onAddSlicedLayers={(buffers: AudioBuffer[]) => {
+                      buffers.forEach((b, i) => addLayer('sample', b, `Slice ${i + 1}`));
+                    }}
                   />
                 </Suspense>
               </motion.div>
