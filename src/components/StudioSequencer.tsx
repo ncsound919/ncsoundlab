@@ -87,10 +87,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const [timeCorrect, setTimeCorrect] = useState(1); // 1=1/16, 2=1/8, 4=1/4 record snap
   const [view, setView] = useState<'grid' | 'piano'>('grid');
 
-  // Tone Transport mode (Phase 1). Off by default — the setInterval path stays
-  // alive. After behavior-parity verification in Task 1.7 the default flips to
-  // true and the setInterval path is removed.
-  const [useTransportMode, setUseTransportMode] = useState(false);
+  // Tone Transport mode (Phase 1). On by default after parity verification.
+  // The setInterval path is retained as a fallback — the TransportBar checkbox
+  // lets users switch back if Tone audio misbehaves in a given environment.
+  const [useTransportMode, setUseTransportMode] = useState(true);
 
   const playerRef = useRef<SoundLayerPlayer | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
