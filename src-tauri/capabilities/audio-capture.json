@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "audio-capture",
+  "description": "Audio-capture related permissions for the Beat Studio. Note: Tauri's capability system gates IPC commands, NOT Web APIs. getUserMedia() is handled natively by WebView2 (Windows) — it is NOT gated by this file. This capability is a placeholder that keeps the identifier registered for future audio IPC needs (e.g. a Tauri mic plugin) and must contain only VALID core permissions or the build fails.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}
