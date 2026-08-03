@@ -102,6 +102,7 @@ class MockOfflineAudioContext {
       numberOfChannels: this.numberOfChannels,
       length: this.length,
       sampleRate: this.sampleRate,
+      duration: this.length / this.sampleRate,
       getChannelData: vi.fn(() => new Float32Array(this.length)),
       copyToChannel: vi.fn(),
       copyFromChannel: vi.fn()
