@@ -939,6 +939,28 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
             }
           });
         }}
+        onApplyToPattern={(chords) => {
+          // Voice the progression and stamp each chord's root into the active
+          // pattern row as a melodic cell on the 16th grid (one cell per chord,
+          // spaced by its duration in 16th steps).
+          const rowId = activeRowRef.current;
+          if (!rowId) return;
+          const store = usePatternStore.getState();
+          const pid = store.activePatternId;
+          const p = store.patterns[pid];
+          const stepLength = p.stepLength;
+          const row = (p.layerRows[rowId] ?? Array.from({ length: stepLength }, () => ({ on: false }))).slice();
+          const pcOf = { C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5, 'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11 };
+          let step = 0;
+          for (const ch of chords) {
+            if (step >= stepLength) break;
+            const pc = pcOf[ch.root as keyof typeof pcOf] ?? 0;
+            const midi = 60 + pc; // C4-based
+            row[step] = { on: true, note: midi, velocity: 100, duration: Math.max(1, Math.round(ch.duration / 4) || 1) };
+            step += Math.max(1, Math.round(ch.duration / 4) || 1); // duration in 16ths
+          }
+          store.setRow(pid, rowId, row);
+        }}
       />
       {!isRecordingAudio && lastRecordedBuffer && (
         <div className="flex gap-2 mt-2 text-sm">

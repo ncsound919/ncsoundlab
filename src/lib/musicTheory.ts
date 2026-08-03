@@ -30,6 +30,7 @@ import {
   type Voicing,
 } from './theory/voicing';
 import { generateProgression, type TheoryChord } from './theory/progression';
+import { applySophistication, type SophisticationLevel } from './theory/sophistication';
 
 export interface ScaleLockSettings {
   /** Root pitch class, e.g. 'C', 'F#'. */
@@ -222,6 +223,14 @@ export function makeProgression(
 /** Convert a progression to plain root+type pairs (for voicing/preview). */
 export function progressionChords(prog: TheoryChord[]): Array<{ root: string; type: string }> {
   return prog.map((c) => ({ root: c.root, type: c.type }));
+}
+
+/**
+ * Upgrade a progression with harmonic sophistication (0 = plain, 1 = 9ths on
+ * cadences, 2 = secondary dominants + color, 3 = tritone subs + altered doms).
+ */
+export function sophisticateProgression(prog: TheoryChord[], level: SophisticationLevel): TheoryChord[] {
+  return applySophistication(prog, level);
 }
 
 /**

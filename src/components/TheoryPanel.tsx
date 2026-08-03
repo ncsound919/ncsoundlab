@@ -11,7 +11,7 @@
  */
 
 import React, { useState } from 'react';
-import { Sparkles, Play, Drum, RefreshCw } from 'lucide-react';
+import { Sparkles, Play, Drum, RefreshCw, PenLine } from 'lucide-react';
 import {
   makeProgression,
   voiceChords,
@@ -26,6 +26,8 @@ interface TheoryPanelProps {
   onPlayNote: (midi: number, velocity?: number) => void;
   onStopNote: (midi: number) => void;
   onSendToPads?: (roots: string[]) => void;
+  /** Write the voiced progression into the active pattern row as melodic notes. */
+  onApplyToPattern?: (chords: Array<{ root: string; type: string }>) => void;
 }
 
 const KEYS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
@@ -38,7 +40,7 @@ const CHORD_GLYPH: Record<string, string> = {
   '7': '7', '9': '9', m7b5: 'm7♭5', dim: '°', m: 'm',
 };
 
-export const TheoryPanel: React.FC<TheoryPanelProps> = ({ onPlayNote, onStopNote, onSendToPads }) => {
+export const TheoryPanel: React.FC<TheoryPanelProps> = ({ onPlayNote, onStopNote, onSendToPads, onApplyToPattern }) => {
   const [key, setKey] = useState('C');
   const [scale, setScale] = useState<(typeof SCALES)[number]>('major');
   const [mode, setMode] = useState<(typeof MODES)[number]>('functional');
@@ -140,6 +142,16 @@ export const TheoryPanel: React.FC<TheoryPanelProps> = ({ onPlayNote, onStopNote
             <span className="text-[9px] font-mono text-slate-500">
               {prog.reduce((s, c) => s + c.duration, 0)} beats · {prog.length} chords · seed {seed}
             </span>
+            {onApplyToPattern && (
+              <button
+                type="button"
+                onClick={() => onApplyToPattern(progressionChords(prog))}
+                className="px-2 py-0.5 rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 text-[9px] font-black uppercase flex items-center gap-1"
+                title="Voice the progression into the active pattern row"
+              >
+                <PenLine size={10} /> Apply to Pattern
+              </button>
+            )}
             {onSendToPads && (
               <button
                 type="button"

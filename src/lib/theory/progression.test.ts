@@ -13,9 +13,10 @@ import {
   voiceChords,
   progressionChords,
   snapProgressionToScale,
+  sophisticateProgression,
   DEFAULT_SCALE_LOCK,
 } from '../musicTheory';
-import { NOTE_NAMES_SHARP } from './pitch';
+import { NOTE_NAMES_SHARP, CHORD_QUALITIES } from './pitch';
 
 describe('generateProgression', () => {
   it('produces chords summing to bars*4 beats', () => {
@@ -84,6 +85,37 @@ describe('makeProgression + voiceChords (musicTheory wrapper)', () => {
     const cMajor = new Set([0, 2, 4, 5, 7, 9, 11]);
     for (const c of snapped) {
       expect(cMajor.has(NOTE_NAMES_SHARP.indexOf(c.root))).toBe(true);
+    }
+  });
+});
+
+describe('sophisticateProgression (sophistication engine port)', () => {
+  it('is a no-op at level 0', () => {
+    const prog = makeProgression('C', { scaleType: 'major', bars: 4, seed: 2 });
+    const out = sophisticateProgression(prog, 0);
+    expect(out).toEqual(prog);
+  });
+
+  it('is deterministic for the same input', () => {
+    const prog = makeProgression('C', { scaleType: 'major', bars: 8, seed: 2 });
+    const a = sophisticateProgression(prog, 2);
+    const b = sophisticateProgression(prog, 2);
+    expect(a).toEqual(b);
+  });
+
+  it('adds extensions at higher levels (not all plain triads remain)', () => {
+    const prog = makeProgression('C', { scaleType: 'major', bars: 8, complexity: 0, mode: 'section', seed: 3 });
+    const out = sophisticateProgression(prog, 2);
+    const hasExtensions = out.some((c) => /maj9|m9|7|9|m7/.test(c.type));
+    expect(hasExtensions).toBe(true);
+  });
+
+  it('produces only known CHORD_QUALITIES keys', () => {
+    const prog = makeProgression('C', { scaleType: 'major', bars: 8, seed: 5 });
+    const out = sophisticateProgression(prog, 3);
+    const valid = new Set(Object.keys(CHORD_QUALITIES));
+    for (const c of out) {
+      expect(valid.has(c.type)).toBe(true);
     }
   });
 });
