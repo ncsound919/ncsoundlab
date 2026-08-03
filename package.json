@@ -17,6 +17,8 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@soundtouchjs/core": "^2.1.0",
+    "@soundtouchjs/stretch-phase-vocoder": "^2.1.0",
     "@tailwindcss/vite": "^4.1.14",
     "@tauri-apps/api": "^2.11.1",
     "@vitejs/plugin-react": "^5.0.4",

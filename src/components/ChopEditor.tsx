@@ -21,6 +21,8 @@ import { Play, Square, X, Wand2, Scissors, ZoomIn, ZoomOut, Drum, MapPin } from 
 import { audioBufferToWav } from '../lib/audioUtils';
 import { audioEngine } from '../lib/audioEngine';
 import { SoundLayer, DEFAULT_ENVELOPE, DEFAULT_FX } from '../types';
+import { detectOnsets } from '../audio/onsetDetection';
+import { stretchSampleBuffer } from '../audio/dsp/TimeStretch';
 
 export interface ChopSound {
   name: string;
@@ -45,9 +47,13 @@ interface SliceMeta {
   gain: number; // 0..1.5
   tune: number; // semitones -24..24
   key: string;
+  /** Phase 5.2 — time factor (0.5..2.0). 1 = original. */
+  stretch?: number;
+  /** Phase 5.3 — per-slice custom name (falls back to CHOP_N). */
+  name?: string;
 }
 
-const defaultMeta = (): SliceMeta => ({ gain: 1, tune: 0, key: 'C' });
+const defaultMeta = (): SliceMeta => ({ gain: 1, tune: 0, key: 'C', stretch: 1 });
 
 /** Boundary markers (0..1) → slices between them (with 0 and 1). */
 function slicesFromMarkers(markers: number[]): { start: number; end: number }[] {
@@ -55,6 +61,19 @@ function slicesFromMarkers(markers: number[]): { start: number; end: number }[] 
   const out: { start: number; end: number }[] = [];
   for (let i = 0; i < pts.length - 1; i++) {
     if (pts[i + 1] - pts[i] >= 0.001) out.push({ start: pts[i], end: pts[i + 1] });
+  }
+  return out;
+}
+
+/** Extract a [startPct, endPct] region of a buffer as a NEW AudioBuffer. */
+function sliceRegion(buffer: AudioBuffer, startPct: number, endPct: number): AudioBuffer {
+  const start = Math.max(0, Math.floor(startPct * buffer.length));
+  const end = Math.min(buffer.length, Math.floor(endPct * buffer.length));
+  const len = Math.max(1, end - start);
+  const channels = buffer.numberOfChannels;
+  const out = new AudioBuffer({ numberOfChannels: channels, length: len, sampleRate: buffer.sampleRate });
+  for (let c = 0; c < channels; c++) {
+    out.copyToChannel(buffer.getChannelData(c).subarray(start, end), c);
   }
   return out;
 }
@@ -217,11 +236,24 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
   const send = () => {
     const named: ChopSound[] = slicesList.map((s, i) => {
       const m = meta[s.start.toFixed(4)] || defaultMeta();
+      // Phase 5.2 — per-slice time-stretch: render the region, then (optionally)
+      // stretch it. Falls back to the original buffer + crop bounds.
+      let buf = buffer;
+      let start = s.start;
+      let end = s.end;
+      const stretch = m.stretch ?? 1;
+      if (stretch !== 1) {
+        const region = sliceRegion(buffer, s.start, s.end);
+        const stretched = stretchSampleBuffer(region, { timeFactor: stretch });
+        buf = stretched.buffer;
+        start = 0;
+        end = 1;
+      }
       return {
-        name: `${baseName}_CHOP_${String(i + 1).padStart(2, '0')}`,
-        buffer,
-        start: s.start,
-        end: s.end,
+        name: m.name || `${baseName}_CHOP_${String(i + 1).padStart(2, '0')}`,
+        buffer: buf,
+        start,
+        end,
         gain: m.gain,
         tune: m.tune,
       };
@@ -257,6 +289,23 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
             <MapPin size={12} /> {tapMode ? 'Tapping — play + hit pads' : 'Tap to Chop'}
           </button>
           <button onClick={() => { clearMarkers(); setMarkers(autoMarkers(buffer, Math.max(2, Math.min(16, defaultCount)))); }} className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-fuchsia-400 hover:text-white transition-all flex items-center gap-1.5"><Wand2 size={12} /> Smart</button>
+          <button
+            onClick={() => {
+              clearMarkers();
+              // Phase 5.3 — spectral-flux onset detection (transient-aware,
+              // not just silence). Convert onset seconds to fractional markers.
+              const hits = detectOnsets(buffer, { sensitivity: 1.0, minGapSec: 0.025 });
+              const markers = hits
+                .map((h) => h.time / duration)
+                .filter((p) => p > 0.001 && p < 0.999)
+                .slice(0, Math.max(1, Math.min(15, defaultCount - 1)));
+              setMarkers(markers);
+            }}
+            className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-emerald-400 hover:text-white transition-all flex items-center gap-1.5"
+            title="Detect transients via spectral flux"
+          >
+            <Wand2 size={12} /> Onset
+          </button>
           <button onClick={() => { const m = Array.from({ length: Math.max(1, Math.min(15, defaultCount - 1)) }, (_, i) => (i + 1) / defaultCount); setMarkers(m); }} className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-sky-400 hover:text-white transition-all flex items-center gap-1.5"><Scissors size={12} /> Equal ×{defaultCount}</button>
           <button onClick={clearMarkers} className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all">Clear</button>
           <span className="mx-1 h-5 w-px bg-[#1e293b]" />
@@ -358,6 +407,14 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
                 </div>
                 <div className="space-y-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
+                    {/* Phase 5.3 — per-slice rename */}
+                    <input
+                      type="text"
+                      value={m.name ?? `${baseName}_CHOP_${String(i + 1).padStart(2, '0')}`}
+                      onChange={(e) => updateMeta(s.start.toFixed(4), { name: e.target.value })}
+                      className="bg-[#0a0a0c] border border-[#1e293b] rounded px-1.5 py-0.5 text-[9px] font-mono text-white focus:outline-none focus:border-emerald-400 min-w-[90px] max-w-[160px]"
+                      aria-label={`Slice ${i + 1} name`}
+                    />
                     <span className="text-[9px] font-mono text-slate-400">{(s.start * duration).toFixed(3)}s → {(s.end * duration).toFixed(3)}s</span>
                     <select value={m.key} onChange={(e) => updateMeta(s.start.toFixed(4), { key: e.target.value })} className="bg-[#0a0a0c] border border-[#1e293b] rounded px-1.5 py-0.5 text-[9px] font-mono text-white focus:outline-none cursor-pointer" aria-label="Root key">
                       {ROOT_KEYS.map((k) => <option key={k} value={k} className="text-white">{k}</option>)}
@@ -370,6 +427,10 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
                     <span className="ml-2">Tune</span>
                     <input type="range" min="-24" max="24" step="1" value={m.tune} onChange={(e) => updateMeta(s.start.toFixed(4), { tune: parseInt(e.target.value) })} className="flex-1 accent-sky-400 h-1 rounded-lg cursor-pointer" aria-label={`Slice ${i + 1} tune`} />
                     <span>{m.tune >= 0 ? '+' : ''}{m.tune}st</span>
+                    {/* Phase 5.2 — per-slice time-stretch (independent of pitch) */}
+                    <span className="ml-2">Time</span>
+                    <input type="range" min="0.5" max="2" step="0.05" value={m.stretch ?? 1} onChange={(e) => updateMeta(s.start.toFixed(4), { stretch: parseFloat(e.target.value) })} className="flex-1 accent-fuchsia-400 h-1 rounded-lg cursor-pointer" aria-label={`Slice ${i + 1} time stretch`} />
+                    <span>{((m.stretch ?? 1) * 100).toFixed(0)}%</span>
                   </div>
                 </div>
                 <button onClick={() => { setSelectedSlice(i); setSelectedMarker(i < markers.length ? i : null); }} className="p-1.5 rounded text-slate-500 hover:text-amber-400 transition-colors" title="Select slice boundary"><MapPin size={13} /></button>

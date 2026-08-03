@@ -34,6 +34,7 @@ import { exportV2, importExport } from '../sequencerFormat';
 import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
 import { renderMixdown } from '../audio/transport/mixdown';
 import { SampleBrowser } from './SampleBrowser';
+import { TakesRecorder } from './TakesRecorder';
 import {
   fetchLibrarySample,
   decodeLibrarySample,
@@ -862,6 +863,13 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       />
       {songModeActive && <SongModePanel onPlayFromSlot={() => { /* song starts from slot via transport */ }} />}
       <ArrangementPanel />
+      {/* Phase 5.4 — loop recording + takes browser (count-in, metronome, punch-in/out) */}
+      <TakesRecorder
+        bpm={bpm}
+        loopLengthSec={((patternStepLength / 4) * 4) * (60 / bpm)} // 4 bars at current BPM
+        onAddLayer={(buffer, name) => onAddLayer ? (onAddLayer(buffer, name) ?? undefined) : undefined}
+        onSlice={(buffer, n) => onSlice(buffer, n)}
+      />
       {!isRecordingAudio && lastRecordedBuffer && (
         <div className="flex gap-2 mt-2 text-sm">
           <span className="text-white/70 self-center">Slice take:</span>
