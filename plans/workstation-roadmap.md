@@ -230,20 +230,127 @@ IndexedDB (Dexie) and inside `.nsl`, and loads onto a chosen channel or the mast
 
 ---
 
-## Phase 4 — Export / bounce (stems)
+## Phase 4 — Pro Tools interchange (stems + AAC reference import)
+
+> Goal: round-trip audio with Pro Tools painlessly. Stems import as
+> auto-tracked multitrack WAVs; AAC references can be brought in to align
+> tempo or for A/B; AAF export for the desktop build (stretch goal).
 
 ### Step 4.1 — Per-layer stem render
-*Context:* `audioEngine.exportWav(layers, dur)` renders the full chain to one stereo WAV; `renderMixdown` (mixdown.ts)
-is a dry second path that doesn't match what you hear.
-*Context brief:* add `exportLayerStem(layerId, dur)` that renders ONE layer through its existing `createNodeChain` into
-an `OfflineAudioContext` (reuse `exportWav` machinery, isolated channel + channel inserts + channel EQ, no master FX by
-default). Return a WAV blob; same sample rate + bit depth as exportWav.
-*Verify:* stems summed approximately equal the full exportWav; each WAV is exactly one layer with its FX.
 
-### Step 4.2 — Multi-stem export (all channels + master)
-*Context brief:* add an "Export Stems" button that renders every audible layer via 4.1 (respecting mute/solo) into a
-JSZip bundle of `<layerName>.wav` per stem + `master.wav`, reusing the JSZip pattern from SoundKitCatalog.tsx:358.
-*Verify:* zip contains one stem per audible layer, playable in a DAW.
+*Context:* today `audioEngine.exportWav(layers, dur)` renders the full mix
+to a single stereo WAV with FX applied; `renderMixdown` is a dry
+second path. The user needs per-channel stems with the channel's own FX
+chain for import into a DAW.
+
+*Context brief:*
+
+- Add `audioEngine.exportLayerStem(layerId, durSec, opts)` that renders a
+  single layer through its existing `createNodeChain` into an
+  `OfflineAudioContext`, isolating it from the master bus. Returns a WAV
+  blob.
+- Options: `sampleRate` (44100 / 48000 / 96000), `bitDepth`
+  (16 / 24 / 32), `includeSends` (when true, the layer's send levels are
+  baked into the stem; when false, only the dry channel output is
+  rendered).
+- Naming convention (Pro Tools auto-import friendly):
+  `<sanitised-layer-name>_<index>_<take>.wav` (e.g. `Kick_01_Take01.wav`).
+- The legacy `exportWav` remains for the single-mix bounce.
+
+*Verify:* each layer's stem length equals the requested duration; stems
+sum approximately to `exportWav` output; bit-depth / sample-rate options
+match the WAV header.
+
+### Step 4.2 — Multi-stem bundle (Pro Tools "Import As Session Tracks")
+
+*Context:* Pro Tools auto-imports a folder of WAVs as separate session
+tracks (File → Import → Audio → "Import As Session Tracks…"). The folder
+layout + filename convention drive the auto-track-naming.
+
+*Context brief:*
+
+- New `exportStemsBundle(opts)` that renders every audible layer as a
+  stem and writes them into a `.zip` archive laid out like:
+  ```
+  MySong_Stems/
+    MySong_Master.wav      ← the exportWav mixdown
+    MySong_Stems/
+      Kick_01.wav
+      Snare_01.wav
+      Bass_01.wav
+      …etc
+    Markers.csv             ← bar/beat/timestamp markers for Pro Tools
+    README.txt              ← naming convention + import instructions
+  ```
+- `Markers.csv` follows Pro Tools' "Import Session Data → Markers from
+  CSV" format: columns `Name, Start, Length, Timecode, …` with Start in
+  the user's chosen timecode base (default 48000 for 48 kHz, 30 fps).
+- `README.txt` documents how to import (drag the inner `MySong_Stems/`
+  folder into Pro Tools; select all → "Import As Session Tracks"; import
+  `Markers.csv` for tempo map).
+- Reuses `audioEngine.exportLayerStem` (4.1) + JSZip (already a dep for
+  `SoundKitCreator`).
+
+*Verify:* the resulting zip opens cleanly in Pro Tools with one track
+per stem; `Markers.csv` imports without errors.
+
+### Step 4.3 — AAC / reference track import
+
+*Context:* users want to drop a reference track (often AAC from iTunes)
+into the app for A/B, tempo matching, or just to listen alongside their
+project. Today the app only supports `decodeAudioData` on user-supplied
+file blobs but there's no UI for it.
+
+*Context brief:*
+
+- New `importReferenceTrack(file: File)` that accepts `.m4a` / `.aac` /
+  `.mp3` / `.wav` / `.flac` and decodes via
+  `AudioContext.decodeAudioData`.
+- New session-only `referenceTrack` slice (zustand):
+  `{ name, buffer, sourceSampleRate, importedAt }`. Lives alongside the
+  song without touching the project model itself.
+- UI: a "Reference" panel in the Produce stage with: drop zone, play
+  button, gain, A/B switch (mute / unmute the reference vs the session
+  while both are playing).
+
+*Verify:* decode round-trips a small AAC fixture in jsdom mock;
+`referenceTrack` exposed via store; A/B mute works.
+
+### Step 4.4 — Tempo detection + alignment to a reference
+
+*Context:* once a reference is loaded, the user typically wants to know
+its BPM and possibly snap their project tempo to match.
+
+*Context brief:*
+
+- `detectBpmFromBuffer(buffer)` — onset autocorrelation on the
+  reference's energy envelope; returns `{ bpm, confidence }`. Pure JS,
+  tested in isolation (no real-time requirement).
+- "Snap project to reference" button on the Reference panel — sets
+  `patternStore.setBpm(detected.bpm)` and updates the song's
+  `tempoMap` to start at that BPM.
+- "Mark reference downbeats" — manual: user taps spacebar on each
+  downbeat, app records the beats and stamps them as markers in
+  `Markers.csv` next export.
+
+*Verify:* `detectBpmFromBuffer` recovers 120 / 140 BPM on synthetic
+click-track fixtures within ±2 BPM; project tempo updates correctly.
+
+### Step 4.5 — AAF export (Tauri desktop only — stretch)
+
+*Context:* the desktop build (`src-tauri/`) ships Rust code. There's a
+mature Rust crate `aaf-rs` that can generate real AAF files. For Pro
+Tools users who specifically need AAF rather than stems, this bridges
+the gap.
+
+*Context brief:*
+
+- New Tauri command `export_aaf_session(payload)` that takes the
+  project + stems + markers + render of each stem and emits a real
+  AAF file with one audio track per stem.
+- The web build hides this UI / shows a "Available in desktop app"
+  badge.
+- Mark as a stretch goal — depends on `aaf-rs` API stability.
 
 ---
 
@@ -332,7 +439,10 @@ velocity lane toggle.
 - **Phase 2** (arrangement + tempo + automation) depends on 1.1 (honest stepLength) and the scheduler; independent of the mixer.
 - **Phase 3** (mixer/metering/sends) is audio-architecture work independent of sequencing; can start after 0.1
   (state gets serialized). Most parallelizable: 3.1/3.2 first, then 3.3/3.4/3.5 (sends need a channel).
-- **Phase 4** (stems) depends on 3.1/3.4 (per-channel chain to render).
+- **Phase 4** (stems + AAC reference + Pro Tools interchange) depends on
+  3.1/3.4 (per-channel chain to render). 4.1 + 4.2 are the core path;
+  4.3 + 4.4 (reference import + tempo detection) are independent of the
+  audio engine and can run in parallel.
 - **Phase 5** (sampling/recording) is independent; 5.4 wants metronome/countIn wiring.
 - **Phase 6** (performance/MIDI) is independent but exercises Phase 1 store/velocity a lot.
 
