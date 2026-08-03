@@ -20,6 +20,11 @@ import {
 import { SoundLayer } from '../types';
 import { Fader } from './Fader';
 import { Knob } from './Knob';
+import { ChannelStrip } from './ChannelStrip';
+import { SendsPanel } from './SendsPanel';
+import { audioEngine as sharedAudioEngine } from '../audio/AudioEngine';
+import { audioEngine } from '../lib/audioEngine';
+import { computeMeterLevel, makeScratchBuffer } from '../audio/metering';
 
 interface LayerMixerProps {
   layers: SoundLayer[];
@@ -61,37 +66,57 @@ export function LayerMixer({
   onReorderLayer,
 }: LayerMixerProps) {
   const [activeMeterVals, setActiveMeterVals] = useState<{ [id: string]: number }>({});
+  const [masterMeter, setMasterMeter] = useState<{ left: number; right: number }>({ left: 0, right: 0 });
   const animationRef = useRef<number | null>(null);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Dynamic VU Meter simulation for playing tracks
+  // Phase 3.1 — real per-channel metering. Each layer has an AnalyserNode
+  // exposed by SharedAudioEngine (created lazily when its gain is first
+  // requested); the mixer reads peak amplitude from that node on each
+  // animation frame. Master reads from the master analyser.
   useEffect(() => {
-    if (!isPlaying) {
-      setActiveMeterVals({});
-      return;
-    }
+    const fftSize = 1024;
+    const scratchByLayer = new Map<string, Float32Array>();
+    const masterScratch = makeScratchBuffer(fftSize);
+    const masterAnalyser = audioEngine.getAnalyser?.() ?? null;
 
     const updateMeters = () => {
       const next: { [id: string]: number } = {};
-      layers.forEach(layer => {
-        if (layer.enabled && !layer.muted) {
-          // Simulate dynamic peaks around their gain value
-          const randomPeak = 0.7 + Math.random() * 0.3;
-          next[layer.id] = layer.gain * randomPeak;
-        } else {
+      let masterLeft = 0;
+      let masterRight = 0;
+      for (const layer of layers) {
+        if (!layer.enabled || layer.muted) {
           next[layer.id] = 0;
+          continue;
         }
-      });
+        let scratch = scratchByLayer.get(layer.id);
+        if (!scratch) {
+          scratch = makeScratchBuffer(fftSize);
+          scratchByLayer.set(layer.id, scratch);
+        }
+        const analyser = sharedAudioEngine.getModuleAnalyser(layer.id, fftSize) as unknown as Parameters<typeof computeMeterLevel>[0];
+        const reading = computeMeterLevel(analyser, scratch);
+        next[layer.id] = reading.peak;
+      }
+      if (masterAnalyser) {
+        const reading = computeMeterLevel(masterAnalyser, masterScratch);
+        masterLeft = reading.peak;
+        masterRight = reading.peak;
+      }
       setActiveMeterVals(next);
+      setMasterMeter({ left: masterLeft, right: masterRight });
       animationRef.current = requestAnimationFrame(updateMeters);
     };
 
-    updateMeters();
+    if (isPlaying) {
+      animationRef.current = requestAnimationFrame(updateMeters);
+    } else {
+      setActiveMeterVals({});
+      setMasterMeter({ left: 0, right: 0 });
+    }
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [isPlaying, layers]);
 
@@ -191,224 +216,26 @@ export function LayerMixer({
         {layers.map((layer, index) => {
           const isSelected = selectedLayerId === layer.id;
           const peak = activeMeterVals[layer.id] || 0;
-          const displayNum = (index + 1).toString().padStart(2, '0');
-
           return (
-            <div
+            <ChannelStrip
               key={layer.id}
-              onClick={() => onSelectLayer(layer.id)}
-              className={`w-44 flex-shrink-0 flex flex-col justify-between bg-black border rounded-2xl p-3 transition-all cursor-pointer group select-none relative ${
-                isSelected 
-                  ? 'border-blue-500 bg-[#000000] shadow-[0_0_20px_rgba(37,99,235,0.45)]' 
-                  : 'border-[#1e293b] hover:border-blue-900'
-              } ${!layer.enabled ? 'opacity-40 hover:opacity-75' : ''}`}
-            >
-              {/* Channel Strip Top Details */}
-              <div className="space-y-2 mb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[10px] font-mono font-black text-yellow-400">CH {displayNum}</span>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); onReorderLayer?.(layer.id, 'up'); }}
-                      disabled={index === 0}
-                      className="text-gray-600 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed ml-1"
-                      title="Move Layer Up"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m18 15-6-6-6 6"/></svg>
-                    </button>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); onReorderLayer?.(layer.id, 'down'); }}
-                      disabled={index === layers.length - 1}
-                      className="text-gray-600 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                      title="Move Layer Down"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-                    </button>
-                  </div>
-                  
-                  {/* Channel Power / LED Button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onUpdateLayer(layer.id, { enabled: !layer.enabled });
-                    }}
-                    aria-label={layer.enabled ? "Bypass Track" : "Activate Track"}
-                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center transition-all ${
-                      layer.enabled
-                        ? 'bg-yellow-400/30 border-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.6)]'
-                        : 'bg-[#0f172a] border-[#3f3f46]'
-                    }`}
-                    title={layer.enabled ? "Bypass Track" : "Activate Track"}
-                  >
-                    <div className={`w-1.5 h-1.5 rounded-full ${layer.enabled ? 'bg-yellow-400' : 'bg-slate-600'}`} />
-                  </button>
-                </div>
-
-                <div className="flex flex-col truncate">
-                  <span className="text-[11px] font-black font-urban text-white uppercase truncate tracking-wide" title={layer.name}>
-                    {layer.name}
-                  </span>
-                  <span className="text-[9px] text-purple-300 uppercase tracking-widest font-mono font-bold">
-                    {layer.type === 'sample' ? '💿 SAMPLE' : '🎹 SYNTH'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Mute and Solo Rack Buttons */}
-              <div className="grid grid-cols-3 gap-1 mb-3">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onUpdateLayer(layer.id, { muted: !layer.muted });
-                  }}
-                  className={`py-1 rounded text-[9px] font-mono font-extrabold flex items-center justify-center border transition-all ${
-                    layer.muted
-                      ? 'bg-red-950/40 border-red-500/60 text-red-400 shadow-[0_0_6px_rgba(239,68,68,0.2)]'
-                      : 'bg-[#161619] border-[#222] text-gray-500 hover:text-gray-300'
-                  }`}
-                  title="Mute Channel"
-                >
-                  MUTE
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onUpdateLayer(layer.id, { soloed: !layer.soloed });
-                  }}
-                  className={`py-1 rounded text-[9px] font-mono font-extrabold flex items-center justify-center border transition-all ${
-                    layer.soloed
-                      ? 'bg-emerald-950/40 border-emerald-500/60 text-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.2)]'
-                      : 'bg-[#161619] border-[#222] text-gray-500 hover:text-gray-300'
-                  }`}
-                  title="Solo Channel"
-                >
-                  SOLO
-                </button>
-              </div>
-
-              {/* Alignment Control: Trigger Delay Knob */}
-              <div className="bg-[#0c0c0e] border border-[#1b1b1e] rounded-xl p-3 mb-3.5 flex flex-col items-center justify-center relative">
-                <div className="flex justify-center mb-1">
-                  <Knob 
-                    label="Trigger Delay" 
-                    value={layer.startTimeOffset ?? 0} 
-                    min={0.0} 
-                    max={3.0} 
-                    step={0.05} 
-                    unit="s"
-                    color="#f97316" 
-                    onChange={(v) => onUpdateLayer(layer.id, { startTimeOffset: v })} 
-                    size={48} 
-                  />
-                </div>
-              </div>
-
-              {/* Crop Boundaries Monitor */}
-              <div className="bg-[#0c0c0e] border border-[#1b1b1e] rounded-xl p-2 mb-3.5 space-y-1 relative">
-                <div className="flex items-center justify-between text-[9px] font-bold text-[#888]">
-                  <span className="flex items-center gap-0.5"><Scissors size={9} /> CROP RANGE</span>
-                </div>
-                <div className="flex items-center justify-between text-[9px] font-mono text-gray-400 pt-0.5">
-                  <div className="bg-[#151518] px-1 py-0.5 rounded border border-[#222] text-[#888]">
-                    {Math.round((layer.playStartPct ?? 0) * 100)}%
-                  </div>
-                  <ArrowRight size={8} className="text-[#444]" />
-                  <div className="bg-[#151518] px-1 py-0.5 rounded border border-[#222] text-[#888]">
-                    {Math.round((layer.playEndPct ?? 1) * 100)}%
-                  </div>
-                </div>
-              </div>
-
-              {/* Channel Pan (Stereo placement Knob) */}
-              <div className="flex items-center justify-center pb-3">
-                <Knob
-                  label="PAN"
-                  value={layer.pan}
-                  min={-1}
-                  max={1}
-                  step={0.05}
-                  onChange={(v) => onUpdateLayer(layer.id, { pan: v })}
-                  className="scale-90"
-                />
-              </div>
-
-              {/* Vertical Fader Section with VU Peak Indicator */}
-              <div className="flex items-stretch justify-center h-44 gap-3 bg-[#0a0a0c] p-2 rounded-xl border border-[#1b1b1e]">
-                {/* Visual LED Level Meter */}
-                <div className="w-1.5 flex flex-col justify-end bg-black/60 rounded-full h-full p-0.5 overflow-hidden">
-                  <div 
-                    className="w-full rounded-full transition-all duration-75"
-                    style={{ 
-                      height: `${Math.min(100, peak * 100)}%`,
-                      background: peak > 0.85 
-                        ? 'linear-gradient(to top, #10B981, #F59E0B, #EF4444)' 
-                        : peak > 0.65 
-                          ? 'linear-gradient(to top, #10B981, #F59E0B)' 
-                          : '#10B981'
-                    }}
-                  />
-                </div>
-
-                {/* Tactile Channel Volume Fader */}
-                <Fader
-                  label="GAIN"
-                  value={layer.gain}
-                  min={0.0}
-                  max={1.5}
-                  step={0.02}
-                  size={144}
-                  color={isSelected ? '#F97316' : '#3B82F6'}
-                  onChange={(v) => onUpdateLayer(layer.id, { gain: v })}
-                />
-              </div>
-
-              {/* Channel Quick Actions Bar */}
-              <div className="pt-2 mt-2 border-t border-[#1a1a20] grid grid-cols-4 gap-1">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDuplicateLayer?.(layer.id);
-                  }}
-                  className="p-1 bg-[#16161c] hover:bg-[#202028] text-gray-400 hover:text-amber-400 border border-[#23232c] rounded text-[9px] font-mono font-bold uppercase transition-colors"
-                  title="Duplicate Layer"
-                >
-                  Dup
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCopyFX?.(layer.id);
-                  }}
-                  className="p-1 bg-[#16161c] hover:bg-[#202028] text-gray-400 hover:text-sky-400 border border-[#23232c] rounded text-[9px] font-mono font-bold uppercase transition-colors"
-                  title="Copy FX Settings"
-                >
-                  Copy
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onPasteFX?.(layer.id);
-                  }}
-                  className="p-1 bg-[#16161c] hover:bg-[#202028] text-gray-400 hover:text-emerald-400 border border-[#23232c] rounded text-[9px] font-mono font-bold uppercase transition-colors"
-                  title="Paste FX Settings"
-                >
-                  Pst
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRandomizePitchPan?.(layer.id);
-                  }}
-                  className="p-1 bg-[#16161c] hover:bg-[#202028] text-gray-400 hover:text-purple-400 border border-[#23232c] rounded text-[9px] font-mono font-bold uppercase transition-colors"
-                  title="Randomize Pitch & Pan"
-                >
-                  Rnd
-                </button>
-              </div>
-
-            </div>
+              layer={layer}
+              index={index}
+              isSelected={isSelected}
+              peak={peak}
+              onSelectLayer={onSelectLayer}
+              onUpdateLayer={onUpdateLayer}
+              onDuplicateLayer={onDuplicateLayer}
+              onCopyFX={onCopyFX}
+              onPasteFX={onPasteFX}
+              onRandomizePitchPan={onRandomizePitchPan}
+              onReorderLayer={onReorderLayer}
+            />
           );
         })}
+
+        {/* Phase 3.3 — FX bus returns panel sits next to the master strip */}
+        <SendsPanel buses={['reverb', 'delay']} />
 
         {/* Master Output Channel Strip */}
         <div className="w-40 flex-shrink-0 flex flex-col justify-between bg-[#0e0e11] border border-orange-500/20 rounded-2xl p-3 select-none relative shadow-[0_0_15px_rgba(249,115,22,0.05)]">
@@ -445,13 +272,13 @@ export function LayerMixer({
 
           {/* Master Channel Vertical Fader strip with Dual meters */}
           <div className="flex items-stretch justify-center h-52 gap-2 bg-[#050508] p-2.5 rounded-xl border border-[#1a1a1f] mt-2">
-            
+
             {/* Left Output Peak Meter */}
             <div className="w-1 flex flex-col justify-end bg-black/60 rounded-full h-full p-0.5 overflow-hidden">
               <div 
                 className="w-full rounded-full transition-all duration-75"
                 style={{ 
-                  height: `${isPlaying ? Math.min(100, masterLevel * (70 + Math.random() * 25)) : 0}%`,
+                  height: `${isPlaying ? Math.min(100, masterMeter.left * 100) : 0}%`,
                   background: 'linear-gradient(to top, #10B981, #F59E0B, #EF4444)'
                 }}
               />
@@ -474,7 +301,7 @@ export function LayerMixer({
               <div 
                 className="w-full rounded-full transition-all duration-75"
                 style={{ 
-                  height: `${isPlaying ? Math.min(100, masterLevel * (65 + Math.random() * 30)) : 0}%`,
+                  height: `${isPlaying ? Math.min(100, masterMeter.right * 100) : 0}%`,
                   background: 'linear-gradient(to top, #10B981, #F59E0B, #EF4444)'
                 }}
               />

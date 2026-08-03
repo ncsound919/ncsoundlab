@@ -93,6 +93,15 @@ export interface SerializedAutomationLane {
 
 export type SerializedAutomationLanes = Record<string, SerializedAutomationLane[]>;
 
+export interface SerializedBusConfig {
+  enabled: boolean;
+  gain: number;
+  pan: number;
+  options?: Record<string, number>;
+}
+
+export type SerializedBuses = Record<string, SerializedBusConfig>;
+
 export interface ArrangementSerialized {
   totalBeats: number;
   clips: SerializedArrangementClip[];
@@ -132,6 +141,13 @@ export interface ProjectDocument {
    */
   automation?: SerializedAutomationLanes;
 
+  /**
+   * Phase 3.3 — global FX send/return bus configuration. Optional. Older
+   * docs default to `{ reverb: { enabled: true, gain: 1, pan: 0 }, delay: {
+   * enabled: true, gain: 1, pan: 0 } }`.
+   */
+  buses?: SerializedBuses;
+
   programs: Record<BankId, Program>;
   activeBank: BankId;
 }
@@ -156,6 +172,7 @@ export interface SerializeProjectInput {
   songChain: { order: string[] };
   arrangement?: ArrangementSerialized;
   automation?: SerializedAutomationLanes;
+  buses?: SerializedBuses;
   programs: Record<BankId, Program>;
   activeBank: BankId;
   bpm: number;
@@ -218,6 +235,7 @@ export async function serializeProject(input: SerializeProjectInput): Promise<Pr
     songChain: { order: [...input.songChain.order] },
     ...(input.arrangement ? { arrangement: input.arrangement } : {}),
     ...(input.automation ? { automation: input.automation } : {}),
+    ...(input.buses ? { buses: input.buses } : {}),
     programs: clonePrograms(input.programs),
     activeBank: input.activeBank,
   };
@@ -255,6 +273,7 @@ export interface DeserializeProjectResult {
   programs: Record<BankId, Program>;
   arrangement: ArrangementSerialized | null;
   automation: SerializedAutomationLanes;
+  buses: SerializedBuses;
 }
 
 /**
@@ -283,6 +302,7 @@ export async function deserializeProject(
     programs: clonePrograms(document.programs),
     arrangement: document.arrangement ?? null,
     automation: document.automation ?? {},
+    buses: document.buses ?? sanitizeBuses(null),
   };
 }
 
@@ -401,7 +421,34 @@ function normalizeV1(obj: RawProjectDocument): ProjectDocument {
     },
     activeBank: sanitizeBankId(obj.activeBank),
     automation: sanitizeAutomationLanes(obj.automation),
+    buses: sanitizeBuses(obj.buses),
   };
+}
+
+export const DEFAULT_BUSES: SerializedBuses = {
+  reverb: { enabled: true, gain: 1, pan: 0 },
+  delay: { enabled: true, gain: 1, pan: 0 },
+};
+
+export function sanitizeBuses(value: unknown): SerializedBuses {
+  const base: SerializedBuses = {};
+  for (const [id, cfg] of Object.entries(DEFAULT_BUSES)) {
+    base[id] = { ...cfg };
+  }
+  if (!value || typeof value !== 'object') return base;
+  for (const [busId, rawBus] of Object.entries(value as Record<string, unknown>)) {
+    if (!rawBus || typeof rawBus !== 'object') continue;
+    const b = rawBus as Record<string, unknown>;
+    base[busId] = {
+      enabled: b.enabled !== false,
+      gain: Math.max(0, Math.min(2, numberOr(b.gain, 1))),
+      pan: Math.max(-1, Math.min(1, numberOr(b.pan, 0))),
+      ...(b.options && typeof b.options === 'object'
+        ? { options: Object.fromEntries(Object.entries(b.options as Record<string, unknown>).map(([k, v]) => [k, numberOr(v, 0)])) }
+        : {}),
+    };
+  }
+  return base;
 }
 
 function sanitizeAutomationLanes(value: unknown): SerializedAutomationLanes {

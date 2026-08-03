@@ -491,3 +491,80 @@ describe('projectFormat — automation round-trip', () => {
     expect(lane.points).toEqual([]);
   });
 });
+
+describe('projectFormat — FX buses round-trip', () => {
+  it('migrates a doc without buses and falls back to defaults', () => {
+    const raw = {
+      format: PROJECT_FORMAT_TAG,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      title: 'Legacy',
+      layers: [],
+      patterns: { A: {}, B: {}, C: {}, D: {} },
+      programs: {},
+    };
+    const doc = migrate(raw);
+    expect(doc.buses).toBeDefined();
+    expect(doc.buses!.reverb.gain).toBe(1);
+    expect(doc.buses!.delay.gain).toBe(1);
+  });
+
+  it('clamps bus gain to 0..2 and pan to -1..1 on load', () => {
+    const raw = {
+      format: PROJECT_FORMAT_TAG,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      title: 'Clamp',
+      layers: [],
+      patterns: { A: {}, B: {}, C: {}, D: {} },
+      programs: {},
+      buses: {
+        reverb: { enabled: true, gain: 99, pan: 5 },
+        delay: { enabled: false, gain: -1, pan: -3 },
+      },
+    };
+    const doc = migrate(raw);
+    expect(doc.buses!.reverb.gain).toBe(2);
+    expect(doc.buses!.reverb.pan).toBe(1);
+    expect(doc.buses!.delay.gain).toBe(0);
+    expect(doc.buses!.delay.pan).toBe(-1);
+    expect(doc.buses!.delay.enabled).toBe(false);
+  });
+
+  it('round-trips custom buses via serialize/deserialize', async () => {
+    const layers = [makeSynthLayer('s1')];
+    const patterns = {
+      A: makePattern('A', ['s1']),
+      B: makePattern('B', ['s1']),
+      C: makePattern('C', ['s1']),
+      D: makePattern('D', ['s1']),
+    };
+    const buses = {
+      reverb: { enabled: true, gain: 0.6, pan: -0.1 },
+      delay: { enabled: false, gain: 0.3, pan: 0.2 },
+      chorus: { enabled: true, gain: 1.4, pan: 0 },
+    };
+    const doc = await serializeProject({
+      title: 'Buses',
+      appVersion: '1.0.0',
+      layers,
+      patterns,
+      activePatternId: 'A',
+      songChain: { order: ['A'] },
+      buses,
+      programs: {
+        A: Array.from({ length: 16 }, () => null),
+        B: Array.from({ length: 16 }, () => null),
+        C: Array.from({ length: 16 }, () => null),
+        D: Array.from({ length: 16 }, () => null),
+      },
+      activeBank: 'A',
+      bpm: 120,
+      timeSignature: [4, 4],
+      masterLevel: 0.8,
+      masterRack: { modules: [] },
+    });
+    const ctx = new AudioContext();
+    const hydrated = await deserializeProject(ctx, doc);
+    expect(hydrated.buses.chorus.gain).toBe(1.4);
+    expect(hydrated.buses.delay.enabled).toBe(false);
+  });
+});

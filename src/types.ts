@@ -299,6 +299,17 @@ export interface FXPreset {
   createdAt: string;
 }
 
+/**
+ * Phase 3.3 — per-layer FX send levels to the global buses. Each value is
+ * 0..1 (linear gain). A layer's sends tap is mixed into the bus input
+ * inside the audio engine. `reverb` and `delay` are the canonical buses;
+ * `custom:<id>` is reserved for future user-defined returns.
+ */
+export interface LayerSends {
+  reverb?: number;
+  delay?: number;
+}
+
 export interface SoundLayer {
   id: string;
   name: string;
@@ -345,8 +356,10 @@ export interface SoundLayer {
   sampleLoop?: boolean;
   samplePitchCoarse?: number;
   samplePitchFine?: number;
-  sampleFreqShift?: number;
-  sampleBitcrush?: number;
+  // Phase 3.3 — per-layer FX send levels to the global buses. Each value
+  // is 0..1. Inserted into the layer's chain at the send tap point. A layer
+  // with no `sends` field sends nothing (back-compat).
+  sends?: LayerSends;
 }
 
 export const DEFAULT_ENVELOPE: Envelope = {
@@ -732,6 +745,27 @@ export interface TempoPoint {
   tick: number;
   bpm: number;
 }
+
+/**
+ * Phase 3.3 — global FX send/return bus configuration.
+ *
+ * Each bus is a mono/stereo return track with its own gain (linear 0..2)
+ * and pan (-1..1). The audio engine routes the sum of every layer's
+ * `sends[busId]` into the bus input, applies the bus's effect (reverb /
+ * delay), then sums the bus output into the master. `enabled` lets the
+ * user mute the bus entirely without removing its inputs.
+ */
+export interface BusConfig {
+  enabled: boolean;
+  /** Linear output gain, 0..2. Default 1. */
+  gain: number;
+  /** Stereo placement, -1..1. Default 0. */
+  pan: number;
+  /** Free-form metadata for future per-bus effect settings. */
+  options?: Record<string, number>;
+}
+
+export type BusesConfig = Record<string, BusConfig>;
 
 /**
  * Phase 2.3 — automation / CC lanes.
