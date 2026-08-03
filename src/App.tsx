@@ -1007,7 +1007,7 @@ export default function App() {
     }
   };
 
-  const addLayer = (type: 'sample' | 'synth', audioBuffer?: AudioBuffer, name?: string) => {
+  const addLayer = (type: 'sample' | 'synth', audioBuffer?: AudioBuffer, name?: string): string => {
     const count = layers.filter(l => l.type === type).length;
     const defaultName = `${type === 'sample' ? 'Sample' : 'Synth'} Layer ${count + 1}`;
     const newLayer: SoundLayer = {
@@ -1030,6 +1030,7 @@ export default function App() {
       return [...prev, newLayer];
     });
     setSelectedLayerId(newLayer.id);
+    return newLayer.id;
 
     if (audioBuffer) {
       // Direct call is safer than arbitrary timeout

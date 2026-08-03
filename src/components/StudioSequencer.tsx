@@ -33,6 +33,12 @@ import { GROOVE_TEMPLATES, applyGroove, humanizeVelocities, clearGrooveOffsets, 
 import { exportV2, importExport } from '../sequencerFormat';
 import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
 import { renderMixdown } from '../audio/transport/mixdown';
+import { SampleBrowser } from './SampleBrowser';
+import {
+  fetchLibrarySample,
+  decodeLibrarySample,
+  type SampleLibrarySample,
+} from '../lib/sampleLibrary';
 
 const DEFAULT_STEPS = 16;
 const PPQ = 96;
@@ -44,7 +50,12 @@ interface StudioSequencerProps {
   selectedLayerId: string | null;
   onSelectLayer: (id: string) => void;
   onUpdateLayer?: (id: string, updates: Partial<SoundLayer>) => void;
-  onAddLayer?: (buffer: AudioBuffer, name?: string) => void;
+  /**
+   * Phase 5.1 — returns the id of the freshly created layer so the producer
+   * stage can wire the new sample into a pad/layer immediately. Older call
+   * sites ignore the return value (no breaking change).
+   */
+  onAddLayer?: (buffer: AudioBuffer, name?: string) => string | undefined;
   onAddSlicedLayers?: (buffers: AudioBuffer[]) => void;
 }
 
@@ -1166,48 +1177,76 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         )}
       </div>
 
-      {/* MPC drum pads — wired into the same pattern/transport */}
-      <MpcPadBank
-        entries={entries}
-        activeBank={activeBank}
-        onBankChange={handleBankChange}
-        selectedPad={selectedPad}
-        onSelectPad={(pad) => {
-          setSelectedPad(pad);
-          const entry = entries[pad];
-          if (entry && onSelectLayer) onSelectLayer(entry.layerId);
-        }}
-        focusedLayerId={selectedLayerId}
-        padSwing={padSwing}
-        padTune={padTune}
-        padChoke={padChoke}
-        padMuted={padMuted}
-        bpm={bpm}
-        noteRepeat={noteRepeat}
-        sixteenLevels={sixteenLevels}
-        globalSwing={globalSwing}
-        fullLevel={fullLevel}
-        velocityCurve={velocityCurve}
-        timeCorrect={timeCorrect}
-        onSetSwing={setSwing}
-        onSetTune={setTune}
-        onSetChoke={setChoke}
-        onTogglePadMute={togglePadMute}
-        onClearPad={clearPad}
-        onAssignActiveLayer={assignActiveLayerToPad}
-        onSetGlobalSwing={setGlobalSwing}
-        onTriggerPad={(layerId, semitones, velocity) => {
-          const choke = padChoke[layerId] || 0;
-          triggerLayerWithSemitone(layerId, semitones, velocity || 1, choke > 0 ? `choke:${choke}` : undefined);
-        }}
-        onPadInput={(layerId, velocity) => recordPadHit(layerId, velocity)}
-        onNoteRepeatChange={setNoteRepeat}
-        onSixteenLevelsChange={setSixteenLevels}
-        onFullLevelChange={setFullLevel}
-        onVelocityCurveChange={setVelocityCurve}
-        onSetTimeCorrect={setTimeCorrect}
-        onQuantize={quantizePattern}
-      />
+      {/* Phase 5.1 — Sample Browser + MPC drum pads (side-by-side) */}
+      <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-3">
+        <div className="md:h-[420px]">
+          <SampleBrowser
+            onUseSample={(sample, buffer) => {
+              if (!onAddLayer) return;
+              const newId = onAddLayer(buffer, sample.name);
+              if (newId && onSelectLayer) onSelectLayer(newId);
+            }}
+          />
+        </div>
+        <MpcPadBank
+          entries={entries}
+          activeBank={activeBank}
+          onBankChange={handleBankChange}
+          selectedPad={selectedPad}
+          onSelectPad={(pad) => {
+            setSelectedPad(pad);
+            const entry = entries[pad];
+            if (entry && onSelectLayer) onSelectLayer(entry.layerId);
+          }}
+          focusedLayerId={selectedLayerId}
+          padSwing={padSwing}
+          padTune={padTune}
+          padChoke={padChoke}
+          padMuted={padMuted}
+          bpm={bpm}
+          noteRepeat={noteRepeat}
+          sixteenLevels={sixteenLevels}
+          globalSwing={globalSwing}
+          fullLevel={fullLevel}
+          velocityCurve={velocityCurve}
+          timeCorrect={timeCorrect}
+          onSetSwing={setSwing}
+          onSetTune={setTune}
+          onSetChoke={setChoke}
+          onTogglePadMute={togglePadMute}
+          onClearPad={clearPad}
+          onAssignActiveLayer={assignActiveLayerToPad}
+          onSetGlobalSwing={setGlobalSwing}
+          onTriggerPad={(layerId, semitones, velocity) => {
+            const choke = padChoke[layerId] || 0;
+            triggerLayerWithSemitone(layerId, semitones, velocity || 1, choke > 0 ? `choke:${choke}` : undefined);
+          }}
+          onPadInput={(layerId, velocity) => recordPadHit(layerId, velocity)}
+          onNoteRepeatChange={setNoteRepeat}
+          onSixteenLevelsChange={setSixteenLevels}
+          onFullLevelChange={setFullLevel}
+          onVelocityCurveChange={setVelocityCurve}
+          onSetTimeCorrect={setTimeCorrect}
+          onQuantize={quantizePattern}
+          onPadDrop={async (sampleId, padIndex) => {
+            if (!onAddLayer) return;
+            try {
+              const ctx = audioEngine.getContext();
+              if (!ctx) return;
+              const row = await fetchLibrarySample(sampleId);
+              if (!row) return;
+              const buffer = await decodeLibrarySample(ctx, row);
+              const newId = onAddLayer(buffer, row.name);
+              if (newId) {
+                setProgramSlot(padIndex, newId);
+                if (onSelectLayer) onSelectLayer(newId);
+              }
+            } catch (err) {
+              console.warn('Failed to assign library sample to pad', err);
+            }
+          }}
+        />
+      </div>
 
       {/* Piano keyboard + chord readout */}
       <div className="bg-[#0f0f12] border border-[#1e293b] rounded-2xl overflow-hidden">

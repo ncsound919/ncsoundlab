@@ -11,6 +11,7 @@
 
 import React, { useRef, useEffect, useCallback } from 'react';
 import { BankId, BANK_IDS } from '../store/sequencerStore';
+import { SAMPLE_DRAG_MIME } from './SampleBrowser';
 
 export interface PadEntry {
   layerId: string;
@@ -53,6 +54,11 @@ interface MpcPadBankProps {
   onVelocityCurveChange: (curve: VelocityCurve) => void;
   onSetTimeCorrect: (res: number) => void;
   onQuantize: () => void;
+  /**
+   * Phase 5.1 — drop a library sample onto a pad. The sample id is decoded by
+   * the parent (via `decodeLibrarySample`) and assigned to the pad's slot.
+   */
+  onPadDrop?: (sampleId: string, padIndex: number) => void;
 }
 
 const DIVISIONS = [
@@ -123,6 +129,7 @@ export function MpcPadBank({
   onVelocityCurveChange,
   onSetTimeCorrect,
   onQuantize,
+  onPadDrop,
 }: MpcPadBankProps) {
   const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -212,6 +219,19 @@ export function MpcPadBank({
                     onPointerDown={(e) => { e.preventDefault(); handlePadDown(undefined, 0, gridIdx, e); }}
                     onPointerUp={handlePadUp}
                     onPointerLeave={stopRepeat}
+                    onDragOver={(e) => {
+                      if (e.dataTransfer.types.includes(SAMPLE_DRAG_MIME)) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'copy';
+                      }
+                    }}
+                    onDrop={(e) => {
+                      const sampleId = e.dataTransfer.getData(SAMPLE_DRAG_MIME);
+                      if (sampleId && onPadDrop) {
+                        e.preventDefault();
+                        onPadDrop(sampleId, gridIdx);
+                      }
+                    }}
                     className={`aspect-[4/3] rounded-lg border flex flex-col items-center justify-center transition-all select-none touch-none ${
                       isSelected ? 'border-yellow-400/70 bg-[#0f172a]/30' : 'border-[#1a1a22] bg-black/40 hover:border-slate-600'
                     }`}
@@ -230,6 +250,19 @@ export function MpcPadBank({
                   onPointerLeave={stopRepeat}
                   onPointerCancel={handlePadUp}
                   onContextMenu={(e) => e.preventDefault()}
+                  onDragOver={(e) => {
+                    if (e.dataTransfer.types.includes(SAMPLE_DRAG_MIME)) {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'copy';
+                    }
+                  }}
+                  onDrop={(e) => {
+                    const sampleId = e.dataTransfer.getData(SAMPLE_DRAG_MIME);
+                    if (sampleId && onPadDrop) {
+                      e.preventDefault();
+                      onPadDrop(sampleId, gridIdx);
+                    }
+                  }}
                   className={`aspect-[4/3] rounded-lg bg-gradient-to-br border px-1.5 py-1 flex flex-col justify-between transition-all cursor-pointer select-none touch-none ${
                     isSelected
                       ? `${PAD_COLORS[gridIdx % 16]} ring-2 ${BANK_ACCENT[activeBank].ring}`
