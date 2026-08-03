@@ -1076,6 +1076,90 @@ export class AudioEngine {
     return rendered;
   }
 
+  /**
+   * Render a single layer through its FX chain into a fresh offline
+   * context, isolated from the master bus. Returns an AudioBuffer at the
+   * requested sample rate. Used by the Phase 4 stem exporter so each
+   * layer can be bounced as its own WAV for Pro Tools import.
+   *
+   * The layer's `createNodeChain` produces a complete per-layer graph
+   * (source → insert FX → pan → envelope → compressor → reverb send)
+   * that we connect to a private destination. We do NOT include the
+   * master rack or master chain here — the user gets the channel as
+   * they hear it pre-master, which is the right semantic for Pro Tools
+   * multitrack import.
+   */
+  async exportLayerStem(
+    layer: SoundLayer,
+    duration: number,
+    sampleRate: 44100 | 48000 | 96000 = 48000
+  ): Promise<AudioBuffer> {
+    // Determine effective duration: sample layers honour their crop + offset;
+    // synth layers fall back to the requested duration.
+    let playDur = 1.5;
+    let startOffset = 0;
+    if (layer.type === 'sample' && layer.audioBuffer) {
+      const bufferDur = layer.audioBuffer.duration;
+      startOffset = (layer.playStartPct ?? 0) * bufferDur;
+      playDur = Math.max(0.01, ((layer.playEndPct ?? 1) - (layer.playStartPct ?? 0)) * bufferDur);
+    }
+    const triggerTime = layer.startTimeOffset ?? 0;
+    const env = layer.envelope || DEFAULT_ENVELOPE;
+    const safeRelease = Math.max(0.005, env.release ?? 0.1);
+    const totalDur = triggerTime + playDur + safeRelease + 0.5;
+    const effectiveDur = Math.max(duration, totalDur);
+
+    const offlineCtx = new OfflineAudioContext(2, Math.ceil(sampleRate * (effectiveDur + 0.5)), sampleRate);
+    const stemOut = offlineCtx.createGain();
+    stemOut.connect(offlineCtx.destination);
+
+    const { source } = await this.createNodeChain(offlineCtx, layer, 0, stemOut);
+    if (source instanceof AudioBufferSourceNode) {
+      source.start(triggerTime, startOffset);
+      source.stop(triggerTime + playDur + safeRelease + 0.005);
+    } else if (source instanceof OscillatorNode) {
+      source.start(triggerTime);
+      source.stop(triggerTime + playDur + safeRelease + 0.005);
+    }
+
+    const rendered = await offlineCtx.startRendering();
+
+    // Anti-click micro fades at both ends (mirrors exportWav).
+    const fadeLen = Math.floor(0.005 * rendered.sampleRate);
+    for (let c = 0; c < rendered.numberOfChannels; c++) {
+      const data = rendered.getChannelData(c);
+      for (let i = 0; i < Math.min(fadeLen, data.length); i++) {
+        data[i] *= i / fadeLen;
+      }
+      for (let i = 0; i < Math.min(fadeLen, data.length); i++) {
+        const idx = data.length - 1 - i;
+        data[idx] *= i / fadeLen;
+      }
+    }
+
+    // Normalize to -0.3 dBFS peak so the user doesn't have to gain-stage on
+    // import (matches exportWav behaviour).
+    let maxVal = 0;
+    for (let c = 0; c < rendered.numberOfChannels; c++) {
+      const data = rendered.getChannelData(c);
+      for (let i = 0; i < data.length; i++) {
+        const a = Math.abs(data[i]);
+        if (a > maxVal) maxVal = a;
+      }
+    }
+    if (maxVal > 0) {
+      const gain = 0.96 / maxVal;
+      for (let c = 0; c < rendered.numberOfChannels; c++) {
+        const data = rendered.getChannelData(c);
+        for (let i = 0; i < data.length; i++) {
+          data[i] *= gain;
+        }
+      }
+    }
+
+    return rendered;
+  }
+
   private async createNodeChain(ctx: BaseAudioContext, layer: SoundLayer, startTime: number, destination: AudioNode) {
     const layerStartTime = startTime + (layer.startTimeOffset ?? 0);
     
