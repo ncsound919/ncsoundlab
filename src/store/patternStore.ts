@@ -61,6 +61,9 @@ interface PatternStore {
   setRow: (patternId: PatternId, layerId: string, row: PatternCell[]) => void;
   ensureLayerRow: (patternId: PatternId, layerId: string) => void;
   loadFromExport: (data: SequenceExportV2) => void;
+  moveInChain: (fromIdx: number, toIdx: number) => void;
+  duplicateInChain: (idx: number) => void;
+  removeFromChain: (idx: number) => void;
   reset: () => void;
 }
 
@@ -157,6 +160,29 @@ export const usePatternStore = create<PatternStore>((set) => ({
         swing: data.swing,
       };
       return { patterns: merged, songChain: data.songChain ?? s.songChain };
+    }),
+
+  moveInChain: (fromIdx, toIdx) =>
+    set((s) => {
+      const order = s.songChain.order.slice();
+      if (fromIdx < 0 || fromIdx >= order.length || toIdx < 0 || toIdx >= order.length) return {};
+      const [item] = order.splice(fromIdx, 1);
+      order.splice(toIdx, 0, item);
+      return { songChain: { order } };
+    }),
+
+  duplicateInChain: (idx) =>
+    set((s) => {
+      const order = s.songChain.order.slice();
+      if (idx < 0 || idx >= order.length) return {};
+      order.splice(idx + 1, 0, order[idx]);
+      return { songChain: { order } };
+    }),
+
+  removeFromChain: (idx) =>
+    set((s) => {
+      const order = s.songChain.order.filter((_, i) => i !== idx);
+      return { songChain: { order } };
     }),
 
   reset: () => set({ patterns: makePatterns([]), activePatternId: 'A', songChain: { order: ['A', 'B', 'C', 'D'] } }),

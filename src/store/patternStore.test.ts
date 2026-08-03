@@ -74,6 +74,32 @@ describe('migrateFromV1', () => {
   });
 });
 
+describe('patternStore song chain', () => {
+  beforeEach(() => {
+    usePatternStore.getState().reset();
+  });
+
+  it('starts with all four patterns in the chain in order', () => {
+    const { songChain } = usePatternStore.getState();
+    expect(songChain.order).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('moves a pattern in the chain', () => {
+    usePatternStore.getState().moveInChain(0, 2);
+    expect(usePatternStore.getState().songChain.order).toEqual(['B', 'C', 'A', 'D']);
+  });
+
+  it('duplicates a pattern in the chain (appends the same id)', () => {
+    usePatternStore.getState().duplicateInChain(0);
+    expect(usePatternStore.getState().songChain.order).toEqual(['A', 'A', 'B', 'C', 'D']);
+  });
+
+  it('removes a pattern from the chain', () => {
+    usePatternStore.getState().removeFromChain(1);
+    expect(usePatternStore.getState().songChain.order).toEqual(['A', 'C', 'D']);
+  });
+});
+
 describe('newEmptyPattern', () => {
   it('creates a pattern with N empty rows for the given layer ids', () => {
     const p: Pattern = newEmptyPattern(['l1', 'l2'], 120);
