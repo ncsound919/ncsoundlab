@@ -35,6 +35,9 @@ import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audi
 import { renderMixdown } from '../audio/transport/mixdown';
 import { SampleBrowser } from './SampleBrowser';
 import { TakesRecorder } from './TakesRecorder';
+import { PerformanceControls } from './PerformanceControls';
+import { MidiPanel } from './MidiPanel';
+import { TheoryPanel } from './TheoryPanel';
 import {
   fetchLibrarySample,
   decodeLibrarySample,
@@ -83,6 +86,8 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const setBankProgram = useSequencerStore((s) => s.setBankProgram);
   const setActiveBank = useSequencerStore((s) => s.setActiveBank);
   const prunePrograms = useSequencerStore((s) => s.prunePrograms);
+  const activatePatternPrograms = useSequencerStore((s) => s.activatePatternPrograms);
+  const setPatternProgramSlot = useSequencerStore((s) => s.setPatternProgramSlot);
 
   // Pattern state lifted into patternStore (Phase 2). The store's
   // layerRows is Record<layerId, PatternCell[]> — structurally compatible
@@ -108,6 +113,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const setBpm = storeSetBpm;
 
   const [padSwing, setPadSwing] = useState<Record<string, number>>({});
+  const [padPocket, setPadPocket] = useState<Record<string, number>>({}); // per-piece ms bias (PocketLab-style)
   const [padTune, setPadTune] = useState<Record<string, number>>({});
   const [padChoke, setPadChoke] = useState<Record<string, number>>({});
   const [padMuted, setPadMuted] = useState<Record<string, boolean>>({});
@@ -138,6 +144,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const patternRef = useRef(pattern);
   const stepLengthRef = useRef<16 | 32>(patternStepLength);
   const padSwingRef = useRef(padSwing);
+  const padPocketRef = useRef(padPocket);
   const padChokeRef = useRef(padChoke);
   const swingTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const tickRef = useRef<() => void>(() => {});
@@ -151,6 +158,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   useEffect(() => { patternRef.current = pattern; }, [pattern]);
   useEffect(() => { stepLengthRef.current = patternStepLength; }, [patternStepLength]);
   useEffect(() => { padSwingRef.current = padSwing; }, [padSwing]);
+  useEffect(() => { padPocketRef.current = padPocket; }, [padPocket]);
   useEffect(() => { padChokeRef.current = padChoke; }, [padChoke]);
   useEffect(() => { timeCorrectRef.current = timeCorrect; }, [timeCorrect]);
   useEffect(() => { activeRowRef.current = activeRowId; }, [activeRowId]);
@@ -225,6 +233,13 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Phase 6.1 — pads follow the active pattern: when the pattern changes, load
+  // that pattern's pad program into the flat view so the pad bank swaps live.
+  useEffect(() => {
+    activatePatternPrograms(activePatternId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePatternId]);
+
   // Interconnectivity: selecting a layer anywhere jumps to the program (bank)
   // and pad that contains it, so the MPC highlights what you're editing.
   useEffect(() => {
@@ -285,7 +300,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         const offBeat = step % 2 === 1;
         const swingDelay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
         const grooveDelay = (cell.offset ?? 0) * stepMs;
-        const delay = swingDelay + grooveDelay;
+        // PocketLab-style per-piece pocket: a constant early/late bias in ms
+        // applied to every hit of this layer, independent of swing/groove.
+        const pocketMs = padPocketRef.current[layerId] || 0;
+        const delay = swingDelay + grooveDelay + pocketMs;
         if (delay > 0) {
           const t = setTimeout(() => {
             swingTimeoutsRef.current.delete(t);
@@ -392,7 +410,8 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
             const offBeat = stepIdx % 2 === 1;
             const swingDelay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
             const grooveDelay = (cell.offset ?? 0) * stepMs;
-            const delay = swingDelay + grooveDelay;
+            const pocketMs = padPocketRef.current[layerId] || 0;
+            const delay = swingDelay + grooveDelay + pocketMs;
             if (delay > 0) {
               const to = setTimeout(() => {
                 swingTimeoutsRef.current.delete(to);
@@ -627,6 +646,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     setPadSwing((prev) => ({ ...prev, [layerId]: Math.max(0, Math.min(75, swing)) }));
   }, []);
 
+  // PocketLab-style per-piece pocket: early/late bias in ms (-40..+40).
+  const setPocket = useCallback((layerId: string, pocketMs: number) => {
+    setPadPocket((prev) => ({ ...prev, [layerId]: Math.max(-40, Math.min(40, pocketMs)) }));
+  }, []);
+
   const setTune = useCallback((layerId: string, tune: number) => {
     setPadTune((prev) => ({ ...prev, [layerId]: Math.max(-24, Math.min(24, tune)) }));
   }, []);
@@ -655,10 +679,9 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   });
 
   const setProgramSlot = useCallback((index: number, layerId: string | null) => {
-    const prog = programs[activeBank].slice();
-    prog[index] = layerId;
-    setBankProgram(activeBank, prog);
-  }, [programs, activeBank, setBankProgram]);
+    // Phase 6.1 — write into the per-pattern program (pads follow the pattern).
+    setPatternProgramSlot(activePatternId, activeBank, index, layerId);
+  }, [activePatternId, activeBank, setPatternProgramSlot]);
 
   const clearPad = useCallback((index: number) => {
     setProgramSlot(index, null);
@@ -869,6 +892,53 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         loopLengthSec={((patternStepLength / 4) * 4) * (60 / bpm)} // 4 bars at current BPM
         onAddLayer={(buffer, name) => onAddLayer ? (onAddLayer(buffer, name) ?? undefined) : undefined}
         onSlice={(buffer, n) => onSlice(buffer, n)}
+      />
+      {/* Phase 6.1 + 6.2 — performance controls (QWERTY pads, scale lock, chord mode, splits) */}
+      <PerformanceControls
+        padSlots={programs[activeBank]}
+        layers={layers}
+        onTriggerPad={(index, velocity) => {
+          const layerId = programs[activeBank][index];
+          if (!layerId) return;
+          const semitones = padTune[layerId] || 0;
+          const choke = padChoke[layerId] || 0;
+          triggerLayerWithSemitone(layerId, semitones, velocity ?? 1, choke > 0 ? `choke:${choke}` : undefined);
+        }}
+        onPlayNote={(midi, velocity) => playMidiNote(midi, velocity ?? 1)}
+        onStopNote={(midi) => stopMidiNote(midi)}
+      />
+      {/* Phase 6.3 — Web MIDI input (maps MIDI notes → pads/melodic, with real velocity) */}
+      <MidiPanel
+        padSlots={programs[activeBank]}
+        onTriggerPad={(index, velocity) => {
+          const layerId = programs[activeBank][index];
+          if (!layerId) return;
+          const semitones = padTune[layerId] || 0;
+          const choke = padChoke[layerId] || 0;
+          triggerLayerWithSemitone(layerId, semitones, velocity ?? 1, choke > 0 ? `choke:${choke}` : undefined);
+        }}
+        onPlayNote={(midi, velocity) => playMidiNote(midi, velocity ?? 1)}
+        onStopNote={(midi) => stopMidiNote(midi)}
+      />
+      {/* Phase 6.5 — theory assistant (progression + voicings from the engine) */}
+      <TheoryPanel
+        onPlayNote={(midi, velocity) => playMidiNote(midi, velocity ?? 1)}
+        onStopNote={(midi) => stopMidiNote(midi)}
+        onSendToPads={(roots) => {
+          // Assign the progression roots to pads 0..N-1 as new melodic layers
+          // would be ideal, but for now trigger them as previews is enough —
+          // roots are pitch classes, so map to the active row if it's a synth.
+          const rowId = activeRowRef.current;
+          const layer = layers.find((l) => l.id === rowId);
+          if (!layer) return;
+          roots.forEach((root, i) => {
+            const base = 60 + 0; // middle octave
+            const pc = { C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5, 'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11 }[root] ?? 0;
+            if (layer.type === 'synth' && playerRef.current) {
+              playerRef.current.playNote(layer, base + pc, 0.5, 0.9);
+            }
+          });
+        }}
       />
       {!isRecordingAudio && lastRecordedBuffer && (
         <div className="flex gap-2 mt-2 text-sm">
@@ -1207,8 +1277,9 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
             if (entry && onSelectLayer) onSelectLayer(entry.layerId);
           }}
           focusedLayerId={selectedLayerId}
-          padSwing={padSwing}
-          padTune={padTune}
+        padSwing={padSwing}
+        padPocket={padPocket}
+        padTune={padTune}
           padChoke={padChoke}
           padMuted={padMuted}
           bpm={bpm}
@@ -1219,6 +1290,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           velocityCurve={velocityCurve}
           timeCorrect={timeCorrect}
           onSetSwing={setSwing}
+          onSetPocket={setPocket}
           onSetTune={setTune}
           onSetChoke={setChoke}
           onTogglePadMute={togglePadMute}

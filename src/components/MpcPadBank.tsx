@@ -29,6 +29,8 @@ interface MpcPadBankProps {
   onSelectPad: (pad: number) => void;
   focusedLayerId?: string | null;
   padSwing: Record<string, number>;
+  /** Per-piece early/late bias in ms (PocketLab-style). */
+  padPocket: Record<string, number>;
   padTune: Record<string, number>;
   padChoke: Record<string, number>;
   padMuted: Record<string, boolean>;
@@ -40,6 +42,8 @@ interface MpcPadBankProps {
   velocityCurve: VelocityCurve;
   timeCorrect: number;
   onSetSwing: (layerId: string, swing: number) => void;
+  /** Per-piece pocket setter (ms, -40..+40). */
+  onSetPocket: (layerId: string, pocketMs: number) => void;
   onSetTune: (layerId: string, tune: number) => void;
   onSetChoke: (layerId: string, group: number) => void;
   onTogglePadMute: (layerId: string) => void;
@@ -104,6 +108,7 @@ export function MpcPadBank({
   onSelectPad,
   focusedLayerId,
   padSwing,
+  padPocket,
   padTune,
   padChoke,
   padMuted,
@@ -115,6 +120,7 @@ export function MpcPadBank({
   velocityCurve,
   timeCorrect,
   onSetSwing,
+  onSetPocket,
   onSetTune,
   onSetChoke,
   onTogglePadMute,
@@ -152,6 +158,7 @@ export function MpcPadBank({
 
   const activeEntry = entries[selectedPad] || undefined;
   const selectedSwing = activeEntry ? Math.round(padSwing[activeEntry.layerId] ?? globalSwing) : 0;
+  const selectedPocket = activeEntry ? Math.round(padPocket[activeEntry.layerId] || 0) : 0;
   const selectedTune = activeEntry ? Math.round(padTune[activeEntry.layerId] || 0) : 0;
   const selectedChoke = activeEntry ? (padChoke[activeEntry.layerId] || 0) : 0;
   const selectedMuted = activeEntry ? !!padMuted[activeEntry.layerId] : false;
@@ -380,6 +387,29 @@ export function MpcPadBank({
               className="w-full accent-emerald-400 h-1.5 rounded-lg cursor-pointer disabled:opacity-30"
               aria-label="Per-pad swing"
             />
+          </div>
+
+          {/* Per-piece pocket (PocketLab-style early/late bias in ms) */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest">Pocket</span>
+              <span className="text-[11px] font-mono font-black text-indigo-400">{selectedPocket >= 0 ? '+' : ''}{selectedPocket}ms</span>
+            </div>
+            <input
+              type="range"
+              min="-40"
+              max="40"
+              step="1"
+              value={selectedPocket}
+              disabled={!activeEntry}
+              onChange={(e) => activeEntry && onSetPocket(activeEntry.layerId, parseInt(e.target.value))}
+              className="w-full accent-indigo-400 h-1.5 rounded-lg cursor-pointer disabled:opacity-30"
+              aria-label="Per-pad pocket"
+            />
+            <div className="flex justify-between text-[7px] font-mono text-slate-600 uppercase">
+              <span>Early</span>
+              <span>Laid Back</span>
+            </div>
           </div>
 
           {/* Per-pad tune */}

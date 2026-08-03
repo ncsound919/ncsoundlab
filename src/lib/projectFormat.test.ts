@@ -373,6 +373,52 @@ describe('projectFormat — arrangement round-trip', () => {
     expect(hydrated.arrangement!.totalBeats).toBe(12);
   });
 
+  it('round-trips per-pattern pad programs (Phase 6.1)', async () => {
+    const layers: any[] = [];
+    const empty16 = () => Array.from({ length: 16 }, () => null);
+    const patternPrograms = {
+      A: {
+        A: ['s1', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+        B: empty16(), C: empty16(), D: empty16(),
+      },
+      B: {
+        A: empty16(),
+        B: ['s2', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+        C: empty16(), D: empty16(),
+      },
+      C: { A: empty16(), B: empty16(), C: empty16(), D: empty16() },
+      D: { A: empty16(), B: empty16(), C: empty16(), D: empty16() },
+    };
+    const doc = await serializeProject({
+      title: 'PerPattern',
+      appVersion: '1.0.0',
+      layers,
+      patterns: {
+        A: makePattern('A', []), B: makePattern('B', []), C: makePattern('C', []), D: makePattern('D', []),
+      },
+      activePatternId: 'A',
+      songChain: { order: ['A', 'B'] },
+      programs: { A: empty16(), B: empty16(), C: empty16(), D: empty16() },
+      patternPrograms,
+      activeBank: 'A',
+      bpm: 120,
+      timeSignature: [4, 4],
+      masterLevel: 0.8,
+      masterRack: { modules: [] },
+    });
+    expect(doc.patternPrograms).toBeDefined();
+    expect(doc.patternPrograms!.A.A[0]).toBe('s1');
+    expect(doc.patternPrograms!.B.B[0]).toBe('s2');
+
+    const ctx = new AudioContext();
+    const hydrated = await deserializeProject(ctx, doc);
+    expect(hydrated.patternPrograms).toBeDefined();
+    expect(hydrated.patternPrograms!.A.A[0]).toBe('s1');
+    expect(hydrated.patternPrograms!.B.B[0]).toBe('s2');
+    // Deep-cloned (not shared references).
+    expect(hydrated.patternPrograms).not.toBe(doc.patternPrograms);
+  });
+
   it('migrates a document without arrangement (backwards-compat)', () => {
     const raw = {
       format: PROJECT_FORMAT_TAG,

@@ -150,6 +150,11 @@ export interface ProjectDocument {
 
   programs: Record<BankId, Program>;
   activeBank: BankId;
+  /**
+   * Phase 6.1 — per-pattern pad programs. Optional; older docs default to the
+   * flat `programs` map for every pattern.
+   */
+  patternPrograms?: Record<string, Record<BankId, Program>>;
 }
 
 /**
@@ -175,6 +180,8 @@ export interface SerializeProjectInput {
   buses?: SerializedBuses;
   programs: Record<BankId, Program>;
   activeBank: BankId;
+  /** Phase 6.1 — per-pattern pad programs (optional). */
+  patternPrograms?: Record<string, Record<BankId, Program>>;
   bpm: number;
   timeSignature: [number, number];
   globalSwing?: number;
@@ -238,7 +245,16 @@ export async function serializeProject(input: SerializeProjectInput): Promise<Pr
     ...(input.buses ? { buses: input.buses } : {}),
     programs: clonePrograms(input.programs),
     activeBank: input.activeBank,
+    ...(input.patternPrograms ? { patternPrograms: clonePatternPrograms(input.patternPrograms) } : {}),
   };
+}
+
+function clonePatternPrograms(map: Record<string, Record<BankId, Program>>): Record<string, Record<BankId, Program>> {
+  const out: Record<string, Record<BankId, Program>> = {};
+  for (const [pid, banks] of Object.entries(map)) {
+    out[pid] = { A: banks.A?.slice(), B: banks.B?.slice(), C: banks.C?.slice(), D: banks.D?.slice() };
+  }
+  return out;
 }
 
 function serializePattern(p: Pattern): SerializedPattern {
@@ -271,6 +287,7 @@ export interface DeserializeProjectResult {
   layers: SoundLayer[];
   patterns: Record<PatternId, Pattern>;
   programs: Record<BankId, Program>;
+  patternPrograms?: Record<string, Record<BankId, Program>>;
   arrangement: ArrangementSerialized | null;
   automation: SerializedAutomationLanes;
   buses: SerializedBuses;
@@ -300,6 +317,7 @@ export async function deserializeProject(
     layers,
     patterns,
     programs: clonePrograms(document.programs),
+    patternPrograms: document.patternPrograms ? clonePatternPrograms(document.patternPrograms) : undefined,
     arrangement: document.arrangement ?? null,
     automation: document.automation ?? {},
     buses: document.buses ?? sanitizeBuses(null),
@@ -422,7 +440,33 @@ function normalizeV1(obj: RawProjectDocument): ProjectDocument {
     activeBank: sanitizeBankId(obj.activeBank),
     automation: sanitizeAutomationLanes(obj.automation),
     buses: sanitizeBuses(obj.buses),
+    ...(obj.patternPrograms && typeof obj.patternPrograms === 'object'
+      ? { patternPrograms: sanitizePatternPrograms(obj.patternPrograms) }
+      : {}),
   };
+}
+
+function sanitizePatternPrograms(value: unknown): Record<string, Record<BankId, Program>> {
+  const out: Record<string, Record<BankId, Program>> = {};
+  if (!value || typeof value !== 'object') return out;
+  for (const [pid, banks] of Object.entries(value as Record<string, unknown>)) {
+    if (!banks || typeof banks !== 'object') continue;
+    const b = banks as Record<string, unknown>;
+    out[pid] = {
+      A: sanitizeProgram(b.A),
+      B: sanitizeProgram(b.B),
+      C: sanitizeProgram(b.C),
+      D: sanitizeProgram(b.D),
+    };
+  }
+  return out;
+}
+
+function sanitizeProgram(value: unknown): Program {
+  if (!Array.isArray(value)) return Array.from({ length: 16 }, () => null);
+  const slots = value.slice(0, 16).map((id) => (typeof id === 'string' ? id : null));
+  while (slots.length < 16) slots.push(null);
+  return slots;
 }
 
 export const DEFAULT_BUSES: SerializedBuses = {

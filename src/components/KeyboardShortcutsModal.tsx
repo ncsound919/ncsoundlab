@@ -30,10 +30,26 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
     ]
   },
   {
+    title: 'Patterns',
+    items: [
+      { keys: ['A', 'B', 'C', 'D'], description: 'Switch active pattern' },
+    ]
+  },
+  {
+    title: 'Performance',
+    items: [
+      { keys: ['Z S X D C …'], description: 'Trigger the 16 pads (MPC-style key band)' },
+      { keys: ['A W S E …'], description: 'Piano-row notes (scale-lock + chord mode aware)' },
+      { keys: ['Shift', 'Key'], description: '16-levels velocity on pad keys' },
+    ]
+  },
+  {
     title: 'Workflow & History',
     items: [
       { keys: ['Ctrl / ⌘', 'Z'], description: 'Undo last sound layer change' },
       { keys: ['Ctrl / ⌘', 'Y'], description: 'Redo previously undone change' },
+      { keys: ['Ctrl / ⌘', 'S'], description: 'Open Save / Project Manager' },
+      { keys: ['Ctrl / ⌘', 'N'], description: 'New session (clears the workspace)' },
       { keys: ['← / →'], description: 'Move between production stages' },
       { keys: ['?'], description: 'Open / Close this keyboard shortcuts guide' },
       { keys: ['Esc'], description: 'Close any open window' },

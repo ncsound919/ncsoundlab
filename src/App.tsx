@@ -596,6 +596,7 @@ export default function App() {
       useSequencerStore.setState({
         programs: hydrated.programs,
         activeBank: hydrated.document.activeBank,
+        ...(hydrated.patternPrograms ? { patternPrograms: hydrated.patternPrograms } : {}),
       });
       setMasterLevel(hydrated.document.masterLevel);
       if (hydrated.layers.length > 0) {
@@ -644,6 +645,7 @@ export default function App() {
       activePatternId: patternStore.activePatternId,
       songChain: { order: patternStore.songChain.order },
       programs: sequencerStore.programs,
+      patternPrograms: sequencerStore.patternPrograms,
       activeBank: sequencerStore.activeBank,
       bpm: patternStore.patterns[patternStore.activePatternId].bpm,
       timeSignature: patternStore.patterns[patternStore.activePatternId].timeSignature,
@@ -753,6 +755,25 @@ export default function App() {
       } else if (e.key === '?' || e.key === '/') {
         e.preventDefault();
         setIsShortcutsOpen((open) => !open);
+      } else if ((e.key === 's' || e.key === 'S') && (e.ctrlKey || e.metaKey)) {
+        // Phase 6.4 — Ctrl/Cmd+S opens the save/project manager.
+        e.preventDefault();
+        setIsProjectManagerOpen(true);
+      } else if ((e.key === 'n' || e.key === 'N') && (e.ctrlKey || e.metaKey)) {
+        // Phase 6.4 — Ctrl/Cmd+N new project (empty session).
+        e.preventDefault();
+        setLayers([]);
+        setSelectedLayerId(null);
+        patternStore.reset();
+        useSequencerStore.setState({ programs: {
+          A: Array(16).fill(null), B: Array(16).fill(null), C: Array(16).fill(null), D: Array(16).fill(null),
+        } });
+        addToast('New Session', 'info');
+      } else if (/^[a-dA-D]$/.test(e.key) && !e.ctrlKey && !e.metaKey) {
+        // Phase 6.4 — A/B/C/D switches the active pattern.
+        const pid = e.key.toUpperCase() as 'A' | 'B' | 'C' | 'D';
+        patternStore.setActivePattern(pid);
+        e.preventDefault();
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLayerId) {
         e.preventDefault();
         const id = selectedLayerId;
