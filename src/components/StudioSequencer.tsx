@@ -27,7 +27,8 @@ import { SoundLayerPlayer } from '../audio/SoundLayerPlayer';
 import { MpcPadBank, PadEntry } from './MpcPadBank';
 import { PianoRoll } from './PianoRoll';
 import { useSequencerStore, BANK_IDS, BankId } from '../store/sequencerStore';
-import { usePatternStore } from '../store/patternStore';
+import { usePatternStore, PATTERN_IDS, type PatternId } from '../store/patternStore';
+import { GROOVE_TEMPLATES, applyGroove, humanizeVelocities, clearGrooveOffsets, findGrooveTemplate } from '../lib/grooveTemplates';
 import { exportV2, importExport } from '../sequencerFormat';
 import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
 import { renderMixdown } from '../audio/transport/mixdown';
@@ -262,16 +263,26 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         // Probability: if cell.probability < 1, roll the dice and skip this hit.
         const probability = cell.probability ?? 1;
         if (probability < 1 && Math.random() > probability) continue;
-        // MPC per-pad swing: delay off-beat 16ths (odd steps) by the pad's swing %
+        // MPC per-pad swing: delay off-beat 16ths (odd steps) by the pad's swing %.
+        // Phase 1.4 groove offsets stack on top of MPC swing: cell.offset is a
+        // fractional shift of the 16th-note (positive = laid-back, negative
+        // = pushed). The two combine so per-pad swing and per-pattern groove
+        // can be authored independently.
         const swing = padSwingRef.current[layerId] || 0;
         const offBeat = step % 2 === 1;
-        const delay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
+        const swingDelay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
+        const grooveDelay = (cell.offset ?? 0) * stepMs;
+        const delay = swingDelay + grooveDelay;
         if (delay > 0) {
           const t = setTimeout(() => {
             swingTimeoutsRef.current.delete(t);
             triggerStep(layerId, cell);
           }, delay);
           swingTimeoutsRef.current.add(t);
+        } else if (delay < 0) {
+          // Negative offsets are not schedulable through setTimeout; clamp to 0
+          // (push to the downbeat). The pattern editor can warn the user.
+          triggerStep(layerId, cell);
         } else {
           triggerStep(layerId, cell);
         }
@@ -366,7 +377,9 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
             if (probability < 1 && Math.random() > probability) continue;
             const swing = padSwingRef.current[layerId] || 0;
             const offBeat = stepIdx % 2 === 1;
-            const delay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
+            const swingDelay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
+            const grooveDelay = (cell.offset ?? 0) * stepMs;
+            const delay = swingDelay + grooveDelay;
             if (delay > 0) {
               const to = setTimeout(() => {
                 swingTimeoutsRef.current.delete(to);
@@ -564,9 +577,19 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
 
   const clearPattern = () => {
     const pid = usePatternStore.getState().activePatternId;
-    for (const layer of layers) {
-      setRow(pid, layer.id, Array.from({ length: stepLengthRef.current }, () => ({ on: false })));
-    }
+    usePatternStore.getState().clearPatternCells(pid);
+  };
+
+  // Phase 1.3 — duplicate the active pattern into another A/B/C/D slot.
+  // Defaults to the next slot, wraps from D → A.
+  const duplicatePatternInto = (dstId?: PatternId) => {
+    const ids = PATTERN_IDS;
+    const state = usePatternStore.getState();
+    const src = state.activePatternId;
+    const idx = ids.indexOf(src);
+    const dst = dstId ?? ids[(idx + 1) % ids.length];
+    state.copyPatternInto(src, dst);
+    state.setActivePattern(dst);
   };
 
   // MPC pad trigger with per-pad tune / 16-levels semitone offset, velocity
@@ -966,6 +989,101 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
             ))}
           </div>
           <span className="text-[9px] font-mono text-slate-500">{view === 'grid' ? 'Click a row to make it the active track' : 'Click cells to add notes to the active track'}</span>
+        </div>
+        {/* Phase 1.3 — pattern editing toolbar */}
+        <div className="flex items-center gap-1 px-2.5 pb-2 flex-wrap" role="toolbar" aria-label="Pattern editing">
+          <button
+            type="button"
+            onClick={() => duplicatePatternInto()}
+            title="Duplicate active pattern into next slot (A→B→C→D→A)"
+            className="px-2 py-1 text-[9px] font-mono font-black uppercase tracking-wider bg-[#0f172a] hover:bg-[#1e293b] border border-[#1e293b] rounded text-slate-200 hover:text-yellow-400 transition-colors"
+          >
+            Duplicate Pattern
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const pid = usePatternStore.getState().activePatternId;
+              usePatternStore.getState().copyCells(pid, activeRowId ?? undefined);
+            }}
+            disabled={!activeRowId && Object.keys(usePatternStore.getState().patterns[usePatternStore.getState().activePatternId].layerRows).length === 0}
+            title="Copy cells of the active row to the clipboard"
+            className="px-2 py-1 text-[9px] font-mono font-black uppercase tracking-wider bg-[#0f172a] hover:bg-[#1e293b] border border-[#1e293b] rounded text-slate-200 hover:text-yellow-400 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+          >
+            Copy Row
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const pid = usePatternStore.getState().activePatternId;
+              usePatternStore.getState().pasteCells(pid, activeRowId ?? undefined);
+            }}
+            disabled={usePatternStore.getState().clipboard === null}
+            title="Paste clipboard cells into the active row"
+            className="px-2 py-1 text-[9px] font-mono font-black uppercase tracking-wider bg-[#0f172a] hover:bg-[#1e293b] border border-[#1e293b] rounded text-slate-200 hover:text-yellow-400 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+          >
+            Paste Row
+          </button>
+          <button
+            type="button"
+            onClick={clearPattern}
+            title="Clear all cells in the active pattern"
+            className="px-2 py-1 text-[9px] font-mono font-black uppercase tracking-wider bg-red-950/30 hover:bg-red-900/50 border border-red-900/40 rounded text-red-300 hover:text-red-200 transition-colors"
+          >
+            Clear Pattern
+          </button>
+          {/* Phase 1.4 — groove + humanize controls */}
+          <select
+            aria-label="Apply groove template"
+            title="Apply groove template (MPC swing, boom bap, funk, ...)"
+            defaultValue="straight"
+            onChange={(e) => {
+              const tpl = findGrooveTemplate(e.target.value);
+              if (!tpl) return;
+              const state = usePatternStore.getState();
+              const p = state.patterns[state.activePatternId];
+              const next = applyGroove(p, tpl);
+              usePatternStore.setState({
+                patterns: { ...state.patterns, [state.activePatternId]: next },
+              });
+              e.target.value = 'straight'; // reset selector
+            }}
+            className="px-2 py-1 text-[9px] font-mono font-black uppercase tracking-wider bg-[#0f172a] border border-[#1e293b] rounded text-slate-200 hover:border-yellow-400 transition-colors"
+          >
+            {GROOVE_TEMPLATES.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => {
+              const state = usePatternStore.getState();
+              const p = state.patterns[state.activePatternId];
+              const next = humanizeVelocities(p, 0.2);
+              usePatternStore.setState({
+                patterns: { ...state.patterns, [state.activePatternId]: next },
+              });
+            }}
+            title="Randomize velocities ±20% across all cells"
+            className="px-2 py-1 text-[9px] font-mono font-black uppercase tracking-wider bg-[#0f172a] hover:bg-[#1e293b] border border-[#1e293b] rounded text-slate-200 hover:text-yellow-400 transition-colors"
+          >
+            Humanize
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const state = usePatternStore.getState();
+              const p = state.patterns[state.activePatternId];
+              const next = clearGrooveOffsets(p);
+              usePatternStore.setState({
+                patterns: { ...state.patterns, [state.activePatternId]: next },
+              });
+            }}
+            title="Remove groove offsets from all cells"
+            className="px-2 py-1 text-[9px] font-mono font-black uppercase tracking-wider bg-[#0f172a] hover:bg-[#1e293b] border border-[#1e293b] rounded text-slate-200 hover:text-yellow-400 transition-colors"
+          >
+            Reset Swing
+          </button>
         </div>
         {view === 'grid' ? (
         <div className="overflow-x-auto custom-scrollbar">

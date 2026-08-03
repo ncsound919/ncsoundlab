@@ -196,3 +196,79 @@ describe('Phase 1.1 — pattern cell duration/probability + 32-step preservation
     expect(visited.size).toBe(32);
   });
 });
+
+describe('Phase 1.3 — pattern editing: copy/paste, duplicate, clear', () => {
+  beforeEach(() => {
+    usePatternStore.getState().reset();
+  });
+
+  it('copyPatternInto clones cells and tempo into another pattern slot', () => {
+    usePatternStore.getState().setCell('A', 'l1', 0, { on: true, note: 60, velocity: 100 });
+    usePatternStore.getState().setCell('A', 'l1', 4, { on: true, note: 64 });
+    usePatternStore.getState().setBpm(140);
+    usePatternStore.getState().setStepLength(32);
+    usePatternStore.getState().copyPatternInto('A', 'B');
+    const b = usePatternStore.getState().patterns.B;
+    expect(b.bpm).toBe(140);
+    expect(b.stepLength).toBe(32);
+    expect(b.layerRows.l1[0]).toEqual({ on: true, note: 60, velocity: 100 });
+    expect(b.layerRows.l1[4]).toEqual({ on: true, note: 64 });
+    // Source should be unchanged.
+    const a = usePatternStore.getState().patterns.A;
+    expect(a.layerRows.l1).not.toBe(b.layerRows.l1);
+  });
+
+  it('clearPatternCells clears all rows when no layerId is provided', () => {
+    usePatternStore.getState().setCell('A', 'l1', 0, { on: true });
+    usePatternStore.getState().setCell('A', 'l2', 2, { on: true });
+    usePatternStore.getState().clearPatternCells('A');
+    const p = usePatternStore.getState().patterns.A;
+    expect(p.layerRows.l1.every((c) => !c.on)).toBe(true);
+    expect(p.layerRows.l2.every((c) => !c.on)).toBe(true);
+  });
+
+  it('clearPatternCells clears only the specified layer row', () => {
+    usePatternStore.getState().setCell('A', 'l1', 0, { on: true });
+    usePatternStore.getState().setCell('A', 'l2', 2, { on: true });
+    usePatternStore.getState().clearPatternCells('A', 'l1');
+    const p = usePatternStore.getState().patterns.A;
+    expect(p.layerRows.l1.every((c) => !c.on)).toBe(true);
+    expect(p.layerRows.l2[2]).toEqual({ on: true });
+  });
+
+  it('copyCells + pasteCells round-trips a layer row through the clipboard', () => {
+    usePatternStore.getState().setCell('A', 'l1', 1, { on: true, note: 60, velocity: 110 });
+    usePatternStore.getState().copyCells('A', 'l1');
+    expect(usePatternStore.getState().clipboard).toBeTruthy();
+    expect(usePatternStore.getState().clipboard![1]).toEqual({ on: true, note: 60, velocity: 110 });
+    // Clear and paste back.
+    usePatternStore.getState().clearPatternCells('A', 'l1');
+    expect(usePatternStore.getState().patterns.A.layerRows.l1[1].on).toBe(false);
+    usePatternStore.getState().pasteCells('A', 'l1');
+    expect(usePatternStore.getState().patterns.A.layerRows.l1[1]).toEqual({ on: true, note: 60, velocity: 110 });
+  });
+
+  it('pasteCells truncates or pads to destination stepLength', () => {
+    usePatternStore.getState().setStepLength(32);
+    usePatternStore.getState().copyCells('A', 'l1'); // empty, 16-wide clipboard
+    // Make clipboard a 16-cell wide row.
+    usePatternStore.getState().setCell('A', 'l1', 5, { on: true, note: 60 });
+    usePatternStore.getState().copyCells('A', 'l1');
+    // Now resize destination to 32.
+    usePatternStore.getState().setStepLength(32);
+    // First we need a layer row in the new length.
+    usePatternStore.getState().ensureLayerRow('A', 'l1');
+    usePatternStore.getState().pasteCells('A', 'l1');
+    const row = usePatternStore.getState().patterns.A.layerRows.l1;
+    expect(row).toHaveLength(32);
+    expect(row[5]).toEqual({ on: true, note: 60 });
+    expect(row[16]).toEqual({ on: false });
+  });
+
+  it('pasteCells is a no-op when clipboard is empty', () => {
+    usePatternStore.getState().clearClipboard();
+    usePatternStore.getState().setCell('A', 'l1', 0, { on: true });
+    usePatternStore.getState().pasteCells('A', 'l1');
+    expect(usePatternStore.getState().patterns.A.layerRows.l1[0]).toEqual({ on: true });
+  });
+});

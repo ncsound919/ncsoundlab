@@ -667,6 +667,12 @@ export interface PatternCell {
   duration?: number;
   /** 0..1. A step is skipped if Math.random() > probability. Default 1 (always fire). */
   probability?: number;
+  /**
+   * Step-relative timing offset in fractions of a 16th note (Phase 1.4).
+   * Positive = laid-back; negative = pushed. Range typically ±0.5. The
+   * scheduler adds this offset to the cell's trigger time. Default 0.
+   */
+  offset?: number;
 }
 
 export interface Pattern {
