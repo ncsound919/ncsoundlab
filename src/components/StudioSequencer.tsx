@@ -26,12 +26,13 @@ import { SoundLayerPlayer } from '../audio/SoundLayerPlayer';
 import { MpcPadBank, PadEntry } from './MpcPadBank';
 import { PianoRoll } from './PianoRoll';
 import { useSequencerStore, BANK_IDS, BankId } from '../store/sequencerStore';
+import { usePatternStore } from '../store/patternStore';
+import { exportV2, importExport } from '../sequencerFormat';
 
 const STEPS = 16;
 const PPQ = 96;
 
 type StepCell = { on: boolean; note?: number };
-type Pattern = Record<string, StepCell[]>;
 
 interface StudioSequencerProps {
   layers: SoundLayer[];
@@ -49,20 +50,10 @@ const keyboardShortcuts = KeyboardShortcuts.create({
   keyboardConfig: KeyboardShortcuts.HOME_ROW,
 });
 
-const emptyPattern = (layerIds: string[]): Pattern => {
-  const p: Pattern = {};
-  for (const id of layerIds) {
-    p[id] = Array.from({ length: STEPS }, () => ({ on: false }));
-  }
-  return p;
-};
-
 export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpdateLayer }: StudioSequencerProps) {
-  const [bpm, setBpm] = useState(120);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
-  const [pattern, setPattern] = useState<Pattern>(() => emptyPattern(layers.map((l) => l.id)));
   const [activeRowId, setActiveRowId] = useState<string | null>(selectedLayerId || layers[0]?.id || null);
   const [activeNotes, setActiveNotes] = useState<number[]>([]);
 
@@ -73,6 +64,24 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const setBankProgram = useSequencerStore((s) => s.setBankProgram);
   const setActiveBank = useSequencerStore((s) => s.setActiveBank);
   const prunePrograms = useSequencerStore((s) => s.prunePrograms);
+
+  // Pattern state lifted into patternStore (Phase 2). The store's
+  // layerRows is Record<layerId, PatternCell[]> — structurally compatible
+  // with the legacy local `Pattern` type, so all read sites work unchanged.
+  const pattern = usePatternStore((s) => s.patterns[s.activePatternId].layerRows);
+  const activePatternId = usePatternStore((s) => s.activePatternId);
+  const patternBpm = usePatternStore((s) => s.patterns[s.activePatternId].bpm);
+  const setRow = usePatternStore((s) => s.setRow);
+  const ensureLayerRow = usePatternStore((s) => s.ensureLayerRow);
+  const storeSetBpm = usePatternStore((s) => s.setBpm);
+  const loadFromExport = usePatternStore((s) => s.loadFromExport);
+  const setActivePattern = usePatternStore((s) => s.setActivePattern);
+
+  // BPM lives in patternStore; keep the local names the rest of this file
+  // already uses (`bpm` / `setBpm`) pointing at the store so call sites
+  // (tap tempo, transport sync, tick math) are unchanged.
+  const bpm = patternBpm;
+  const setBpm = storeSetBpm;
 
   const [padSwing, setPadSwing] = useState<Record<string, number>>({});
   const [padTune, setPadTune] = useState<Record<string, number>>({});
@@ -125,17 +134,13 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     }
   }, [selectedLayerId, layers]);
 
-  // Prune stale pattern/pad-swing rows for removed layers, auto-map pads, and
-  // fall back the active row to the first enabled layer when it was removed.
+  // Ensure every current layer has a row in the patternStore, auto-map pads,
+  // and fall back the active row to the first enabled layer when it was removed.
   useEffect(() => {
     const ids = new Set(layers.map((l) => l.id));
-    setPattern((prev) => {
-      const pruned: Pattern = {};
-      for (const id of Object.keys(prev)) {
-        if (ids.has(id)) pruned[id] = prev[id];
-      }
-      return Object.keys(pruned).length === Object.keys(prev).length ? prev : pruned;
-    });
+    for (const layer of layers) {
+      ensureLayerRow(activePatternId, layer.id);
+    }
     setPadSwing((prev) => {
       const pruned: Record<string, number> = {};
       let changed = false;
@@ -373,73 +378,72 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   }, [bpm, globalSwing, useTransportMode]);
 
   const toggleCell = (layerId: string, idx: number) => {
-    setPattern((prev) => {
-      const row = prev[layerId] || Array.from({ length: STEPS }, () => ({ on: false }));
-      const next = row.map((c, i) => (i === idx ? { on: !c.on, note: c.note } : c));
-      return { ...prev, [layerId]: next };
-    });
+    const row = pattern[layerId] || Array.from({ length: STEPS }, () => ({ on: false }));
+    const next = row.map((c, i) => (i === idx ? { on: !c.on, note: c.note } : c));
+    setRow(activePatternId, layerId, next);
   };
 
   // Piano-roll edit: set/clear a melodic note at (step, pitch) on a layer row.
   const toggleNote = useCallback((layerId: string, step: number, pitch: number) => {
-    setPattern((prev) => {
-      const row = prev[layerId] || Array.from({ length: STEPS }, () => ({ on: false }));
-      const next = row.map((c, i) => {
-        if (i !== step) return c;
-        return c.on && c.note === pitch ? { on: false } : { on: true, note: pitch };
-      });
-      return { ...prev, [layerId]: next };
+    const row = usePatternStore.getState().patterns[usePatternStore.getState().activePatternId].layerRows[layerId]
+      || Array.from({ length: STEPS }, () => ({ on: false }));
+    const next = row.map((c, i) => {
+      if (i !== step) return c;
+      return c.on && c.note === pitch ? { on: false } : { on: true, note: pitch };
     });
-  }, []);
+    setRow(activePatternId, layerId, next);
+  }, [activePatternId, setRow]);
 
   const recordNote = useCallback((midi: number) => {
     const rowId = activeRowRef.current;
     if (!rowId) return;
+    const pid = usePatternStore.getState().activePatternId;
     // MPC Time Correct: snap the recorded step to the resolution grid
     const res = timeCorrectRef.current || 1;
     const rawStep = playingRef.current ? stepRef.current : 0;
     const step = Math.max(0, Math.min(STEPS - 1, Math.round(rawStep / res) * res));
-    setPattern((prev) => {
-      const row = prev[rowId] || Array.from({ length: STEPS }, () => ({ on: false }));
-      const next = row.map((c, i) => (i === step ? { on: true, note: midi } : c));
-      return { ...prev, [rowId]: next };
-    });
-  }, []);
+    const row = usePatternStore.getState().patterns[pid].layerRows[rowId]
+      || Array.from({ length: STEPS }, () => ({ on: false }));
+    const next = row.map((c, i) => (i === step ? { on: true, note: midi } : c));
+    setRow(pid, rowId, next);
+  }, [setRow]);
 
   // Pad-to-step: real pad hits while REC + playing write a drum trigger into
   // the hit layer's row at the current step (Time Correct snapped).
   const recordPadHit = useCallback((layerId: string) => {
     if (!recordingRef.current || !playingRef.current) return;
+    const pid = usePatternStore.getState().activePatternId;
     const res = timeCorrectRef.current || 1;
     const rawStep = stepRef.current;
     const step = Math.max(0, Math.min(STEPS - 1, Math.round(rawStep / res) * res));
-    setPattern((prev) => {
-      const row = prev[layerId] || Array.from({ length: STEPS }, () => ({ on: false }));
-      const next = row.map((c, i) => (i === step ? { on: true, note: undefined } : c));
-      return { ...prev, [layerId]: next };
-    });
-  }, []);
+    const row = usePatternStore.getState().patterns[pid].layerRows[layerId]
+      || Array.from({ length: STEPS }, () => ({ on: false }));
+    const next = row.map((c, i) => (i === step ? { on: true, note: undefined } : c));
+    setRow(pid, layerId, next);
+  }, [setRow]);
 
   // MPC Time Correct quantize: snap every active step to the resolution grid.
   const quantizePattern = useCallback(() => {
     const res = Math.max(1, timeCorrect || 1);
-    setPattern((prev) => {
-      const next: Pattern = {};
-      for (const id of Object.keys(prev)) {
-        const cells = prev[id];
-        const snapped = new Map<number, StepCell>();
-        cells.forEach((c, i) => {
-          if (!c.on) return;
-          const s = Math.min(STEPS - 1, Math.max(0, Math.round(i / res) * res));
-          if (!snapped.has(s)) snapped.set(s, c);
-        });
-        const row: StepCell[] = Array.from({ length: STEPS }, () => ({ on: false }));
-        snapped.forEach((c, i) => { row[i] = { on: true, note: c.note }; });
-        next[id] = row;
-      }
-      return next;
-    });
-  }, [timeCorrect]);
+    const pid = usePatternStore.getState().activePatternId;
+    const prev = usePatternStore.getState().patterns[pid].layerRows;
+    const next: Record<string, StepCell[]> = {};
+    for (const id of Object.keys(prev)) {
+      const cells = prev[id];
+      const snapped = new Map<number, StepCell>();
+      cells.forEach((c, i) => {
+        if (!c.on) return;
+        const s = Math.min(STEPS - 1, Math.max(0, Math.round(i / res) * res));
+        if (!snapped.has(s)) snapped.set(s, c);
+      });
+      const row: StepCell[] = Array.from({ length: STEPS }, () => ({ on: false }));
+      snapped.forEach((c, i) => { row[i] = { on: true, note: c.note }; });
+      next[id] = row;
+    }
+    for (const id of Object.keys(next)) {
+      setRow(pid, id, next[id]);
+    }
+  }, [timeCorrect, setRow]);
 
   // Tap tempo (reset the buffer if the gap is stale so old taps don't skew BPM)
   const tapTempo = useCallback(() => {
@@ -484,7 +488,12 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     }
   }, [recordNote]);
 
-  const clearPattern = () => setPattern(emptyPattern(layers.map((l) => l.id)));
+  const clearPattern = () => {
+    const pid = usePatternStore.getState().activePatternId;
+    for (const layer of layers) {
+      setRow(pid, layer.id, Array.from({ length: STEPS }, () => ({ on: false })));
+    }
+  };
 
   // MPC pad trigger with per-pad tune / 16-levels semitone offset, velocity
   // (0..1), and choke group. Does not stop other layers unless they share a
@@ -580,7 +589,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   };
 
   const exportSequence = () => {
-    const data = { format: 'ncsoundlab-mpc-sequence', version: 1, bpm, steps: STEPS, ppq: PPQ, pattern: patternRef.current };
+    const pid = usePatternStore.getState().activePatternId;
+    const patternObj = usePatternStore.getState().patterns[pid];
+    const songChain = usePatternStore.getState().songChain;
+    const data = exportV2(pid, patternObj, songChain);
     downloadFile(JSON.stringify(data, null, 2), 'mpc-sequence.seq');
   };
 
@@ -632,15 +644,12 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           if (typeof data.sixteenLevels === 'boolean') setSixteenLevels(data.sixteenLevels);
           if (typeof data.timeCorrect === 'number') setTimeCorrect(data.timeCorrect);
         } else if (importKindRef.current === 'seq') {
-          if (typeof data.bpm === 'number') setBpm(data.bpm);
-          if (data.pattern && typeof data.pattern === 'object') {
-            const p: Pattern = {};
-            for (const [layerId, cells] of Object.entries(data.pattern as Record<string, StepCell[]>)) {
-              if (Array.isArray(cells)) {
-                p[layerId] = cells.slice(0, STEPS).map((c: any) => ({ on: !!c.on, note: typeof c.note === 'number' ? c.note : undefined }));
-              }
-            }
-            if (Object.keys(p).length) setPattern(p);
+          try {
+            const v2 = importExport(data);
+            loadFromExport(v2);
+            if (typeof v2.bpm === 'number') setBpm(v2.bpm);
+          } catch {
+            console.warn('Unrecognized sequence export format');
           }
         }
       } catch (err) {
