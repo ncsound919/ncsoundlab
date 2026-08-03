@@ -3,6 +3,47 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * Encode an AudioBuffer to a base64-encoded WAV string (data URL fragment only,
+ * no `data:audio/wav;base64,` prefix). Used by the project-document serializer
+ * to embed sample audio into a self-contained `.nsl` file.
+ *
+ * 16-bit PCM is the default to keep serialized project size small; samples are
+ * usually transient material and 16-bit is sufficient for round-trip audition.
+ */
+export async function audioBufferToBase64(buffer: AudioBuffer, bitDepth: 16 | 24 | 32 = 16): Promise<string> {
+  const blob = audioBufferToWav(buffer, bitDepth);
+  const arrayBuffer = await blob.arrayBuffer();
+  let binary = '';
+  const bytes = new Uint8Array(arrayBuffer);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)) as number[]);
+  }
+  if (typeof btoa !== 'undefined') {
+    return btoa(binary);
+  }
+  return Buffer.from(binary, 'binary').toString('base64');
+}
+
+/**
+ * Decode a base64-encoded WAV string (no data-URI prefix) back into an
+ * AudioBuffer using the provided BaseAudioContext.
+ */
+export async function base64ToAudioBuffer(context: BaseAudioContext, base64: string): Promise<AudioBuffer> {
+  let binary: string;
+  if (typeof atob !== 'undefined') {
+    binary = atob(base64);
+  } else {
+    binary = Buffer.from(base64, 'base64').toString('binary');
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return await context.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+}
+
 // Simple WAV encoder helper
 export function audioBufferToWav(buffer: AudioBuffer, bitDepth: 16 | 24 | 32 = 32): Blob {
   const numChannels = buffer.numberOfChannels;

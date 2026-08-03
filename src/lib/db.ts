@@ -11,6 +11,8 @@
 
 import Dexie, { type Table } from 'dexie';
 import { SoundKit, SoundKitSample } from '../types';
+import type { ProjectDocument } from './projectFormat';
+export type { ProjectDocument } from './projectFormat';
 
 /** SoundKitSample without the non-serializable AudioBuffer. */
 export type StoredSoundKitSample = Omit<SoundKitSample, 'audioBuffer'>;
@@ -41,6 +43,7 @@ class SoundLabDB extends Dexie {
   soundKits!: Table<StoredSoundKit, string>;
   soundProjects!: Table<SavedSoundProject, string>;
   favorites!: Table<Favorite, string>;
+  projectDocuments!: Table<ProjectDocument, string>;
 
   constructor() {
     super('soundlab-db');
@@ -48,6 +51,13 @@ class SoundLabDB extends Dexie {
       soundKits: 'id, isPublished, title, producer, genre, updatedAt',
       soundProjects: 'id, ownerId, title, updatedAt',
       favorites: 'id, kitId, createdAt',
+    });
+    // Phase 0.2: add a versioned project document table for round-trip project
+    // files (layers + sample audio + patterns + pads + master rack). Stored
+    // alongside the legacy `soundProjects` row so old UI keeps working until
+    // Step 0.4 deprecates it.
+    this.version(2).stores({
+      projectDocuments: 'id, title, updatedAt',
     });
   }
 }
@@ -178,5 +188,53 @@ export const toggleFavorite = async (kitId: string, isFav: boolean): Promise<voi
     }
   } catch (err) {
     console.warn('Local favorites toggle notice (offline/unsupported):', err);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Versioned project documents (Phase 0.2)
+//
+// Stores self-contained `ProjectDocument` rows produced by the projectFormat
+// serializer: includes sample audio as base64 WAV, patterns, pads, chain and
+// master rack. These rows round-trip via deserializeProject() to restore
+// audibly-complete sessions.
+// ---------------------------------------------------------------------------
+
+export const saveProjectDocument = async (doc: ProjectDocument): Promise<string> => {
+  const id = doc.id || crypto.randomUUID();
+  const stamped: ProjectDocument = { ...doc, id, updatedAt: new Date().toISOString() };
+  try {
+    await db.projectDocuments.put(stamped);
+  } catch (err) {
+    console.warn('Local project document save notice (offline/unsupported):', err);
+  }
+  return id;
+};
+
+export const fetchProjectDocuments = async (): Promise<ProjectDocument[]> => {
+  try {
+    const rows = await db.projectDocuments.toArray();
+    rows.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    return rows;
+  } catch (err) {
+    console.warn('Local project documents load notice (offline/unsupported):', err);
+    return [];
+  }
+};
+
+export const fetchProjectDocument = async (id: string): Promise<ProjectDocument | undefined> => {
+  try {
+    return await db.projectDocuments.get(id);
+  } catch (err) {
+    console.warn('Local project document fetch notice (offline/unsupported):', err);
+    return undefined;
+  }
+};
+
+export const deleteProjectDocument = async (id: string): Promise<void> => {
+  try {
+    await db.projectDocuments.delete(id);
+  } catch (err) {
+    console.warn('Local project document delete notice (offline/unsupported):', err);
   }
 };

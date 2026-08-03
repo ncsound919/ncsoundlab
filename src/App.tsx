@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Play, 
@@ -98,6 +98,17 @@ import { analyzeAudioBuffer } from './lib/batchAudioProcessor';
 import { MasterMeter } from './components/MasterMeter';
 import { ToastContainer, ToastMessage } from './components/ToastContainer';
 import { useSequencerStore, BankId } from './store/sequencerStore';
+import { usePatternStore } from './store/patternStore';
+import { useHistoryStore, buildSnapshot, useCanUndo, useCanRedo, type HistorySnapshot } from './store/historyStore';
+import {
+  scheduleAutosave,
+  flushAutosave,
+  installAutosaveFlushHandlers,
+  uninstallAutosaveFlushHandlers,
+  readAutosaveDocument,
+  clearAutosave,
+} from './lib/autosave';
+import { deserializeProject } from './lib/projectFormat';
 
 type TabType = 'soundlab' | 'tweaking' | 'mixer' | 'spatial' | 'evolution' | 'compare' | 'kitcreator' | 'catalog' | 'produce';
 import { EvolutionVariation } from './types';
@@ -231,55 +242,76 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const [layers, setLayersInternal] = useState<SoundLayer[]>([]);
-  const [undoStack, setUndoStack] = useState<SoundLayer[][]>([]);
-  const [redoStack, setRedoStack] = useState<SoundLayer[][]>([]);
+  const [masterLevel, setMasterLevel] = useState(0.8);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Synchronous wrapper for layers state with history tracking
+  // Synchronous wrapper for layers state
   const setLayers = (newLayersOrFn: SoundLayer[] | ((prev: SoundLayer[]) => SoundLayer[])) => {
     setLayersInternal((prev) => {
       const next = typeof newLayersOrFn === 'function' ? newLayersOrFn(prev) : newLayersOrFn;
-      
-      // Cheaper check: only push to undo if the top level array changed
-      if (prev !== next) {
-        // Shallow check per item to avoid redundant history states
-        const isIdentical = prev.length === next.length && 
-          prev.every((layer, i) => layer === next[i]);
-
-        if (!isIdentical) {
-          // We must NOT call setUndoStack inside the updater.
-          // Instead, we rely on the fact that we've calculated 'next' correctly.
-          // React 18+ might allow it but it's risky. 
-          // A better way is to handle history in a useEffect monitoring layers.
-        }
-      }
       return next;
     });
   };
 
-  // Track history via effect to avoid illegal state updates during render/updater
+  // ---- History (Phase 0.3) ----
+  // Generalized undo/redo: layers + patterns + programs + chain + master are
+  // captured into a `HistorySnapshot` whenever they change. The applier
+  // restores those values back into the live state on undo/redo.
+  const patternStore = usePatternStore();
+  const sequencerStore = useSequencerStore();
+
+  const applyHistorySnapshot = useCallback((snap: HistorySnapshot) => {
+    setLayersInternal(snap.layers);
+    usePatternStore.setState({
+      patterns: snap.patterns,
+      activePatternId: snap.activePatternId,
+      songChain: { order: snap.songChain.order as unknown as string[] },
+    });
+    useSequencerStore.setState({
+      programs: snap.programs,
+      activeBank: snap.activeBank,
+    });
+    setMasterLevel(snap.masterLevel);
+    setActiveSnapshotName(null);
+  }, []);
+
   useEffect(() => {
-    const lastState = undoStack.length > 0 ? undoStack[undoStack.length - 1] : [];
-    const isIdentical = layers.length === lastState.length && 
-      layers.every((l, i) => l === lastState[i]);
-    
-    if (layers.length > 0 && !isIdentical) {
-      setUndoStack(u => [...u, layers].slice(-50));
-      setRedoStack([]);
-      setActiveSnapshotName(null);
+    useHistoryStore.getState().setApplier(applyHistorySnapshot);
+    return () => {
+      useHistoryStore.getState().setApplier(null);
+    };
+  }, [applyHistorySnapshot]);
+
+  // Skip committing the very first state on mount (avoids a phantom undo
+  // entry for the initial empty layers array).
+  const isInitialMountRef = useRef(true);
+  useEffect(() => {
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+      return;
     }
-  }, [layers]);
+    const snap = buildSnapshot({
+      layers,
+      patterns: patternStore.patterns,
+      programs: sequencerStore.programs,
+      activePatternId: patternStore.activePatternId,
+      songChain: patternStore.songChain,
+      activeBank: sequencerStore.activeBank,
+      masterLevel,
+      masterRack: [],
+      globalSwing: 0,
+      bpm: patternStore.patterns[patternStore.activePatternId].bpm,
+      timeSignature: patternStore.patterns[patternStore.activePatternId].timeSignature,
+    });
+    useHistoryStore.getState().commit(snap);
+  }, [layers, masterLevel, patternStore, sequencerStore]);
 
   const handleUndo = () => {
-    if (undoStack.length === 0) return;
-    const prev = undoStack[undoStack.length - 1];
-    setUndoStack((u) => u.slice(0, -1));
-    setRedoStack((r) => [...r, layers]);
-    setLayersInternal(prev);
-
-    if (prev.length > 0) {
-      if (!prev.find(l => l.id === selectedLayerId)) {
-        setSelectedLayerId(prev[0].id);
+    const restored = useHistoryStore.getState().undo();
+    if (!restored) return;
+    if (restored.layers.length > 0) {
+      if (!restored.layers.find(l => l.id === selectedLayerId)) {
+        setSelectedLayerId(restored.layers[0].id);
       }
     } else {
       setSelectedLayerId(null);
@@ -287,22 +319,17 @@ export default function App() {
   };
 
   const handleRedo = () => {
-    if (redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1];
-    setRedoStack((r) => r.slice(0, -1));
-    setUndoStack((u) => [...u, layers]);
-    setLayersInternal(next);
-
-    if (next.length > 0) {
-      if (!next.find(l => l.id === selectedLayerId)) {
-        setSelectedLayerId(next[0].id);
+    const restored = useHistoryStore.getState().redo();
+    if (!restored) return;
+    if (restored.layers.length > 0) {
+      if (!restored.layers.find(l => l.id === selectedLayerId)) {
+        setSelectedLayerId(restored.layers[0].id);
       }
     }
   };
 
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [compositeBuffer, setCompositeBuffer] = useState<AudioBuffer | null>(null);
-  const [masterLevel, setMasterLevel] = useState(0.8);
   const [isExporting, setIsExporting] = useState(false);
   const [isAddToKitOpen, setIsAddToKitOpen] = useState(false);
   const [pendingKitSample, setPendingKitSample] = useState<SoundKitSample | null>(null);
@@ -522,70 +549,106 @@ export default function App() {
     return () => { isMounted = false; };
   }, []);
 
-  // Check for auto-save recovery backup on startup
+  // Phase 0.4 — check for an autosave recovery document on startup.
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('sonik_auto_save_backup');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.length > 0) {
+    let cancelled = false;
+    (async () => {
+      try {
+        const doc = await readAutosaveDocument();
+        if (cancelled) return;
+        if (doc && (doc.layers.length > 0 || doc.patterns.A.layerRows || Object.keys(doc.patterns.A.layerRows || {}).length > 0)) {
           setHasAutoSave(true);
         }
+      } catch (e) {
+        console.warn('Failed reading autosave', e);
       }
-    } catch (e) {
-      console.warn('Failed reading auto-save', e);
-    }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  const handleRestoreAutoSave = () => {
+  const handleRestoreAutoSave = async () => {
+    const ctx = audioEngine.getContext();
+    if (!ctx) {
+      addToast('Audio context unavailable — cannot restore samples.', 'warn');
+      setHasAutoSave(false);
+      return;
+    }
     try {
-      const saved = localStorage.getItem('sonik_auto_save_backup');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.length > 0) {
-          setLayers(parsed);
-          addToast('Successfully restored previous session from auto-save!', 'success');
-        }
+      const doc = await readAutosaveDocument();
+      if (!doc) {
+        addToast('No autosave snapshot found.', 'info');
+        setHasAutoSave(false);
+        return;
       }
-    } catch (e) {
-      addToast('Failed to restore auto-save session.', 'warn');
+      const hydrated = await deserializeProject(ctx, doc);
+      setLayersInternal(hydrated.layers);
+      usePatternStore.setState({
+        patterns: hydrated.patterns,
+        activePatternId: hydrated.document.activePatternId,
+        songChain: { order: hydrated.document.songChain.order as unknown as string[] },
+      });
+      useSequencerStore.setState({
+        programs: hydrated.programs,
+        activeBank: hydrated.document.activeBank,
+      });
+      setMasterLevel(hydrated.document.masterLevel);
+      if (hydrated.layers.length > 0) {
+        setSelectedLayerId(hydrated.layers[0].id);
+      }
+      addToast(`Restored autosave (${hydrated.layers.length} layer${hydrated.layers.length === 1 ? '' : 's'}).`, 'success');
+    } catch (err) {
+      console.warn('Failed to restore autosave', err);
+      addToast('Failed to restore autosave session.', 'warn');
     } finally {
       setHasAutoSave(false);
     }
   };
 
-  const handleDiscardAutoSave = () => {
-    localStorage.removeItem('sonik_auto_save_backup');
+  const handleDiscardAutoSave = async () => {
+    await clearAutosave();
     setHasAutoSave(false);
-    addToast('Discarded auto-save recovery session', 'info');
+    addToast('Discarded autosave recovery session', 'info');
   };
+
+  // Install beforeunload / visibilitychange flush handlers.
+  useEffect(() => {
+    installAutosaveFlushHandlers();
+    return () => uninstallAutosaveFlushHandlers();
+  }, []);
 
   // Initialize with a default synth layer if empty (and no auto-save was restored)
   useEffect(() => {
     const checkAndInit = setTimeout(() => {
       if (layers.length === 0 && !hasAutoSave) {
-        const saved = localStorage.getItem('sonik_auto_save_backup');
-        if (!saved) {
-          addLayer('synth');
-        }
+        addLayer('synth');
       }
     }, 100);
     return () => clearTimeout(checkAndInit);
   }, [hasAutoSave, layers.length]);
 
-  // Debounced Auto-Save of layers state to localStorage
+  // Debounced autosave (Phase 0.4) — schedules a snapshot of the full
+  // session to IndexedDB. `flushAutosave()` is invoked on
+  // visibilitychange/beforeunload so the snapshot survives a tab close.
   useEffect(() => {
-    if (layers.length === 0) return;
-    const timer = setTimeout(() => {
-      try {
-        const sanitized = layers.map(({ audioBuffer, ...rest }) => rest);
-        localStorage.setItem('sonik_auto_save_backup', JSON.stringify(sanitized));
-      } catch (e) {
-        console.warn('Failed writing auto-save backup', e);
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [layers]);
+    const snapshot = {
+      title: 'Untitled Session',
+      appVersion: '1.0.0',
+      layers,
+      patterns: patternStore.patterns,
+      activePatternId: patternStore.activePatternId,
+      songChain: { order: patternStore.songChain.order },
+      programs: sequencerStore.programs,
+      activeBank: sequencerStore.activeBank,
+      bpm: patternStore.patterns[patternStore.activePatternId].bpm,
+      timeSignature: patternStore.patterns[patternStore.activePatternId].timeSignature,
+      masterLevel,
+      masterRack: { modules: [] as import('./types').RackModule[] },
+      globalSwing: 0,
+    };
+    if (layers.length > 0 || patternStore.songChain.order.length > 0) {
+      scheduleAutosave(snapshot, '1.0.0');
+    }
+  }, [layers, masterLevel, patternStore, sequencerStore]);
 
   // Sync snapshots to localStorage
   useEffect(() => {
@@ -709,7 +772,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [layers, undoStack, redoStack, selectedLayerId, activeTab, currentStageIndex, isShortcutsOpen, isUserManualOpen, isProjectManagerOpen, isAddToKitOpen, chopBuffer]);
+  }, [layers, selectedLayerId, activeTab, currentStageIndex, isShortcutsOpen, isUserManualOpen, isProjectManagerOpen, isAddToKitOpen, chopBuffer]);
 
   // Synchronize A/B state and handle automatic project-wide waveform preview updates with debouncing
   useEffect(() => {
@@ -1790,7 +1853,7 @@ export default function App() {
             <div className="flex items-center bg-[#000000] border border-[#1e293b] p-0.5 rounded-xl gap-0.5 flex-shrink-0">
               <button
                 onClick={handleUndo}
-                disabled={undoStack.length === 0}
+                disabled={!useCanUndo()}
                 className="px-2 py-1.5 rounded-lg text-[10px] font-black font-mono text-white hover:text-yellow-400 hover:bg-[#0f172a] disabled:opacity-25 disabled:pointer-events-none transition-all uppercase flex items-center gap-0.5"
                 title="Undo last action"
               >
@@ -1800,7 +1863,7 @@ export default function App() {
               <div className="w-px h-3 bg-[#1e293b]" />
               <button
                 onClick={handleRedo}
-                disabled={redoStack.length === 0}
+                disabled={!useCanRedo()}
                 className="px-2 py-1.5 rounded-lg text-[10px] font-black font-mono text-white hover:text-yellow-400 hover:bg-[#0f172a] disabled:opacity-25 disabled:pointer-events-none transition-all uppercase flex items-center gap-0.5"
                 title="Redo action"
               >
