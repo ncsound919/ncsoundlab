@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://nc-soundlab.example.com/sitemap.xml

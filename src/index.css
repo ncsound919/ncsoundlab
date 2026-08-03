@@ -1,0 +1,184 @@
+@import "tailwindcss";
+
+/* Local brand display font (FAST BLAZE) served from /fonts */
+@font-face {
+  font-family: 'Fast Blaze';
+  src: url('/fonts/fast-blaze.otf') format('opentype');
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+}
+
+/* Self-hosted Google Fonts — no external CDN dependency */
+@font-face {
+  font-family: 'Bebas Neue';
+  src: url('/fonts/BebasNeue.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Black Ops One';
+  src: url('/fonts/BlackOpsOne.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/fonts/ChakraPetch-600.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/fonts/ChakraPetch-700.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Faster One';
+  src: url('/fonts/FasterOne.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Fugaz One';
+  src: url('/fonts/FugazOne.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Outfit';
+  src: url('/fonts/Outfit-400.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Outfit';
+  src: url('/fonts/Outfit-600.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Outfit';
+  src: url('/fonts/Outfit-700.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Outfit';
+  src: url('/fonts/Outfit-800.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Outfit';
+  src: url('/fonts/Outfit-900.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Racing Sans One';
+  src: url('/fonts/RacingSansOne.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Righteous';
+  src: url('/fonts/Righteous.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@layer utilities {
+  .font-fastblaze {
+    font-family: 'Fast Blaze', 'Racing Sans One', 'Faster One', 'Fugaz One', 'Chakra Petch', sans-serif;
+    font-style: normal;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: -0.03em;
+  }
+
+  .font-blackcrush {
+    font-family: 'Black Ops One', 'Fugaz One', cursive, sans-serif;
+  }
+  .font-hiphop {
+    font-family: 'Black Ops One', 'Fugaz One', 'Bebas Neue', impact, sans-serif;
+  }
+  .font-urban {
+    font-family: 'Chakra Petch', 'Outfit', sans-serif;
+  }
+  .font-display {
+    font-family: 'Righteous', 'Outfit', sans-serif;
+  }
+
+  /* Royal Blue, Yellow, Mauve Glows */
+  .glow-blue {
+    box-shadow: 0 0 25px -3px rgba(37, 99, 235, 0.45);
+  }
+  .glow-yellow {
+    box-shadow: 0 0 25px -3px rgba(250, 204, 21, 0.5);
+  }
+  .glow-mauve {
+    box-shadow: 0 0 25px -3px rgba(192, 132, 252, 0.45);
+  }
+
+  .glow-blue-sm {
+    box-shadow: 0 0 10px rgba(37, 99, 235, 0.5);
+  }
+  .glow-yellow-sm {
+    box-shadow: 0 0 10px rgba(250, 204, 21, 0.55);
+  }
+  .glow-mauve-sm {
+    box-shadow: 0 0 10px rgba(192, 132, 252, 0.5);
+  }
+}
+
+/* Dark Studio Scrollbars */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #000000;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #1e3a8a;
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #2563eb;
+}
+
+/* Hide scrollbar for horizontal quick-action strips & mobile nav */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
