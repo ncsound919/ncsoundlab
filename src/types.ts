@@ -659,3 +659,55 @@ export interface VariantProfile {
   sampleRate?: number;
 }
 
+export interface PatternCell {
+  on: boolean;
+  note?: number;
+  velocity?: number;
+}
+
+export interface Pattern {
+  id: string;
+  name: string;
+  layerRows: Record<string, PatternCell[]>;
+  timeSignature: [number, number]; // [beats, noteValue]
+  stepLength: 16 | 32;
+  swing: number;
+  bpm: number;
+}
+
+export interface SongChain {
+  order: string[]; // patternIds
+}
+
+export interface SequenceExportV1 {
+  format: 'ncsoundlab-mpc-sequence';
+  version: 1;
+  bpm: number;
+  steps: number;
+  ppq: number;
+  pattern: Record<string, Array<{ on: boolean; note?: number }>>;
+}
+
+export interface SequenceExportV2 {
+  format: 'ncsoundlab-mpc-sequence';
+  version: 2;
+  bpm: number;
+  timeSignature: [number, number];
+  stepLength: 16 | 32;
+  swing: number;
+  steps: number;
+  ppq: number;
+  pattern: Record<string, PatternCell[]>;
+  songChain?: SongChain;
+}
+
+export type SequenceExport = SequenceExportV1 | SequenceExportV2;
+
+export function isV1Export(x: unknown): x is SequenceExportV1 {
+  return !!x && typeof x === 'object' && (x as any).format === 'ncsoundlab-mpc-sequence' && (x as any).version === 1;
+}
+
+export function isV2Export(x: unknown): x is SequenceExportV2 {
+  return !!x && typeof x === 'object' && (x as any).format === 'ncsoundlab-mpc-sequence' && (x as any).version === 2;
+}
+
