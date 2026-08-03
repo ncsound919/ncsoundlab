@@ -30,6 +30,7 @@ import { useSequencerStore, BANK_IDS, BankId } from '../store/sequencerStore';
 import { usePatternStore } from '../store/patternStore';
 import { exportV2, importExport } from '../sequencerFormat';
 import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
+import { renderMixdown } from '../audio/transport/mixdown';
 
 const STEPS = 16;
 const PPQ = 96;
@@ -743,6 +744,29 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     setLastRecordedBuffer(null);
   };
 
+  const mixdownState = useState(false);
+  const [isMixingDown] = mixdownState;
+  const onMixdown = async () => {
+    mixdownState[1](true);
+    try {
+      const patterns = usePatternStore.getState().patterns;
+      const songChain = usePatternStore.getState().songChain;
+      const buffer = await renderMixdown({ patterns, chain: songChain, layers });
+      const { audioBufferToWav } = await import('../lib/audioUtils');
+      const wav = audioBufferToWav(buffer);
+      const url = URL.createObjectURL(wav);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mixdown-${Date.now()}.wav`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.warn('Mixdown failed', e);
+    } finally {
+      mixdownState[1](false);
+    }
+  };
+
   // Live chord label for the notes currently held on the piano (tonal)
   const chordLabel = useCallback(() => {
     const pcs = activeNotes
@@ -766,6 +790,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         stepLength={patternStepLength}
         songModeActive={songModeActive}
         isRecordingAudio={isRecordingAudio}
+        isMixingDown={isMixingDown}
         onBpmChange={setBpm}
         onPlayStop={togglePlay}
         onUseTransportModeChange={setUseTransportMode}
@@ -773,6 +798,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         onStepLengthChange={setStepLength}
         onSongModeToggle={() => setSongModeActive((v) => !v)}
         onRecordAudio={onRecordAudio}
+        onMixdown={onMixdown}
       />
       {songModeActive && <SongModePanel onPlayFromSlot={() => { /* song starts from slot via transport */ }} />}
       {!isRecordingAudio && lastRecordedBuffer && (

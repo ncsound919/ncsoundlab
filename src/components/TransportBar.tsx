@@ -8,6 +8,7 @@ interface TransportBarProps {
   stepLength: 16 | 32;
   songModeActive: boolean;
   isRecordingAudio: boolean;
+  isMixingDown: boolean;
   onBpmChange: (bpm: number) => void;
   onPlayStop: () => void;
   onUseTransportModeChange: (on: boolean) => void;
@@ -15,6 +16,7 @@ interface TransportBarProps {
   onStepLengthChange: (len: 16 | 32) => void;
   onSongModeToggle: () => void;
   onRecordAudio: () => void;
+  onMixdown: () => void;
 }
 
 export function TransportBar({
@@ -25,6 +27,7 @@ export function TransportBar({
   stepLength,
   songModeActive,
   isRecordingAudio,
+  isMixingDown,
   onBpmChange,
   onPlayStop,
   onUseTransportModeChange,
@@ -32,6 +35,7 @@ export function TransportBar({
   onStepLengthChange,
   onSongModeToggle,
   onRecordAudio,
+  onMixdown,
 }: TransportBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-3 px-3 py-2 bg-black/40 border border-white/10 rounded">
@@ -79,6 +83,14 @@ export function TransportBar({
         aria-label={isRecordingAudio ? 'Stop recording' : 'Record audio'}
       >
         {isRecordingAudio ? 'Stop Audio' : 'Record Audio'}
+      </button>
+      <button
+        type="button"
+        onClick={onMixdown}
+        disabled={isMixingDown}
+        className="px-3 py-1 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm"
+      >
+        {isMixingDown ? 'Rendering…' : 'Mixdown'}
       </button>
       <label className="flex items-center gap-2 text-sm text-white/80">
         Time Sig
