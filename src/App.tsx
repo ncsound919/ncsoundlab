@@ -74,6 +74,8 @@ const EvolutionPanel = lazy(() => import('./components/EvolutionPanel').then(m =
 const ThreeDSoundSpace = lazy(() => import('./components/ThreeDSoundSpace').then(m => ({ default: m.ThreeDSoundSpace })));
 const StudioRack = lazy(() => import('./components/StudioRack').then(m => ({ default: m.StudioRack })));
 const LayerMixer = lazy(() => import('./components/LayerMixer').then(m => ({ default: m.LayerMixer })));
+const MasterDynamicsPanel = lazy(() => import('./components/MasterDynamicsPanel').then(m => ({ default: m.MasterDynamicsPanel })));
+const FXChainPresetsPanel = lazy(() => import('./components/FXChainPresetsPanel').then(m => ({ default: m.FXChainPresetsPanel })));
 const LayerEditor = lazy(() => import('./components/LayerEditor').then(m => ({ default: m.LayerEditor })));
 const LayerPresetBrowser = lazy(() => import('./components/LayerPresetBrowser').then(m => ({ default: m.LayerPresetBrowser })));
 
@@ -99,6 +101,8 @@ import { MasterMeter } from './components/MasterMeter';
 import { ToastContainer, ToastMessage } from './components/ToastContainer';
 import { useSequencerStore, BankId } from './store/sequencerStore';
 import { usePatternStore } from './store/patternStore';
+import { useRackStore } from './store/rackStore';
+import { useMasterDynamicsStore } from './store/masterDynamicsStore';
 import { useHistoryStore, buildSnapshot, useCanUndo, useCanRedo, type HistorySnapshot } from './store/historyStore';
 import {
   scheduleAutosave,
@@ -259,6 +263,8 @@ export default function App() {
   // restores those values back into the live state on undo/redo.
   const patternStore = usePatternStore();
   const sequencerStore = useSequencerStore();
+  const rackModules = useRackStore((s) => s.modules);
+  const setRackModules = useRackStore((s) => s.setModules);
 
   const applyHistorySnapshot = useCallback((snap: HistorySnapshot) => {
     setLayersInternal(snap.layers);
@@ -2456,6 +2462,20 @@ export default function App() {
                         <span className="text-[9px] font-mono text-slate-500 uppercase">Master Processing Rack</span>
                       </div>
                       <StudioRack />
+                      {/* Phase 3.5 + 3.6 — master dynamics + sidechain routing,
+                          and FX-chain preset save/load (both previously unwired). */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        <MasterDynamicsPanel />
+                        <FXChainPresetsPanel
+                          modules={rackModules}
+                          onLoad={(preset) => {
+                            if (preset.target.kind === 'master-rack' && Array.isArray(preset.modules)) {
+                              setRackModules(preset.modules.map((m) => ({ ...m, id: m.id || crypto.randomUUID() })));
+                            }
+                          }}
+                          onClearRack={() => setRackModules([])}
+                        />
+                      </div>
                     </div>
                   </div>
                 </Suspense>

@@ -44,4 +44,25 @@ describe('mixerStore', () => {
     useMixerStore.getState().reset();
     expect(useMixerStore.getState().buses.reverb.gain).toBe(1);
   });
+
+  it('setLayerSend/getLayerSend round-trip a level (no-op stub removed)', () => {
+    useMixerStore.getState().setLayerSend('layer-1', 'reverb', 0.6);
+    expect(useMixerStore.getState().getLayerSend('layer-1', 'reverb')).toBe(0.6);
+    expect(useMixerStore.getState().getLayerSend('layer-1', 'delay')).toBe(0);
+    expect(useMixerStore.getState().getLayerSend('layer-2', 'reverb')).toBe(0);
+  });
+
+  it('setLayerSend clamps levels to 0..1', () => {
+    useMixerStore.getState().setLayerSend('layer-1', 'delay', 1.7);
+    expect(useMixerStore.getState().getLayerSend('layer-1', 'delay')).toBe(1);
+    useMixerStore.getState().setLayerSend('layer-1', 'delay', -0.4);
+    expect(useMixerStore.getState().getLayerSend('layer-1', 'delay')).toBe(0);
+  });
+
+  it('setLayerSends replaces a layer entry; empty clears it', () => {
+    useMixerStore.getState().setLayerSends('layer-1', { reverb: 0.4, delay: 0.2 });
+    expect(useMixerStore.getState().getLayerSend('layer-1', 'reverb')).toBe(0.4);
+    useMixerStore.getState().setLayerSends('layer-1', undefined);
+    expect(useMixerStore.getState().getLayerSend('layer-1', 'reverb')).toBe(0);
+  });
 });

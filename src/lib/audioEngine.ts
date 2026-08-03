@@ -3,10 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { SoundLayer, RackModule, DEFAULT_ENVELOPE, DEFAULT_FX, DEFAULT_SYNTH } from '../types';
+import { SoundLayer, RackModule, DEFAULT_ENVELOPE, DEFAULT_FX, DEFAULT_SYNTH, type LayerSends } from '../types';
 import { safeAudioValue } from './audioUtils';
 import { generateChaosSynthBuffer } from './chaosSynth';
 import { TapeDelayDSP } from '../audio/dsp/TapeDelayDSP';
+import { createEqChain } from '../audio/eqBands';
+import { createSidechainDuck } from '../audio/masterDynamics';
+import { useMixerStore } from '../store/mixerStore';
+import { useMasterDynamicsStore } from '../store/masterDynamicsStore';
+// Circular with ../audio/AudioEngine, but safe: SharedAudioEngine only reads
+// the base engine lazily (via a getter), and we only dereference this binding
+// inside methods at runtime — never at module-evaluation time.
+import { audioEngine as sharedAudioEngine } from '../audio/AudioEngine';
 
 export function isLayerAudibleInMix(layer: SoundLayer, allLayers: SoundLayer[]): boolean {
   if (!layer.enabled || layer.muted === true) {
@@ -26,6 +34,8 @@ export class AudioEngine {
   private analyserNode: AnalyserNode;
   private masterLimiter: DynamicsCompressorNode;
   private masterClipper: WaveShaperNode;
+  /** Phase 3.5 — makeup gain after the master compressor/limiter. */
+  private masterMakeupGain: GainNode;
   private swarmBuffers = new Map<string, AudioBuffer>();
   private reversedBufferCache = new WeakMap<AudioBuffer, AudioBuffer>();
   private isPlaying: boolean = false;
@@ -47,6 +57,11 @@ export class AudioEngine {
   private masterRackChainTarget: AudioNode | null = null;
   private masterRackNodes: AudioNode[] = [];
 
+  // Phase 3.3 — FX send/return buses (reverb, delay). Built lazily on the live
+  // context; each bus taps layer sends → bus input → shared effect → return
+  // gain/pan → master bus.
+  private sendBuses = new Map<string, { input: GainNode; returnGain: GainNode; pan: StereoPannerNode }>();
+
   constructor() {
     this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
     this.masterGain = this.context.createGain();
@@ -58,6 +73,7 @@ export class AudioEngine {
     const chain = this.createMasterFXChain(this.context, this.masterPan, this.analyserNode);
     this.masterClipper = chain.clipper;
     this.masterLimiter = chain.limiter;
+    this.masterMakeupGain = chain.makeupGain;
 
     this.analyserNode.connect(this.context.destination);
 
@@ -250,17 +266,24 @@ export class AudioEngine {
     dcOffsetKiller.frequency.value = 12;
     dcOffsetKiller.Q.value = 0.707;
 
+    // Phase 3.5 — makeup gain after the master compressor/limiter, driven by
+    // the master-dynamics store so post-compression level recovery is audible.
+    const makeupGain = ctx.createGain();
+    makeupGain.gain.value = 1;
+
     // Route from crossover output to MS Widener
     stereoSumBus.connect(msSplitter);
     msMerger.connect(clipper);
     clipper.connect(limiter);
-    limiter.connect(dcOffsetKiller);
+    limiter.connect(makeupGain);
+    makeupGain.connect(dcOffsetKiller);
     dcOffsetKiller.connect(destination);
     
     return {
       limiter,
       clipper,
-      msMerger
+      msMerger,
+      makeupGain,
     };
   }
 
@@ -322,6 +345,92 @@ export class AudioEngine {
 
   setMasterPan(pan: number) {
     this.masterPan.pan.setTargetAtTime(safeAudioValue(pan, 0), this.context.currentTime, 0.05);
+  }
+
+  /**
+   * Phase 3.5 — apply the master compressor/limiter settings from the
+   * master-dynamics store onto the live master limiter + makeup gain.
+   * Safe to call at any time (no-op before the constructor wires the nodes).
+   */
+  applyMasterDynamics(settings: import('../store/masterDynamicsStore').MasterDynamicsSettings): void {
+    if (!this.masterLimiter || !this.masterMakeupGain) return;
+    const t = this.context.currentTime;
+    const safe = (v: number, fallback: number) => (Number.isFinite(v) ? v : fallback);
+    if (settings.enabled) {
+      this.masterLimiter.threshold.setValueAtTime(safe(settings.thresholdDb, -0.5), t);
+      this.masterLimiter.ratio.setValueAtTime(Math.max(1, safe(settings.ratio, 20)), t);
+      this.masterLimiter.attack.setValueAtTime(Math.max(0.0005, safe(settings.attackSec, 0.002)), t);
+      this.masterLimiter.release.setValueAtTime(Math.max(0.001, safe(settings.releaseSec, 0.1)), t);
+    } else {
+      // Bypass: unity ratio + 0 dB threshold = transparent.
+      this.masterLimiter.threshold.setValueAtTime(0, t);
+      this.masterLimiter.ratio.setValueAtTime(1, t);
+    }
+    this.masterMakeupGain.gain.setValueAtTime(Math.pow(10, safe(settings.makeupDb, 0) / 20), t);
+  }
+
+  /**
+   * Phase 3.3 — push the current FX-return settings (gain/pan/enable) from the
+   * mixer store onto the already-built send buses. Call after the SendsPanel
+   * changes a knob so the return responds immediately.
+   */
+  syncSendBuses(): void {
+    try {
+      this.ensureSendBuses();
+      this.updateSendBusSettings(useMixerStore.getState().buses);
+    } catch {
+      // Best-effort — no buses yet is fine.
+    }
+  }
+
+  // Phase 3.5 — sidechain ducks: route → { duck, sourceAnalyser } keyed by id.
+  private sidechainDucks = new Map<string, { duck: import('../audio/masterDynamics').SidechainDuck; source: string; target: string }>();
+
+  /**
+   * Phase 3.5 — rebuild the sidechain duck graph from the master-dynamics
+   * store. Each active route taps the source layer's module analyser (or the
+   * master analyser for source 'master') into an envelope follower whose
+   * output gain scales the TARGET bus input — so a kick layer ducks the
+   * reverb/delay bus as its level rises.
+   */
+  syncSidechains(): void {
+    try {
+      const routes = useMasterDynamicsStore.getState().sidechains;
+      // Tear down old ducks first.
+      for (const { duck } of this.sidechainDucks.values()) {
+        try { duck.dispose(); } catch { /* already disposed */ }
+      }
+      this.sidechainDucks.clear();
+
+      this.ensureSendBuses();
+      for (const route of routes) {
+        if (!route.enabled) continue;
+        if (route.source !== 'master' && !route.target) continue;
+        const bus = this.sendBuses.get(route.target);
+        if (!bus) continue;
+        const duck = createSidechainDuck(this.context, route);
+        // Source tap: master uses the master analyser; layer sources use the
+        // module analyser (which the live chain now feeds — see tapLayerMeter).
+        let sourceAnalyser: AnalyserNode | null = null;
+        if (route.source === 'master') {
+          sourceAnalyser = this.analyserNode;
+        } else {
+          try {
+            sourceAnalyser = sharedAudioEngine.getModuleAnalyser(route.source);
+          } catch { /* layer may not exist yet */ }
+        }
+        if (sourceAnalyser) {
+          sourceAnalyser.connect(duck.input);
+        }
+        // Control signal: duck output (0..1) scales the target bus input gain.
+        try {
+          duck.output.connect(bus.input.gain);
+        } catch { /* ignore bad connection */ }
+        this.sidechainDucks.set(route.id, { duck, source: route.source, target: route.target });
+      }
+    } catch {
+      // Sidechain is best-effort — never break playback.
+    }
   }
 
   /**
@@ -954,13 +1063,146 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Tap a layer's live chain output into the shared per-module AnalyserNode so
+   * the mixer meters show REAL signal (Phase 3.1 / audit B5). Only wired for
+   * the live AudioContext — offline export renders through its own context and
+   * must not touch the live module analyser.
+   */
+  private tapLayerMeter(layerId: string, output: AudioNode, ctx: BaseAudioContext): void {
+    if (ctx !== this.context) return;
+    try {
+      const analyser = sharedAudioEngine.getModuleAnalyser(layerId);
+      if (analyser) output.connect(analyser);
+    } catch {
+      // Metering is best-effort — never let a tap break playback.
+    }
+  }
+
+  /**
+   * Phase 3.3 — build (or fetch) the shared FX return buses. Each bus reads its
+   * return gain/pan from `useMixerStore` so the SendsPanel controls are live.
+   * Bus input → effect → return gain → pan → master rack input (so sends run
+   * through the master processing chain).
+   */
+  private ensureSendBuses(): void {
+    if (this.sendBuses.size > 0) return;
+    const ctx = this.context;
+    const masterIn = this.masterRackInput ?? ctx.destination;
+    const buses = useMixerStore.getState().buses;
+
+    const buildReverbBus = (busId: string) => {
+      const input = ctx.createGain();
+      const returnGain = ctx.createGain();
+      const pan = ctx.createStereoPanner();
+      // Schroeder reverb at unit mix; the return gain scales the wet level.
+      const reverbWet = this.createSchroederReverbNode(ctx, input, 1, ctx.currentTime);
+      input.connect(reverbWet);
+      reverbWet.connect(returnGain);
+      returnGain.connect(pan);
+      pan.connect(masterIn);
+      return { input, returnGain, pan };
+    };
+
+    const buildDelayBus = (busId: string) => {
+      const input = ctx.createGain();
+      const returnGain = ctx.createGain();
+      const pan = ctx.createStereoPanner();
+      const delay = ctx.createDelay(2);
+      delay.delayTime.setValueAtTime(0.375, ctx.currentTime); // dotted 8th at 120 BPM-ish default
+      const feedback = ctx.createGain();
+      feedback.gain.setValueAtTime(0.35, ctx.currentTime);
+      const wet = ctx.createGain();
+      wet.gain.setValueAtTime(1, ctx.currentTime);
+      input.connect(delay);
+      delay.connect(feedback);
+      feedback.connect(delay);
+      delay.connect(wet);
+      wet.connect(returnGain);
+      returnGain.connect(pan);
+      pan.connect(masterIn);
+      return { input, returnGain, pan };
+    };
+
+    this.sendBuses.set('reverb', buildReverbBus('reverb'));
+    this.sendBuses.set('delay', buildDelayBus('delay'));
+
+    // Apply stored return settings immediately.
+    this.updateSendBusSettings(buses);
+  }
+
+  private updateSendBusSettings(buses?: Record<string, { enabled: boolean; gain: number; pan: number }>): void {
+    if (!buses) buses = useMixerStore.getState().buses;
+    for (const [busId, bus] of this.sendBuses) {
+      const cfg = buses[busId];
+      bus.returnGain.gain.setValueAtTime(cfg?.enabled === false ? 0 : (cfg?.gain ?? 1), this.context.currentTime);
+      bus.pan.pan.setValueAtTime(cfg?.pan ?? 0, this.context.currentTime);
+    }
+  }
+
+  /**
+   * Route a layer's post-chain output into the shared FX return buses based on
+   * `layer.sends` (+ mixerStore overrides). Each enabled send tap is a small
+   * gain feeding the bus input. Called from createNodeChain for both live and
+   * offline renders.
+   */
+  private tapLayerSends(layer: SoundLayer, output: AudioNode, ctx: BaseAudioContext, startTime: number): void {
+    const sends: LayerSends = {
+      ...(layer.sends ?? {}),
+      ...(useMixerStore.getState().layerSends[layer.id] ?? {}),
+    };
+    if (Object.keys(sends).length === 0) return;
+    const buses = useMixerStore.getState().buses;
+    for (const [busId, level] of Object.entries(sends)) {
+      const sendLevel = typeof level === 'number' ? Math.max(0, Math.min(1, level)) : 0;
+      if (sendLevel <= 0) continue;
+      if (buses[busId]?.enabled === false) continue;
+      if (ctx === this.context) {
+        this.ensureSendBuses();
+        const bus = this.sendBuses.get(busId);
+        if (!bus) continue;
+        const tap = ctx.createGain();
+        tap.gain.setValueAtTime(sendLevel, startTime);
+        output.connect(tap);
+        tap.connect(bus.input);
+      } else {
+        // Offline export: build a self-contained bus for this context.
+        const masterIn = this.masterRackInput ?? (ctx as BaseAudioContext).destination;
+        const input = ctx.createGain();
+        const returnGain = ctx.createGain();
+        const pan = ctx.createStereoPanner();
+        if (busId === 'delay') {
+          const delay = ctx.createDelay(2);
+          delay.delayTime.setValueAtTime(0.375, startTime);
+          const feedback = ctx.createGain();
+          feedback.gain.setValueAtTime(0.35, startTime);
+          input.connect(delay);
+          delay.connect(feedback);
+          feedback.connect(delay);
+          delay.connect(returnGain);
+        } else {
+          const wet = this.createSchroederReverbNode(ctx, input, 1, startTime);
+          wet.connect(returnGain);
+        }
+        const cfg = buses[busId];
+        returnGain.gain.setValueAtTime(cfg?.enabled === false ? 0 : (cfg?.gain ?? 1), startTime);
+        pan.pan.setValueAtTime(cfg?.pan ?? 0, startTime);
+        returnGain.connect(pan);
+        pan.connect(masterIn);
+        const tap = ctx.createGain();
+        tap.gain.setValueAtTime(sendLevel, startTime);
+        output.connect(tap);
+        tap.connect(input);
+      }
+    }
+  }
+
   private async playLayerInstance(layer: SoundLayer, baseStartTime: number, playDur: number): Promise<AudioScheduledSourceNode | null> {
     const triggerTime = baseStartTime + (layer.startTimeOffset ?? 0);
     const env = layer.envelope || DEFAULT_ENVELOPE;
     const safeRelease = Math.max(0.005, env.release ?? 0.1);
     
     const { source } = await this.createNodeChain(this.context, layer, baseStartTime, this.masterGain);
-
     let startOffset = 0;
     if (layer.type === 'sample' && layer.audioBuffer) {
       startOffset = (layer.playStartPct ?? 0) * layer.audioBuffer.duration;
@@ -1450,6 +1692,8 @@ export class AudioEngine {
       panNode.pan.setValueAtTime(layer.pan, layerStartTime);
       panNode.connect(gainNode);
       gainNode.connect(destination);
+      this.tapLayerMeter(layer.id, gainNode, ctx);
+      this.tapLayerSends(layer, gainNode, ctx, layerStartTime);
       return { source, gainNode };
     }
 
@@ -1701,6 +1945,17 @@ export class AudioEngine {
       panNode.pan.setValueAtTime(layer.pan, layerStartTime);
     }
 
+    // Phase 3.4 — per-layer parametric EQ (spliced between the FX pipeline and
+    // pan). Only inserted when the layer has enabled bands.
+    const eqBands = layer.fx?.eq;
+    if (eqBands && eqBands.some((b) => b.enabled !== false)) {
+      const eq = createEqChain(ctx, eqBands, layerStartTime);
+      if (eq.input && eq.output) {
+        nodePipeline.connect(eq.input);
+        nodePipeline = eq.output;
+      }
+    }
+
     nodePipeline.connect(panNode);
     panNode.connect(gainNode);
 
@@ -1716,6 +1971,8 @@ export class AudioEngine {
     compressor.release.setValueAtTime(0.25, layerStartTime);
     gainNode.connect(compressor);
     compressor.connect(destination);
+    this.tapLayerMeter(layer.id, compressor, ctx);
+    this.tapLayerSends(layer, compressor, ctx, layerStartTime);
 
     // FX: Unified Reverb (Single high-fidelity spatial & layer Schroeder Moorer diffusion reverb)
     if (layer.fx.reverbMix > 0 && layer.fx.reverbEnabled !== false) {

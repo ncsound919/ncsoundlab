@@ -220,12 +220,24 @@ export const ChannelStrip: React.FC<ChannelStripProps> = ({
               <span className="text-[8px] font-mono font-bold text-cyan-300 uppercase tracking-widest w-10 truncate">
                 {busId}
               </span>
-              <div className="flex-1 h-1 bg-black/60 rounded overflow-hidden">
-                <div
-                  className="h-full bg-cyan-400"
-                  style={{ width: `${Math.min(100, v * 100)}%` }}
-                />
-              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={v}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  onUpdateLayer(layer.id, {
+                    sends: { ...(layer.sends ?? {}), [busId]: next },
+                  });
+                }}
+                className="flex-1 h-1 accent-cyan-400 cursor-pointer"
+                aria-label={`${busId} send level`}
+              />
+              <span className="text-[8px] font-mono text-cyan-300 w-8 text-right">
+                {Math.round(v * 100)}%
+              </span>
             </div>
             );
           })}

@@ -16,7 +16,11 @@ export { SoundLayerPlayer };
  * - Per‑module gain control (gain reduction in dB) for e.g. ducking
  */
 class SharedAudioEngine {
-  private base = baseAudioEngine;
+  // Lazily resolved so a circular import from lib/audioEngine never captures
+  // an uninitialised binding at module-evaluation time.
+  private get base(): typeof baseAudioEngine {
+    return baseAudioEngine;
+  }
 
   // ---- Microphone ----
   private micStream: MediaStream | null = null;
@@ -25,7 +29,7 @@ class SharedAudioEngine {
   private micStartPromise: Promise<void> | null = null;
 
   // ---- Module processing ----
-  private moduleNodes: Map<string, { analyser: AnalyserNode; gain: GainNode }> = new Map();
+  private moduleNodes: Map<string, { analyser: AnalyserNode; gain: GainNode; routedToMaster: boolean }> = new Map();
 
   getContext(): AudioContext | null {
     return this.base.getContext();
@@ -140,12 +144,15 @@ class SharedAudioEngine {
       // Use the helper to initialize gain value
       gain.gain.value = dbToGain(this.defaultGainReduction);
 
-      // Internal chain: gain → analyser → destination
-      // Analyser is connected to destination so we can monitor output
+      // Internal chain: gain → analyser. The analyser is a read-only TAP —
+      // it is intentionally NOT connected to destination, so reading it never
+      // double-sums a layer into the speakers. Whoever drives a module (a
+      // SoundLayerPlayer note, the live layer chain, etc.) connects its own
+      // signal into `gain` (via `getModuleGainNode`) and is responsible for
+      // routing `gain` onward to the master bus if audibility is wanted.
       gain.connect(analyser);
-      analyser.connect(ctx.destination);
 
-      entry = { analyser, gain };
+      entry = { analyser, gain, routedToMaster: false };
       this.moduleNodes.set(moduleId, entry);
     } else {
       // Update fftSize if it changed
@@ -160,12 +167,30 @@ class SharedAudioEngine {
   /**
    * Returns the GainNode that should be used as the input for a module's
    * audio chain. Call `getModuleGainNode(id)` and connect your source to it.
+   *
+   * The gain node is wired `gain → analyser` (meter tap) AND `gain → master`
+   * (audible path through the master bus + master limiter), so anything a
+   * module routes through it is both heard and metered without double-summing.
    */
   getModuleGainNode(moduleId: string): GainNode | null {
     // Trigger lazy creation if not yet present
     this.getModuleAnalyser(moduleId);
     const entry = this.moduleNodes.get(moduleId);
-    return entry ? entry.gain : null;
+    if (!entry) return null;
+    // Route the audible path into the master bus (respects master level/limiter).
+    // If the base engine is unavailable, fall back to the raw destination so a
+    // caller can never silently lose audio.
+    if (!entry.routedToMaster) {
+      const baseCtx = this.base.getContext();
+      const masterTap = (this.base as unknown as { getMasterRackInput?: () => GainNode | null }).getMasterRackInput?.();
+      if (masterTap) {
+        entry.gain.connect(masterTap);
+      } else if (baseCtx) {
+        entry.gain.connect(baseCtx.destination);
+      }
+      entry.routedToMaster = true;
+    }
+    return entry.gain;
   }
 
   /**

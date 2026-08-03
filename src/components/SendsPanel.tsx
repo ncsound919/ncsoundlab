@@ -14,6 +14,7 @@ import React from 'react';
 import { Knob } from './Knob';
 import { useMixerStore } from '../store/mixerStore';
 import type { SerializedBusConfig } from '../lib/projectFormat';
+import { audioEngine } from '../lib/audioEngine';
 
 interface SendsPanelProps {
   buses?: string[];
@@ -24,6 +25,13 @@ export const SendsPanel: React.FC<SendsPanelProps> = ({
 }) => {
   const busesConfig = useMixerStore((s) => s.buses);
   const setBus = useMixerStore((s) => s.setBus);
+
+  // Phase 3.3 — every bus change also pushes the return settings onto the
+  // live engine's send/return graph so the panel controls are audible.
+  const updateBus = (id: string, updates: Partial<SerializedBusConfig>) => {
+    setBus(id, updates);
+    try { audioEngine.syncSendBuses(); } catch { /* engine not booted */ }
+  };
 
   return (
     <div className="flex flex-col gap-2 p-3 bg-black/40 border border-white/10 rounded" data-sends-panel>
@@ -45,7 +53,7 @@ export const SendsPanel: React.FC<SendsPanelProps> = ({
                 </span>
                 <button
                   type="button"
-                  onClick={() => setBus(busId, { enabled: !cfg.enabled })}
+                  onClick={() => updateBus(busId, { enabled: !cfg.enabled })}
                   className={`px-1.5 py-0.5 text-[9px] font-mono font-black uppercase rounded border ${
                     cfg.enabled
                       ? 'border-emerald-500/60 text-emerald-300'
@@ -65,7 +73,7 @@ export const SendsPanel: React.FC<SendsPanelProps> = ({
                   step={0.05}
                   size={42}
                   color="#10b981"
-                  onChange={(v) => setBus(busId, { gain: v })}
+                  onChange={(v) => updateBus(busId, { gain: v })}
                 />
                 <Knob
                   label="Pan"
@@ -75,7 +83,7 @@ export const SendsPanel: React.FC<SendsPanelProps> = ({
                   step={0.05}
                   size={42}
                   color="#a78bfa"
-                  onChange={(v) => setBus(busId, { pan: v })}
+                  onChange={(v) => updateBus(busId, { pan: v })}
                 />
               </div>
             </div>

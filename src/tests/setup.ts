@@ -83,7 +83,8 @@ class MockOfflineAudioContext {
     connect: vi.fn(),
     type: 'lowpass',
     frequency: { value: 20000, setValueAtTime: vi.fn() },
-    Q: { value: 1, setValueAtTime: vi.fn() }
+    Q: { value: 1, setValueAtTime: vi.fn() },
+    gain: { value: 0, setValueAtTime: vi.fn() }
   }));
   createDelay = vi.fn(() => ({
     connect: vi.fn(),

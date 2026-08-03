@@ -9,13 +9,14 @@
  * can read the live settings via `getState()`.
  */
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Knob } from './Knob';
 import {
   useMasterDynamicsStore,
   DEFAULT_MASTER_DYNAMICS,
   type SidechainRoute,
 } from '../store/masterDynamicsStore';
+import { audioEngine } from '../lib/audioEngine';
 
 export const MasterDynamicsPanel: React.FC = () => {
   const settings = useMasterDynamicsStore((s) => s.settings);
@@ -24,6 +25,25 @@ export const MasterDynamicsPanel: React.FC = () => {
   const addSidechain = useMasterDynamicsStore((s) => s.addSidechain);
   const updateSidechain = useMasterDynamicsStore((s) => s.updateSidechain);
   const removeSidechain = useMasterDynamicsStore((s) => s.removeSidechain);
+
+  // Phase 3.5 — push settings onto the live master limiter + makeup gain
+  // whenever they change (and once on mount so a reloaded project applies).
+  useEffect(() => {
+    try {
+      audioEngine.applyMasterDynamics(settings);
+    } catch {
+      // Audio engine may not be booted yet — the next change will re-apply.
+    }
+  }, [settings]);
+
+  // Phase 3.5 — rebuild sidechain ducks when routes change.
+  useEffect(() => {
+    try {
+      audioEngine.syncSidechains();
+    } catch {
+      // Best-effort wiring.
+    }
+  }, [sidechains]);
 
   const onAdd = () => {
     addSidechain({
