@@ -71,6 +71,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const pattern = usePatternStore((s) => s.patterns[s.activePatternId].layerRows);
   const activePatternId = usePatternStore((s) => s.activePatternId);
   const patternBpm = usePatternStore((s) => s.patterns[s.activePatternId].bpm);
+  const patternTimeSignature = usePatternStore((s) => s.patterns[s.activePatternId].timeSignature);
+  const patternStepLength = usePatternStore((s) => s.patterns[s.activePatternId].stepLength);
+  const setTimeSignature = usePatternStore((s) => s.setTimeSignature);
+  const setStepLength = usePatternStore((s) => s.setStepLength);
   const setRow = usePatternStore((s) => s.setRow);
   const ensureLayerRow = usePatternStore((s) => s.ensureLayerRow);
   const storeSetBpm = usePatternStore((s) => s.setBpm);
@@ -681,9 +685,13 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         bpm={bpm}
         isPlaying={isPlaying}
         useTransportMode={useTransportMode}
+        timeSignature={patternTimeSignature}
+        stepLength={patternStepLength}
         onBpmChange={setBpm}
         onPlayStop={togglePlay}
         onUseTransportModeChange={setUseTransportMode}
+        onTimeSignatureChange={setTimeSignature}
+        onStepLengthChange={setStepLength}
       />
       {/* Transport bar */}
       <div className="bg-[#0f0f12] border border-[#1e293b] rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">

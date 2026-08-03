@@ -4,18 +4,26 @@ interface TransportBarProps {
   bpm: number;
   isPlaying: boolean;
   useTransportMode: boolean;
+  timeSignature: [number, number];
+  stepLength: 16 | 32;
   onBpmChange: (bpm: number) => void;
   onPlayStop: () => void;
   onUseTransportModeChange: (on: boolean) => void;
+  onTimeSignatureChange: (b: 3 | 4 | 6, n: 4 | 8) => void;
+  onStepLengthChange: (len: 16 | 32) => void;
 }
 
 export function TransportBar({
   bpm,
   isPlaying,
   useTransportMode,
+  timeSignature,
+  stepLength,
   onBpmChange,
   onPlayStop,
   onUseTransportModeChange,
+  onTimeSignatureChange,
+  onStepLengthChange,
 }: TransportBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-3 px-3 py-2 bg-black/40 border border-white/10 rounded">
@@ -45,6 +53,32 @@ export function TransportBar({
           onChange={(e) => onUseTransportModeChange(e.target.checked)}
         />
         Tone Transport
+      </label>
+      <label className="flex items-center gap-2 text-sm text-white/80">
+        Time Sig
+        <select
+          value={`${timeSignature[0]}/${timeSignature[1]}`}
+          onChange={(e) => {
+            const [b, n] = e.target.value.split('/').map(Number);
+            onTimeSignatureChange(b as 3 | 4 | 6, n as 4 | 8);
+          }}
+          className="bg-black/60 border border-white/20 rounded px-2 py-1 text-white"
+        >
+          <option value="4/4">4/4</option>
+          <option value="3/4">3/4</option>
+          <option value="6/8">6/8</option>
+        </select>
+      </label>
+      <label className="flex items-center gap-2 text-sm text-white/80">
+        Steps
+        <select
+          value={stepLength}
+          onChange={(e) => onStepLengthChange(Number(e.target.value) as 16 | 32)}
+          className="bg-black/60 border border-white/20 rounded px-2 py-1 text-white"
+        >
+          <option value={16}>16</option>
+          <option value={32}>32</option>
+        </select>
       </label>
     </div>
   );
