@@ -43,6 +43,22 @@ describe('DemoGateModal', () => {
     expect(screen.queryByRole('dialog', { name: 'Welcome to NC Sound Lab' })).toBeNull();
   });
 
+  it('captures an optional email and starts the demo', () => {
+    renderGate();
+    const input = screen.getByRole('textbox', { name: /Email address/i });
+    fireEvent.change(input, { target: { value: 'producer@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: /Start my 20-minute demo/i }));
+    expect(localStorage.getItem('ncs_email')).toBe('producer@example.com');
+    expect(localStorage.getItem('ncs_demo_status')).toBe('active');
+  });
+
+  it('starts the demo without an email too', () => {
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: /Start my 20-minute demo/i }));
+    expect(localStorage.getItem('ncs_demo_status')).toBe('active');
+    expect(localStorage.getItem('ncs_email')).toBeNull();
+  });
+
   it('shows the paywall once the session has expired', () => {
     localStorage.setItem('ncs_demo_status', 'expired');
     renderGate();

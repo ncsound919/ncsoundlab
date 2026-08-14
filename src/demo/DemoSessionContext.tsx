@@ -16,6 +16,7 @@ import {
   unlockDemoSession,
 } from '../lib/demoGate';
 import { DEMO_SESSION_MS } from '../lib/demoConfig';
+import { trackEvent } from '../lib/analytics';
 
 function bootstrapDemo(): { status: DemoStatus; remaining: number } {
   if (isDesktopBuild()) return { status: 'purchased', remaining: 0 };
@@ -60,6 +61,7 @@ export function DemoSessionProvider({ children }: { children: React.ReactNode })
         expireDemoSession();
         setStatus('expired');
         setRemaining(0);
+        trackEvent('paywall_seen');
       } else {
         setRemaining(rem);
       }
@@ -71,11 +73,13 @@ export function DemoSessionProvider({ children }: { children: React.ReactNode })
     beginDemoSession();
     setStatus('active');
     setRemaining(DEMO_SESSION_MS);
+    trackEvent('demo_started');
   }, []);
 
   const unlock = useCallback(() => {
     unlockDemoSession();
     setStatus('purchased');
+    trackEvent('purchased');
   }, []);
 
   const value: DemoSessionValue = {

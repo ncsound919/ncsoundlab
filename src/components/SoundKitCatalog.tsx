@@ -27,7 +27,7 @@ import {
   Lock
 } from 'lucide-react';
 import { useDemoSession } from '../demo/DemoSessionContext';
-import { PURCHASE_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME } from '../lib/demoConfig';
+import { PURCHASE_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME, KIT_PURCHASE_URLS } from '../lib/demoConfig';
 
 interface SoundKitCatalogProps {
   customKits: SoundKit[];
@@ -238,6 +238,7 @@ export const SoundKitCatalog: React.FC<SoundKitCatalogProps> = ({
   const { status: demoStatus } = useDemoSession();
   const isPaidUnlocked = demoStatus === 'purchased';
   const [purchaseGateKit, setPurchaseGateKit] = useState<SoundKit | null>(null);
+  const kitPurchaseUrl = purchaseGateKit ? KIT_PURCHASE_URLS[purchaseGateKit.id] || '' : '';
   
   // Combine custom kits, cloud kits, and factory kits safely deduplicated by ID
   const allKits = useMemo(() => {
@@ -762,11 +763,24 @@ export const SoundKitCatalog: React.FC<SoundKitCatalogProps> = ({
               to download, royalty-free.
             </p>
             <div className="flex flex-col gap-2">
+              {kitPurchaseUrl && (
+                <a
+                  href={kitPurchaseUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 px-4 py-3 text-black text-sm font-black uppercase tracking-wider hover:opacity-95 transition-all"
+                >
+                  <Download size={16} />
+                  Buy this kit — ${purchaseGateKit.price.toFixed(2)}
+                </a>
+              )}
               <a
                 href={PURCHASE_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-yellow-400 px-4 py-3 text-black text-sm font-black uppercase tracking-wider hover:opacity-95 transition-all"
+                className={`inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-yellow-400 px-4 py-3 text-black text-sm font-black uppercase tracking-wider hover:opacity-95 transition-all ${
+                  kitPurchaseUrl ? 'opacity-90' : ''
+                }`}
               >
                 <Download size={16} />
                 Get {DEMO_PRODUCT_NAME} — {DEMO_PRICE_DISPLAY}

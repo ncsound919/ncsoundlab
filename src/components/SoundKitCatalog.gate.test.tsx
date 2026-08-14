@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { DemoSessionProvider } from '../demo/DemoSessionContext';
 import { SoundKitCatalog } from './SoundKitCatalog';
-import { PURCHASE_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME } from '../lib/demoConfig';
+import { PURCHASE_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME, KIT_PURCHASE_URLS } from '../lib/demoConfig';
 import type { SoundKit } from '../types';
 
 vi.mock('../lib/db', () => ({
@@ -118,5 +118,19 @@ describe('SoundKitCatalog purchase gate', () => {
     renderCatalog([freeKit]);
     await selectKit('TEST FREE KIT');
     await waitFor(() => expect(screen.getByRole('button', { name: /Download Free Kit/i })).toBeDefined());
+  });
+
+  it('offers a direct per-kit purchase link when configured', async () => {
+    renderCatalog([paidKit]);
+    await selectKit('TEST PREMIUM KIT');
+    await waitFor(() => expect(screen.getByRole('button', { name: /Unlock Kit/i })).toBeDefined());
+    fireEvent.click(screen.getByRole('button', { name: /Unlock Kit/i }));
+    const kitUrl = KIT_PURCHASE_URLS['factory-1'];
+    if (kitUrl) {
+      const buyKit = screen.getByRole('link', { name: /Buy this kit/i });
+      expect(buyKit.getAttribute('href')).toBe(kitUrl);
+    }
+    const buyApp = screen.getByRole('link', { name: new RegExp(`Get ${DEMO_PRODUCT_NAME}`) });
+    expect(buyApp.getAttribute('href')).toBe(PURCHASE_URL);
   });
 });

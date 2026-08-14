@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
-import { Download, Music, Zap, Sliders, Package, Lock, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { Download, Music, Zap, Sliders, Package, Lock, Check, Mail } from 'lucide-react';
 import { useDemoSession } from '../demo/DemoSessionContext';
-import { PURCHASE_URL, DOWNLOAD_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME } from '../lib/demoConfig';
+import { PURCHASE_URL, DOWNLOAD_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME, EMAIL_CAPTURE_URL } from '../lib/demoConfig';
 
 const FEATURES = [
   { icon: Music, label: 'Synth layering & MPC beat studio' },
@@ -17,6 +17,36 @@ const FEATURES = [
 
 export function DemoGateModal() {
   const { locked, showWelcome, countdown, start, unlock } = useDemoSession();
+  const [email, setEmail] = useState(() => {
+    try {
+      return localStorage.getItem('ncs_email') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [emailSent, setEmailSent] = useState(false);
+
+  const submitEmail = (e: React.FormEvent) => {
+    e.preventDefault();
+    const value = email.trim();
+    if (!value) {
+      start();
+      return;
+    }
+    try {
+      localStorage.setItem('ncs_email', value);
+    } catch {
+      /* ignore */
+    }
+    if (EMAIL_CAPTURE_URL && value) {
+      const form = new FormData();
+      form.append('email', value);
+      form.append('source', 'nc-soundlab-welcome');
+      fetch(EMAIL_CAPTURE_URL, { method: 'POST', body: form, mode: 'no-cors' }).catch(() => undefined);
+    }
+    setEmailSent(true);
+    start();
+  };
 
   if (locked) {
     return (
@@ -113,12 +143,31 @@ export function DemoGateModal() {
           </ul>
 
           <div className="flex flex-col gap-2">
-            <button
-              onClick={start}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-yellow-400 px-4 py-3.5 text-black text-sm font-black uppercase tracking-wider hover:opacity-95 transition-all"
+            <form
+              onSubmit={submitEmail}
+              className="flex flex-col gap-2"
+              aria-label="Optional email to save your session"
             >
-              Start my 20-minute demo
-            </button>
+              {!emailSent && (
+                <div className="flex items-center gap-2 rounded-xl border border-[#1e293b] bg-[#0a0a0e] px-3 py-2 focus-within:border-blue-500">
+                  <Mail size={14} className="text-blue-400 shrink-0" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Email (optional) — get the $5 offer if you leave"
+                    aria-label="Email address (optional)"
+                    className="w-full bg-transparent text-xs text-white placeholder-gray-600 focus:outline-none"
+                  />
+                </div>
+              )}
+              <button
+                type="submit"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-yellow-400 px-4 py-3.5 text-black text-sm font-black uppercase tracking-wider hover:opacity-95 transition-all"
+              >
+                Start my 20-minute demo
+              </button>
+            </form>
             <a
               href={PURCHASE_URL}
               target="_blank"
