@@ -1,5 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Use a dedicated port so the Overlay365 ecosystem services that also bind
+// port 3000 (e.g. Overlay Justice dev server) never collide with our E2E.
+// Always start a fresh Vite server locally so a stale foreign process is
+// never silently reused.
+const E2E_PORT = 3117;
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -8,7 +14,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: `http://localhost:${E2E_PORT}`,
     trace: 'on-first-retry',
   },
   projects: [
@@ -18,9 +24,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    command: `npx vite --port ${E2E_PORT} --strictPort`,
+    url: `http://localhost:${E2E_PORT}`,
+    reuseExistingServer: false,
     timeout: 120 * 1000,
   },
 });

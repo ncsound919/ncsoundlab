@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { Download, Music, Zap, Sliders, Package, Lock, Check, Mail } from 'lucide-react';
 import { useDemoSession } from '../demo/DemoSessionContext';
-import { PURCHASE_URL, DOWNLOAD_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME, EMAIL_CAPTURE_URL } from '../lib/demoConfig';
+import { PURCHASE_URL, DOWNLOAD_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME, EMAIL_CAPTURE_URL, ALBUM_1, ALBUM_2 } from '../lib/demoConfig';
 
 const FEATURES = [
   { icon: Music, label: 'Synth layering & MPC beat studio' },
@@ -79,6 +79,37 @@ export function DemoGateModal() {
               </li>
             ))}
           </ul>
+
+          {/* Founder's music — the real product behind the tool */}
+          {(ALBUM_1.url || ALBUM_2.url) && (
+            <div className="mb-6 rounded-xl border border-[#1e293b] bg-[#0a0a0e] p-3">
+              <p className="text-[10px] font-mono font-black uppercase tracking-widest text-yellow-400 mb-2">
+                Hear the founder's music
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {ALBUM_1.url && (
+                  <a
+                    href={ALBUM_1.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#16161a] border border-[#262632] px-3 py-1.5 text-[11px] font-bold text-blue-300 hover:border-blue-500 transition-colors"
+                  >
+                    <Music size={12} /> {ALBUM_1.title}
+                  </a>
+                )}
+                {ALBUM_2.url && (
+                  <a
+                    href={ALBUM_2.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#16161a] border border-[#262632] px-3 py-1.5 text-[11px] font-bold text-blue-300 hover:border-blue-500 transition-colors"
+                  >
+                    <Music size={12} /> {ALBUM_2.title}
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-col gap-2">
             <a

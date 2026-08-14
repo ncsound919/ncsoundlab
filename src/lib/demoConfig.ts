@@ -32,20 +32,18 @@ export const EMAIL_CAPTURE_URL =
   (import.meta.env && import.meta.env.VITE_EMAIL_CAPTURE_URL) || '';
 
 /**
- * Per-kit purchase links (Stripe Payment Links). Lets a web visitor buy a
- * premium sound kit directly without first owning the desktop app — the S2
- * revenue stream. Keyed by kit id (see FACTORY_KITS in SoundKitCatalog).
- * Override any entry at build time with `VITE_KIT_<ID>_URL`.
+ * Founder's music — the real product behind the tool. The app gives back at
+ * $5; the albums are what NCSOUND publishes. Set the streaming/store links
+ * at build time via VITE_ALBUM_1_URL / VITE_ALBUM_2_URL. When unset, the
+ * paywall shows the album names without links.
  */
-const envKitUrl = (key: string): string => {
-  if (typeof import.meta !== 'undefined' && import.meta.env) {
-    const v = (import.meta.env as Record<string, string | undefined>)[key];
-    if (v) return v;
-  }
-  return '';
+export const ALBUM_1 = {
+  title: 'Im Different',
+  url:
+    (import.meta.env && import.meta.env.VITE_ALBUM_1_URL) || '',
 };
-
-export const KIT_PURCHASE_URLS: Record<string, string> = {
-  'factory-1': envKitUrl('VITE_KIT_FACTORY_1_URL') || '',
-  'factory-3': envKitUrl('VITE_KIT_FACTORY_3_URL') || '',
+export const ALBUM_2 = {
+  title: 'Free Lunch',
+  url:
+    (import.meta.env && import.meta.env.VITE_ALBUM_2_URL) || '',
 };

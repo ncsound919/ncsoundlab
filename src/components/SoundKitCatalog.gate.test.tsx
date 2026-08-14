@@ -8,7 +8,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { DemoSessionProvider } from '../demo/DemoSessionContext';
 import { SoundKitCatalog } from './SoundKitCatalog';
-import { PURCHASE_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME, KIT_PURCHASE_URLS } from '../lib/demoConfig';
 import type { SoundKit } from '../types';
 
 vi.mock('../lib/db', () => ({
@@ -17,33 +16,33 @@ vi.mock('../lib/db', () => ({
   toggleFavorite: vi.fn(async () => undefined),
 }));
 
-const paidKit: SoundKit = {
-  id: 'test-paid-1',
-  title: 'TEST PREMIUM KIT',
+const factoryKit: SoundKit = {
+  id: 'factory-1',
+  title: 'TEST FACTORY KIT',
   producer: 'TEST LABS',
-  description: 'A paid kit for gate testing.',
+  description: 'A bundled demo kit.',
   genre: 'Test',
   tags: ['test'],
-  price: 19.0,
+  price: 0,
   isPublished: true,
   samples: [],
   createdAt: new Date().toISOString(),
   coverArt: {
     theme: 'cyberpunk',
-    title: 'TEST PREMIUM KIT',
-    subtitle: 'Paid',
+    title: 'TEST FACTORY KIT',
+    subtitle: 'Free Demo',
     producer: 'TEST LABS',
     overlayTexture: 'grid',
-    badgeText: '$19.00 PREMIUM',
+    badgeText: 'FREE DEMO',
     accentColor: '#F27D26',
   },
 };
 
-const freeKit: SoundKit = {
-  id: 'test-free-1',
-  title: 'TEST FREE KIT',
-  producer: 'TEST LABS',
-  description: 'A free kit for gate testing.',
+const userKit: SoundKit = {
+  id: 'user-1',
+  title: 'USER BUILT KIT',
+  producer: 'A PRODUCER',
+  description: 'A kit built by another producer.',
   genre: 'Test',
   tags: ['test'],
   price: 0,
@@ -52,9 +51,9 @@ const freeKit: SoundKit = {
   createdAt: new Date().toISOString(),
   coverArt: {
     theme: 'gold_analog',
-    title: 'TEST FREE KIT',
-    subtitle: 'Free',
-    producer: 'TEST LABS',
+    title: 'USER BUILT KIT',
+    subtitle: 'Community',
+    producer: 'A PRODUCER',
     overlayTexture: 'vinyl',
     badgeText: 'FREE DOWNLOAD',
     accentColor: '#D97706',
@@ -74,13 +73,13 @@ async function selectKit(title: string) {
   if (!heading) throw new Error(`kit heading not found: ${title}`);
   fireEvent.click(heading);
   await waitFor(() => {
-    expect(screen.getByText(new RegExp(`Included Audio Samples`, 'i'))).toBeDefined();
+    expect(screen.getByText(/Included Audio Samples/i)).toBeDefined();
   });
 }
 
 const ORIGINAL_LOCAL_STORAGE = globalThis.localStorage;
 
-describe('SoundKitCatalog purchase gate', () => {
+describe('SoundKitCatalog community model', () => {
   beforeEach(() => {
     globalThis.localStorage.clear();
     localStorage.setItem('ncs_demo_status', 'active');
@@ -91,46 +90,36 @@ describe('SoundKitCatalog purchase gate', () => {
     globalThis.localStorage = ORIGINAL_LOCAL_STORAGE;
   });
 
-  it('opens the purchase gate for a paid kit during an active demo', async () => {
-    renderCatalog([paidKit]);
-    await selectKit('TEST PREMIUM KIT');
-    await waitFor(() => expect(screen.getByRole('button', { name: /Unlock Kit/i })).toBeDefined());
-    fireEvent.click(screen.getByRole('button', { name: /Unlock Kit/i }));
-    expect(screen.getByRole('dialog', { name: /is a paid kit/ })).toBeDefined();
-    const buy = screen.getByRole('link', { name: new RegExp(`Get ${DEMO_PRODUCT_NAME}`) });
-    expect(buy.getAttribute('href')).toBe(PURCHASE_URL);
+  it('all bundled factory kits download freely during an active demo', async () => {
+    renderCatalog([factoryKit]);
+    await selectKit('TEST FACTORY KIT');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Download Kit \(\.zip\)/ })).toBeDefined()
+    );
   });
 
-  it('shows the unlock label instead of download for a locked paid kit', async () => {
-    renderCatalog([paidKit]);
-    await selectKit('TEST PREMIUM KIT');
-    await waitFor(() => expect(screen.getByRole('button', { name: /Unlock Kit — \$19\.00/ })).toBeDefined());
+  it('community-built kits are free to download (kit builder is a free tool)', async () => {
+    renderCatalog([userKit]);
+    await selectKit('USER BUILT KIT');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Download Kit \(\.zip\)/ })).toBeDefined()
+    );
   });
 
-  it('unlocked purchasers can download paid kits directly', async () => {
-    localStorage.setItem('ncs_demo_status', 'purchased');
-    renderCatalog([paidKit]);
-    await selectKit('TEST PREMIUM KIT');
-    await waitFor(() => expect(screen.getByRole('button', { name: /Download Kit \(\.zip\)/ })).toBeDefined());
+  it('does not show any purchase gate for kits', async () => {
+    renderCatalog([factoryKit, userKit]);
+    await selectKit('TEST FACTORY KIT');
+    fireEvent.click(screen.getByRole('button', { name: /Download Kit/i }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /is a paid kit/ })).toBeNull();
+    });
   });
 
-  it('free kits always show a direct download', async () => {
-    renderCatalog([freeKit]);
-    await selectKit('TEST FREE KIT');
-    await waitFor(() => expect(screen.getByRole('button', { name: /Download Free Kit/i })).toBeDefined());
-  });
-
-  it('offers a direct per-kit purchase link when configured', async () => {
-    renderCatalog([paidKit]);
-    await selectKit('TEST PREMIUM KIT');
-    await waitFor(() => expect(screen.getByRole('button', { name: /Unlock Kit/i })).toBeDefined());
-    fireEvent.click(screen.getByRole('button', { name: /Unlock Kit/i }));
-    const kitUrl = KIT_PURCHASE_URLS['factory-1'];
-    if (kitUrl) {
-      const buyKit = screen.getByRole('link', { name: /Buy this kit/i });
-      expect(buyKit.getAttribute('href')).toBe(kitUrl);
-    }
-    const buyApp = screen.getByRole('link', { name: new RegExp(`Get ${DEMO_PRODUCT_NAME}`) });
-    expect(buyApp.getAttribute('href')).toBe(PURCHASE_URL);
+  it('keeps the Export for External Sale flow so producers sell their own kits', async () => {
+    renderCatalog([factoryKit]);
+    await selectKit('TEST FACTORY KIT');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Export for External Sale/i })).toBeDefined()
+    );
   });
 });
