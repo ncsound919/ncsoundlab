@@ -1,5 +1,8 @@
 # NC Sound Lab
 
+[![Release](https://img.shields.io/github/v/release/ncsound919/ncsoundlab?color=blue&label=Windows%20Desktop)](https://github.com/ncsound919/ncsoundlab/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/ncsound919/ncsoundlab/ci.yml?label=CI)](https://github.com/ncsound919/ncsoundlab/actions/workflows/ci.yml)
+
 A web-based beatmaker and sound design workstation built with React, Vite, and the Web Audio API. Local-first — no accounts, no cloud, no API keys.
 
 ![brand](public/logo.png)

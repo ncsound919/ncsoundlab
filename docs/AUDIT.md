@@ -73,11 +73,14 @@ Date: 2026-08-09 · Scope: full app (web demo + Tauri desktop) · Method: automa
 - [x] **RED CI on next push/PR** — gate is green; `COVERAGE_BASE=origin/main npm run coverage:check` passes on the full working tree.
 - [x] **Real Stripe Payment Link live** — `https://buy.stripe.com/eVqdRb5Ribjd4rN16e3oA07` (NC Sound Lab Desktop, $5 one-time; product `prod_V2pLmPqywATHbI` / price `price_1U2jgyQrfNRBru0zPniNW35r`) wired into `src/lib/demoConfig.ts`.
 - [x] **NSIS installer builds** — `src-tauri/target/release/bundle/nsis/NC Sound Lab Studio_1.0.0_x64-setup.exe` (4.6 MB) + portable `nc-sound-lab.exe` (11.8 MB).
-- [ ] **Host the installer** where the Stripe confirmation page / README points buyers (e.g. GitHub Releases or a Vercel static download page).
+- [x] **Host the installer** where the Stripe confirmation page / README points buyers — **DONE**: `v1.0.0` published to GitHub Releases (2026-08-14) with NSIS installer + updater bundle; `DOWNLOAD_URL` now resolves.
+- [x] **Paid-kit download integrity (audit finding #1)** — **DONE**: web build now gates paid kit downloads behind purchase (purchase-gate modal, tested); free kits download freely.
+- [x] **UI/UX ease-of-use** — **DONE**: deep-linkable stages via `#stage=` hash, always-reachable Manual button in the header, hotkey index expanded.
+- [x] **Manual coverage of all functions** — **DONE**: 19 chapters incl. Beat Studio, Console Mixer, Sampling & Recording, Stems/AAF/Pro Tools, Projects & Autosave, Web Demo & Purchase.
 - [ ] **Code-sign the EXE** (optional but removes SmartScreen warnings; needs an Authenticode cert).
 - [ ] Minor: `Dockerfile`/`.dockerignore` (deployment-readiness plan Step 6 — deploy path is Vercel/static + Tauri, so not blocking).
 
-> Target after the installer is hosted + (optionally) signed: **~98%**.
+> Target after the installer is hosted + (optionally) signed: **~98%**. With v1.0.0 shipped, remaining work is optional hardening (code-signing, Docker).
 
 ## Coverage note (new-code gate)
 
