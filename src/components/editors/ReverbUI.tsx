@@ -7,7 +7,6 @@ import {
   Sparkles,
   Activity,
   Repeat,
-  Waves,
   SlidersHorizontal,
   Layers3,
   Wand2,

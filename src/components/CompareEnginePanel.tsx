@@ -10,7 +10,6 @@ import {
   UploadCloud, 
   Camera, 
   RefreshCw, 
-  Settings, 
   HelpCircle,
   FolderSync
 } from "lucide-react";

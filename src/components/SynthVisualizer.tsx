@@ -4,7 +4,7 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Play, Sparkles, Activity, Sliders, Volume2, Flame, Zap } from 'lucide-react';
+import { Play, Activity } from 'lucide-react';
 import { SynthSettings, Envelope } from '../types';
 
 interface SynthVisualizerProps {
@@ -19,13 +19,10 @@ export const SynthVisualizer: React.FC<SynthVisualizerProps> = ({
   synth,
   envelope,
   onUpdateSynth,
-  onUpdateEnvelope,
   onPlay,
 }) => {
   const [activeTab, setActiveTab] = useState<'scope' | 'harmonics' | 'xy' | 'adsr'>('scope');
   const [scopeTheme, setScopeTheme] = useState<'orange' | 'green' | 'amber' | 'cyan'>('orange');
-  const [scopeZoom, setScopeZoom] = useState<number>(1);
-  const [triggerSync, setTriggerSync] = useState<boolean>(true);
   
   // A/B Patch Comparison & Continuous Morphing Crossfader
   const [slotA, setSlotA] = useState<SynthSettings>(synth);

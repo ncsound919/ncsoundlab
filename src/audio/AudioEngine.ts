@@ -5,7 +5,7 @@
 
 import { audioEngine as baseAudioEngine } from '../lib/audioEngine';
 import { SoundLayerPlayer } from './SoundLayerPlayer';
-import { dbToGain, gainToDb, safeAudioValue } from '../lib/audioUtils';
+import { dbToGain, gainToDb } from '../lib/audioUtils';
 
 export { SoundLayerPlayer };
 

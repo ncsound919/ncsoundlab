@@ -35,22 +35,24 @@ for (let i = 0; i < CURVE_POINTS; i++) {
 }
 
 /* ── Coordinate helpers (module-level pure functions) ───── */
-const freqToX = (freq: number, width: number): number =>
+export const freqToX = (freq: number, width: number): number =>
   ((Math.log2(Math.max(20, freq)) - LOG_MIN) / LOG_RANGE) * width;
 
-const dbToY = (db: number, height: number): number =>
+export const dbToY = (db: number, height: number): number =>
   height / 2 - (db / DB_RANGE) * (height / 2);
 
-const xToFreq = (x: number, width: number): number => {
+export const xToFreq = (x: number, width: number): number => {
   const ratio = Math.max(0, Math.min(1, x / width));
   return Math.round(Math.pow(2, ratio * LOG_RANGE + LOG_MIN));
 };
 
-const yToGain = (y: number, height: number): number =>
+export const yToGain = (y: number, height: number): number =>
   parseFloat(((height / 2 - y) * DB_RANGE / (height / 2)).toFixed(1));
 
-const formatFreqLabel = (f: number): string =>
+export const formatFreqLabel = (f: number): string =>
   f >= 1000 ? `${f / 1000}k` : `${f}`;
+
+export const DB_RANGE_CONST = DB_RANGE;
 
 /* ── Draw the static background (grid + labels) once per size change ─ */
 const drawGrid = (

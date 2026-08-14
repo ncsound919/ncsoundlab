@@ -23,6 +23,7 @@ import { Note, Chord } from 'tonal';
 import { Play, Square, Save, FolderOpen } from 'lucide-react';
 import 'react-piano/dist/styles.css';
 import { SoundLayer, PatternCell } from '../types';
+import { applySemitoneShift } from '../lib/sequencerHelpers';
 import { audioEngine } from '../lib/audioEngine';
 import { SoundLayerPlayer } from '../audio/SoundLayerPlayer';
 import { MpcPadBank, PadEntry } from './MpcPadBank';
@@ -35,16 +36,15 @@ import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audi
 import { renderMixdown } from '../audio/transport/mixdown';
 import { SampleBrowser } from './SampleBrowser';
 import { TakesRecorder } from './TakesRecorder';
+import { patternLoopLengthSec } from '../audio/transport/takesRecorder';
 import { PerformanceControls } from './PerformanceControls';
 import { MidiPanel } from './MidiPanel';
 import { TheoryPanel } from './TheoryPanel';
 import {
   fetchLibrarySample,
   decodeLibrarySample,
-  type SampleLibrarySample,
 } from '../lib/sampleLibrary';
 
-const DEFAULT_STEPS = 16;
 const PPQ = 96;
 
 type StepCell = PatternCell;
@@ -99,12 +99,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const patternStepLength = usePatternStore((s) => s.patterns[s.activePatternId].stepLength);
   const setTimeSignature = usePatternStore((s) => s.setTimeSignature);
   const setStepLength = usePatternStore((s) => s.setStepLength);
-  const songChain = usePatternStore((s) => s.songChain.order);
   const setRow = usePatternStore((s) => s.setRow);
   const ensureLayerRow = usePatternStore((s) => s.ensureLayerRow);
   const storeSetBpm = usePatternStore((s) => s.setBpm);
   const loadFromExport = usePatternStore((s) => s.loadFromExport);
-  const setActivePattern = usePatternStore((s) => s.setActivePattern);
 
   // BPM lives in patternStore; keep the local names the rest of this file
   // already uses (`bpm` / `setBpm`) pointing at the store so call sites
@@ -272,9 +270,13 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       playerRef.current.playNote(layer, cell.note, noteDurSeconds, velocity);
     } else {
       // Step-triggered layers honour MPC choke groups too, so open/closed
-      // hi-hat style rows cut each other consistently with the pads.
+      // hi-hat style rows cut each other consistently with the pads. Recorded
+      // velocity is applied so pattern dynamics / Humanize / groove velocity
+      // are actually audible on drum and sample rows.
       const choke = padChokeRef.current[layerId] || 0;
-      audioEngine.triggerLayer(layer, undefined, choke > 0 ? `choke:${choke}` : undefined);
+      const velocity = typeof cell.velocity === 'number' ? Math.max(0, Math.min(1, cell.velocity / 127)) : 1;
+      const velLayer = { ...layer, gain: (layer.gain || 1) * velocity };
+      audioEngine.triggerLayer(velLayer, undefined, choke > 0 ? `choke:${choke}` : undefined);
     }
   }, [layers, isLayerAudible, bpm]);
 
@@ -373,6 +375,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       if (intervalRef.current) clearInterval(intervalRef.current);
       swingTimeoutsRef.current.forEach(clearTimeout);
       swingTimeoutsRef.current.clear();
+      // Release an in-progress mic recording when the tab unmounts, otherwise
+      // the MediaRecorder / getUserMedia stream stays alive (browser mic
+      // indicator on) indefinitely.
+      audioCaptureRef.current?.dispose();
+      audioCaptureRef.current = null;
     };
   }, []);
 
@@ -435,11 +442,26 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     return () => {
       cancelled = true;
       if (seq) seq.dispose();
-      if (isPlaying) {
+    };
+    // Rebuild the sequence when the step count changes — the Tone.Sequence
+    // callback array is fixed at construction, so without this dep a 16→32
+    // step change (Steps selector in the TransportBar) keeps playing the
+    // stale 16 steps while the setInterval path already honours the new
+    // length. Transport stop on unmount/mode-off is handled separately below
+    // so a length change mid-play doesn't yank the clock.
+  }, [useTransportMode, patternStepLength]);
+
+  // Stop the Tone transport when Tone mode is turned off or the component
+  // unmounts, otherwise a disabled/beta path could leave Tone.Transport
+  // advancing silently (the seq cleanup above no longer stops it, so it can
+  // rebuild on step-length changes without interrupting playback).
+  useEffect(() => {
+    return () => {
+      if (playingRef.current) {
         try { getTransport().stop(); } catch { /* ignore */ }
       }
     };
-  }, [useTransportMode]); // intentionally narrow deps — bpm/swing reset is handled elsewhere
+  }, [useTransportMode]);
 
   // Keep Tone Transport BPM/swing in sync with the controls.
   useEffect(() => {
@@ -462,7 +484,6 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     if (cursor < 0) cursor = 0;
     try {
       initTransport();
-      const t = getTransport();
       scheduledId = Tone.Transport.scheduleRepeat((time) => {
         if (cancelled) return;
         const chain = usePatternStore.getState().songChain.order;
@@ -514,11 +535,14 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     const step = Math.max(0, Math.min(stepLen - 1, Math.round(rawStep / res) * res));
     const row = usePatternStore.getState().patterns[pid].layerRows[rowId]
       || Array.from({ length: stepLen }, () => ({ on: false }));
-    const cellUpdate: PatternCell = { on: true, note: midi };
-    if (typeof velocity === 'number') cellUpdate.velocity = Math.max(0, Math.min(127, Math.round(velocity)));
-    const next = row.map((c, i) => (i === step ? { ...c, ...cellUpdate } : c));
-    setRow(pid, rowId, next);
-  }, [setRow]);
+      const cellUpdate: PatternCell = { on: true, note: midi };
+      if (typeof velocity === 'number') {
+        // Velocity arrives in 0..1 (pads/MIDI/keys); store the 0..127 cell value.
+        cellUpdate.velocity = Math.max(0, Math.min(127, Math.round(velocity * 127)));
+      }
+      const next = row.map((c, i) => (i === step ? { ...c, ...cellUpdate } : c));
+      setRow(pid, rowId, next);
+    }, [setRow]);
 
   // Pad-to-step: real pad hits while REC + playing write a drum trigger into
   // the hit layer's row at the current step (Time Correct snapped). The pad's
@@ -534,7 +558,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     const row = usePatternStore.getState().patterns[pid].layerRows[layerId]
       || Array.from({ length: stepLen }, () => ({ on: false }));
     const cellUpdate: PatternCell = { on: true };
-    if (typeof velocity === 'number') cellUpdate.velocity = Math.max(0, Math.min(127, Math.round(velocity)));
+    if (typeof velocity === 'number') {
+      // Pad velocity arrives in 0..1; store the 0..127 cell value so the
+      // pattern's drum row actually plays back the recorded dynamics.
+      cellUpdate.velocity = Math.max(0, Math.min(127, Math.round(velocity * 127)));
+    }
     const next = row.map((c, i) => (i === step ? { ...c, ...cellUpdate } : c));
     setRow(pid, layerId, next);
   }, [setRow]);
@@ -584,11 +612,14 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     const rowId = activeRowRef.current;
     const layer = layers.find((l) => l.id === rowId);
     if (!layer || !isLayerAudible(layer)) return;
+    // All onPlayNote callers (PerformanceControls keyboard pads, MidiPanel,
+    // react-piano) pass velocity in 0..1. Normalize here ONCE — the old
+    // `velocity / 127` double-normalized a 0..1 value to ~0.008 (-42 dB).
+    const v01 = typeof velocity === 'number' ? Math.max(0, Math.min(1, velocity)) : 1;
     if (layer.type === 'synth' && playerRef.current) {
-      const v01 = typeof velocity === 'number' ? Math.max(0, Math.min(1, velocity / 127)) : 1;
       playerRef.current.playNote(layer, midi, 0.6, v01);
     } else {
-      audioEngine.triggerLayer(layer);
+      audioEngine.triggerLayer({ ...layer, gain: (layer.gain || 1) * v01 });
     }
     setActiveNotes((prev) => (prev.includes(midi) ? prev : [...prev, midi]));
     if (recordingRef.current && playingRef.current) {
@@ -634,11 +665,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       ...layer,
       gain: Math.max(0.02, (layer.gain || 1) * velocity),
     };
-    const shifted: SoundLayer = semitones
-      ? layer.type === 'synth'
-        ? { ...base, synth: { ...base.synth, frequency: (base.synth?.frequency || 440) * Math.pow(2, semitones / 12) } }
-        : { ...base, pitch: (base.pitch || 0) + semitones }
-      : base;
+    const shifted = applySemitoneShift(base, semitones);
     audioEngine.triggerLayer(shifted, undefined, chokeKey);
   }, [layers, isLayerAudible]);
 
@@ -889,7 +916,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       {/* Phase 5.4 — loop recording + takes browser (count-in, metronome, punch-in/out) */}
       <TakesRecorder
         bpm={bpm}
-        loopLengthSec={((patternStepLength / 4) * 4) * (60 / bpm)} // 4 bars at current BPM
+        // One sequencer loop = stepLength 16th-notes = stepLength/4 beats.
+        // (The old inline `((stepLength/4)*4)*(60/bpm)` evaluated to stepLength
+        // beats — 16 beats = 4 bars for a 16-step pattern — so every recorded
+        // take was 4x the pattern loop and never aligned.)
+        loopLengthSec={patternLoopLengthSec(patternStepLength, bpm)}
         onAddLayer={(buffer, name) => onAddLayer ? (onAddLayer(buffer, name) ?? undefined) : undefined}
         onSlice={(buffer, n) => onSlice(buffer, n)}
       />
@@ -931,7 +962,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           const rowId = activeRowRef.current;
           const layer = layers.find((l) => l.id === rowId);
           if (!layer) return;
-          roots.forEach((root, i) => {
+          roots.forEach((root) => {
             const base = 60 + 0; // middle octave
             const pc = { C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5, 'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11 }[root] ?? 0;
             if (layer.type === 'synth' && playerRef.current) {
@@ -1321,7 +1352,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           onSetGlobalSwing={setGlobalSwing}
           onTriggerPad={(layerId, semitones, velocity) => {
             const choke = padChoke[layerId] || 0;
-            triggerLayerWithSemitone(layerId, semitones, velocity || 1, choke > 0 ? `choke:${choke}` : undefined);
+            triggerLayerWithSemitone(layerId, semitones, velocity ?? 1, choke > 0 ? `choke:${choke}` : undefined);
           }}
           onPadInput={(layerId, velocity) => recordPadHit(layerId, velocity)}
           onNoteRepeatChange={setNoteRepeat}

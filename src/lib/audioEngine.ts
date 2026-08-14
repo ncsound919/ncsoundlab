@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { SoundLayer, RackModule, DEFAULT_ENVELOPE, DEFAULT_FX, DEFAULT_SYNTH, type LayerSends } from '../types';
+import { SoundLayer, RackModule, DEFAULT_ENVELOPE, DEFAULT_SYNTH, type LayerSends } from '../types';
 import { safeAudioValue } from './audioUtils';
 import { generateChaosSynthBuffer } from './chaosSynth';
 import { TapeDelayDSP } from '../audio/dsp/TapeDelayDSP';
@@ -15,6 +15,36 @@ import { useMasterDynamicsStore } from '../store/masterDynamicsStore';
 // the base engine lazily (via a getter), and we only dereference this binding
 // inside methods at runtime — never at module-evaluation time.
 import { audioEngine as sharedAudioEngine } from '../audio/AudioEngine';
+
+// Module-level caches for the static WaveShaper transfer curves. These are
+// pure functions of their args, and each build allocates a 44100-float array
+// (~172KB). On a fast pad run that's megabytes of GC churn per trigger. Keys
+// are quantized to the precision the UI actually sends so identical layers
+// reuse the same array (sharing a curve across WaveShaperNodes is safe — the
+// curve is treated as immutable, same as TapeDelayDSP's own curve cache).
+const MAX_CURVE_CACHE = 64;
+const bitcrushCurveCache = new Map<string, Float32Array>();
+const spectralFoldCurveCache = new Map<string, Float32Array>();
+const aliasingCurveCache = new Map<string, Float32Array>();
+const distortionCurveCache = new Map<string, Float32Array>();
+function cachedCurve(
+  cache: Map<string, Float32Array>,
+  key: string,
+  build: () => Float32Array
+): Float32Array {
+  const hit = cache.get(key);
+  if (hit) return hit;
+  if (cache.size >= MAX_CURVE_CACHE) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  const curve = build();
+  cache.set(key, curve);
+  return curve;
+}
+
+/** Exported for tests: curve-cache eviction + reuse. */
+export { cachedCurve };
 
 export function isLayerAudibleInMix(layer: SoundLayer, allLayers: SoundLayer[]): boolean {
   if (!layer.enabled || layer.muted === true) {
@@ -33,10 +63,8 @@ export class AudioEngine {
   private masterPan: StereoPannerNode;
   private analyserNode: AnalyserNode;
   private masterLimiter: DynamicsCompressorNode;
-  private masterClipper: WaveShaperNode;
   /** Phase 3.5 — makeup gain after the master compressor/limiter. */
   private masterMakeupGain: GainNode;
-  private swarmBuffers = new Map<string, AudioBuffer>();
   private reversedBufferCache = new WeakMap<AudioBuffer, AudioBuffer>();
   private isPlaying: boolean = false;
   private playbackStartTime: number = 0;
@@ -47,7 +75,9 @@ export class AudioEngine {
   private restoreTimer: any = null;
   private activeSources: any[] = [];
   // MPC choke groups: chokeKey -> set of in-flight source nodes to cut
-  private chokeGroups = new Map<string, Set<AudioNode>>();
+  // MPC choke/mute groups. Each entry tracks the hit's gain node so a choke can
+  // fade the sound out instead of hard-stopping mid-waveform (click).
+  private chokeGroups = new Map<string, Set<{ source: AudioScheduledSourceNode; gain: AudioNode & { gain: AudioParam } }>>();
   // Last rack modules, so offline exports can render through the master rack too
   private lastRackModules: RackModule[] = [];
 
@@ -71,7 +101,6 @@ export class AudioEngine {
     
     this.masterGain.connect(this.masterPan);
     const chain = this.createMasterFXChain(this.context, this.masterPan, this.analyserNode);
-    this.masterClipper = chain.clipper;
     this.masterLimiter = chain.limiter;
     this.masterMakeupGain = chain.makeupGain;
 
@@ -160,28 +189,44 @@ export class AudioEngine {
     harshModGain.connect(harshEQ.gain);
 
     // 3. Sub-Bass Mono-izer Crossover summing (All sub frequencies below 110Hz summed to mono)
+    // Phase-coherent Linkwitz-Riley 4th-order crossover (two cascaded Q=0.707
+    // biquads per leg). A single 2nd-order LP/HP pair is ANTI-PHASE at fc, so
+    // the summed output had a deep cancellation notch at 110 Hz that hollowed
+    // out kick/bass fundamentals. LR4 legs are in phase at fc → flat, -6dB-per-
+    // leg sum that reconstructs the input exactly.
     const crossoverFreq = 110;
-    const lpSub = ctx.createBiquadFilter();
-    lpSub.type = 'lowpass';
-    lpSub.frequency.value = crossoverFreq;
-    
-    const hpMidsHighs = ctx.createBiquadFilter();
-    hpMidsHighs.type = 'highpass';
-    hpMidsHighs.frequency.value = crossoverFreq;
-    
+    const lpSubA = ctx.createBiquadFilter();
+    lpSubA.type = 'lowpass';
+    lpSubA.frequency.value = crossoverFreq;
+    lpSubA.Q.value = 0.707;
+    const lpSubB = ctx.createBiquadFilter();
+    lpSubB.type = 'lowpass';
+    lpSubB.frequency.value = crossoverFreq;
+    lpSubB.Q.value = 0.707;
+    const hpMidsHighsA = ctx.createBiquadFilter();
+    hpMidsHighsA.type = 'highpass';
+    hpMidsHighsA.frequency.value = crossoverFreq;
+    hpMidsHighsA.Q.value = 0.707;
+    const hpMidsHighsB = ctx.createBiquadFilter();
+    hpMidsHighsB.type = 'highpass';
+    hpMidsHighsB.frequency.value = crossoverFreq;
+    hpMidsHighsB.Q.value = 0.707;
+    lpSubA.connect(lpSubB);
+    hpMidsHighsA.connect(hpMidsHighsB);
+
     const subSplitter = ctx.createChannelSplitter(2);
     const subSum = ctx.createGain();
     subSum.gain.value = 0.5;
     const subMerger = ctx.createChannelMerger(2);
     const stereoSumBus = ctx.createGain(); // Preserves true stereo image for mids/highs while sub is monoed
     
-    lpSub.connect(subSplitter);
+    lpSubB.connect(subSplitter);
     subSplitter.connect(subSum, 0);
     subSplitter.connect(subSum, 1);
     subSum.connect(subMerger, 0, 0);
     subSum.connect(subMerger, 0, 1);
     subMerger.connect(stereoSumBus);
-    hpMidsHighs.connect(stereoSumBus); // Direct true stereo path for high/mids!
+    hpMidsHighsB.connect(stereoSumBus); // Direct true stereo path for high/mids!
 
     // 4. Stereo Spatialize MS Width Network (widen high/mids post mono sub)
     const msSplitter = ctx.createChannelSplitter(2);
@@ -257,8 +302,8 @@ export class AudioEngine {
     mudEQ.connect(harshEQ);
     
     // Split to crossover
-    harshEQ.connect(lpSub);
-    harshEQ.connect(hpMidsHighs);
+    harshEQ.connect(lpSubA);
+    harshEQ.connect(hpMidsHighsA);
     
     // 7. Sub-Audible DC Offset Removal Filter (12Hz 2-pole High-Pass)
     const dcOffsetKiller = ctx.createBiquadFilter();
@@ -348,25 +393,39 @@ export class AudioEngine {
   }
 
   /**
+   * Apply master-dynamics settings onto an arbitrary limiter + makeup pair.
+   * Shared by the live path and the offline export so what you audition matches
+   * what you bounce. setTargetAtTime keeps knob drags click-free (zipper).
+   */
+  private applyLimiterConfig(
+    limiter: DynamicsCompressorNode,
+    makeup: GainNode,
+    t: number,
+    settings: import('../store/masterDynamicsStore').MasterDynamicsSettings
+  ): void {
+    const safe = (v: number, fallback: number) => (Number.isFinite(v) ? v : fallback);
+    const tau = 0.03;
+    if (settings.enabled) {
+      limiter.threshold.setTargetAtTime(safe(settings.thresholdDb, -0.5), t, tau);
+      limiter.ratio.setTargetAtTime(Math.max(1, safe(settings.ratio, 20)), t, tau);
+      limiter.attack.setTargetAtTime(Math.max(0.0005, safe(settings.attackSec, 0.002)), t, tau);
+      limiter.release.setTargetAtTime(Math.max(0.001, safe(settings.releaseSec, 0.1)), t, tau);
+    } else {
+      // Bypass: unity ratio + 0 dB threshold = transparent.
+      limiter.threshold.setTargetAtTime(0, t, tau);
+      limiter.ratio.setTargetAtTime(1, t, tau);
+    }
+    makeup.gain.setTargetAtTime(Math.pow(10, safe(settings.makeupDb, 0) / 20), t, tau);
+  }
+
+  /**
    * Phase 3.5 — apply the master compressor/limiter settings from the
    * master-dynamics store onto the live master limiter + makeup gain.
    * Safe to call at any time (no-op before the constructor wires the nodes).
    */
   applyMasterDynamics(settings: import('../store/masterDynamicsStore').MasterDynamicsSettings): void {
     if (!this.masterLimiter || !this.masterMakeupGain) return;
-    const t = this.context.currentTime;
-    const safe = (v: number, fallback: number) => (Number.isFinite(v) ? v : fallback);
-    if (settings.enabled) {
-      this.masterLimiter.threshold.setValueAtTime(safe(settings.thresholdDb, -0.5), t);
-      this.masterLimiter.ratio.setValueAtTime(Math.max(1, safe(settings.ratio, 20)), t);
-      this.masterLimiter.attack.setValueAtTime(Math.max(0.0005, safe(settings.attackSec, 0.002)), t);
-      this.masterLimiter.release.setValueAtTime(Math.max(0.001, safe(settings.releaseSec, 0.1)), t);
-    } else {
-      // Bypass: unity ratio + 0 dB threshold = transparent.
-      this.masterLimiter.threshold.setValueAtTime(0, t);
-      this.masterLimiter.ratio.setValueAtTime(1, t);
-    }
-    this.masterMakeupGain.gain.setValueAtTime(Math.pow(10, safe(settings.makeupDb, 0) / 20), t);
+    this.applyLimiterConfig(this.masterLimiter, this.masterMakeupGain, this.context.currentTime, settings);
   }
 
   /**
@@ -843,11 +902,12 @@ export class AudioEngine {
       this.restoreTimer = null;
     }
     const now = this.context.currentTime;
-    // Fast 8ms anti-click fade out on master gain before stopping active sources
+    // Fast anti-click fade out on master gain before stopping active sources.
+    // setTargetAtTime gives an exponential (click-free) fade instead of the
+    // slope-discontinuity a linear ramp to 0 produces.
     try {
       this.masterGain.gain.cancelScheduledValues(now);
-      this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
-      this.masterGain.gain.linearRampToValueAtTime(0, now + 0.008);
+      this.masterGain.gain.setTargetAtTime(0, now, 0.02);
     } catch (e) {}
 
     const sourcesToStop = [...this.activeSources];
@@ -864,8 +924,9 @@ export class AudioEngine {
         }
       }
       try {
+        // Exponential restore (no hard setValueAtTime jump back to 1.0).
         this.masterGain.gain.cancelScheduledValues(this.context.currentTime);
-        this.masterGain.gain.setValueAtTime(1.0, this.context.currentTime);
+        this.masterGain.gain.setTargetAtTime(1.0, this.context.currentTime, 0.02);
       } catch (e) {}
       this.restoreTimer = null;
     }, 12);
@@ -903,6 +964,29 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Track a helper source (LFO / noise / oscillator) in the live graph and give
+   * it a scheduled stop. Helper sources have no natural end, so without a
+   * `.stop()` they keep running on the audio thread (silent but consuming CPU,
+   * or audibly droning for continuous HSF/TIL/noise sources) after the layer
+   * finishes. Registers the standard `onended` self-removal from
+   * `activeSources` so the array doesn't grow across triggers.
+   */
+  private trackHelper(ctx: BaseAudioContext, node: AudioScheduledSourceNode, stopTime: number): void {
+    if (ctx === this.context) {
+      this.activeSources.push(node);
+      node.onended = () => {
+        const index = this.activeSources.indexOf(node);
+        if (index > -1) this.activeSources.splice(index, 1);
+      };
+    }
+    try {
+      node.stop(stopTime);
+    } catch {
+      // node not started yet / already stopping — ignore
+    }
+  }
+
   async playLayer(layer: SoundLayer, duration?: number) {
     this.stop();
     if (!layer.enabled) return;
@@ -911,7 +995,7 @@ export class AudioEngine {
     const now = this.context.currentTime;
     this.playbackStartTime = now;
 
-    const env = layer.envelope;
+    const env = layer.envelope || DEFAULT_ENVELOPE;
     let playDur = duration || 2;
     if (layer.type === 'sample' && layer.audioBuffer) {
       const bufferDur = layer.audioBuffer.duration;
@@ -927,7 +1011,15 @@ export class AudioEngine {
     this.currentDuration = totalDur;
     this.isPlaying = true;
 
-    await this.playLayerInstance(layer, now, playDur);
+    try {
+      await this.playLayerInstance(layer, now, playDur);
+    } catch (err) {
+      // A chain failure must not leave the transport stuck "playing" nor
+      // surface as an unhandled rejection at every fire-and-forget call site.
+      console.warn('Layer play failed:', err);
+      this.isPlaying = false;
+      return;
+    }
 
     if (this.loopEnabled) {
       this.loopTimer = setTimeout(() => {
@@ -936,7 +1028,9 @@ export class AudioEngine {
     } else {
       this.loopTimer = setTimeout(() => {
         if (this.context.currentTime >= this.playbackStartTime + this.currentDuration) {
-          this.isPlaying = false;
+          // Physical teardown, not just a flag: stops all tracked sources
+          // (including continuous HSF/TIL helpers) with the anti-click fade.
+          this.stop();
         }
       }, (this.currentDuration + 0.1) * 1000);
     }
@@ -955,7 +1049,6 @@ export class AudioEngine {
     if (!layer || !layer.enabled || layer.muted === true) return;
     this.resume();
     const now = this.context.currentTime;
-    const env = layer.envelope || DEFAULT_ENVELOPE;
     let playDur = duration || 1.5;
     if (layer.type === 'sample' && layer.audioBuffer) {
       const bufferDur = layer.audioBuffer.duration;
@@ -968,10 +1061,21 @@ export class AudioEngine {
     if (chokeKey) {
       const group = this.chokeGroups.get(chokeKey);
       if (group) {
-        group.forEach((n) => {
+        group.forEach((entry) => {
           try {
-            if (typeof (n as any).stop === 'function') (n as any).stop();
-            n.disconnect();
+            const t = this.context.currentTime;
+            // Fade the hit's gain down before stopping, so choking an open
+            // hi-hat doesn't hard-cut the waveform mid-cycle (click).
+            if (entry.gain) {
+              entry.gain.gain.cancelScheduledValues(t);
+              entry.gain.gain.setValueAtTime(entry.gain.gain.value, t);
+              entry.gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.008);
+            }
+            try {
+              entry.source.stop(t + 0.012);
+            } catch {
+              // source not started / already stopping — ignore
+            }
           } catch { /* ignore */ }
         });
         group.clear();
@@ -981,13 +1085,29 @@ export class AudioEngine {
     // extra nodes (LFOs, aux oscillators, noise sources) into `activeSources`
     // that never self-remove, so we must release them when this trigger ends —
     // otherwise every pad hit / step leaks entries into `activeSources`.
+    // createNodeChain builds synchronously (no internal await), so capturing the
+    // node list immediately after playLayerInstance() returns — BEFORE any
+    // concurrent trigger can append — gives us exactly THIS trigger's nodes.
     const preCount = this.activeSources.length;
-    this.playLayerInstance(layer, now, playDur).then((source) => {
-      const newNodes = this.activeSources.slice(preCount);
+    const playPromise = this.playLayerInstance(layer, now, playDur);
+    const newNodes = this.activeSources.slice(preCount);
+
+    playPromise.then(({ source, gainNode }) => {
       const release = () => {
         for (const n of newNodes) {
           const idx = this.activeSources.indexOf(n);
           if (idx >= 0) this.activeSources.splice(idx, 1);
+          // Stop any helper sources this trigger created (LFOs, chorus/auto-pan/
+          // drift modulators, HSF noise/oscillator generators). They now also
+          // carry a scheduled .stop() of their own; this just silences them
+          // immediately on choke/end so nothing outlives the trigger.
+          try {
+            if (n && typeof (n as { stop?: () => void }).stop === 'function') {
+              (n as { stop: () => void }).stop();
+            }
+          } catch {
+            // node already stopped / never started — ignore
+          }
         }
         source?.removeEventListener('ended', release);
       };
@@ -999,12 +1119,17 @@ export class AudioEngine {
             group = new Set();
             this.chokeGroups.set(chokeKey, group);
           }
-          group.add(source);
+          const entry = { source, gain: gainNode };
+          group.add(entry);
           // Use addEventListener so we don't clobber createNodeChain's own
           // onended cleanup of `activeSources`.
           const onEnded = () => {
-            group?.delete(source);
-            if (group && group.size === 0) this.chokeGroups.delete(chokeKey);
+            group?.delete(entry);
+            // Only remove the map entry if this group still belongs to the key
+            // (a newer trigger may have replaced the entry while this one ended).
+            if (this.chokeGroups.get(chokeKey) === group && group.size === 0) {
+              this.chokeGroups.delete(chokeKey);
+            }
           };
           source.addEventListener('ended', onEnded);
         }
@@ -1027,7 +1152,7 @@ export class AudioEngine {
     const audibleLayers = layers.filter(layer => isLayerAudibleInMix(layer, layers));
 
     for (const layer of audibleLayers) {
-      const env = layer.envelope;
+      const env = layer.envelope || DEFAULT_ENVELOPE;
       let playDur = 2;
       if (layer.type === 'sample' && layer.audioBuffer) {
         const bufferDur = layer.audioBuffer.duration;
@@ -1058,7 +1183,8 @@ export class AudioEngine {
       }, maxDur * 1000);
     } else {
       this.loopTimer = setTimeout(() => {
-        this.isPlaying = false;
+        // Physical teardown (stops all tracked sources incl. helpers).
+        this.stop();
       }, (maxDur + 0.1) * 1000);
     }
   }
@@ -1091,7 +1217,7 @@ export class AudioEngine {
     const masterIn = this.masterRackInput ?? ctx.destination;
     const buses = useMixerStore.getState().buses;
 
-    const buildReverbBus = (busId: string) => {
+    const buildReverbBus = (_busId: string) => {
       const input = ctx.createGain();
       const returnGain = ctx.createGain();
       const pan = ctx.createStereoPanner();
@@ -1104,7 +1230,7 @@ export class AudioEngine {
       return { input, returnGain, pan };
     };
 
-    const buildDelayBus = (busId: string) => {
+    const buildDelayBus = (_busId: string) => {
       const input = ctx.createGain();
       const returnGain = ctx.createGain();
       const pan = ctx.createStereoPanner();
@@ -1197,17 +1323,22 @@ export class AudioEngine {
     }
   }
 
-  private async playLayerInstance(layer: SoundLayer, baseStartTime: number, playDur: number): Promise<AudioScheduledSourceNode | null> {
+  private async playLayerInstance(
+    layer: SoundLayer,
+    baseStartTime: number,
+    playDur: number
+  ): Promise<{ source: AudioScheduledSourceNode | null; gainNode: AudioNode & { gain: AudioParam } }> {
     const triggerTime = baseStartTime + (layer.startTimeOffset ?? 0);
     const env = layer.envelope || DEFAULT_ENVELOPE;
     const safeRelease = Math.max(0.005, env.release ?? 0.1);
     
-    const { source } = await this.createNodeChain(this.context, layer, baseStartTime, this.masterGain);
+    const chain = await this.createNodeChain(this.context, layer, baseStartTime, this.masterGain);
+    const { source } = chain;
     let startOffset = 0;
     if (layer.type === 'sample' && layer.audioBuffer) {
       startOffset = (layer.playStartPct ?? 0) * layer.audioBuffer.duration;
     }
-
+    
     if (source instanceof AudioBufferSourceNode) {
       // Do not pass 3rd duration arg so source plays cleanly through release phase without truncation clicks
       source.start(triggerTime, startOffset);
@@ -1216,7 +1347,7 @@ export class AudioEngine {
       source.start(triggerTime);
       source.stop(triggerTime + playDur + safeRelease + 0.005);
     }
-    return source;
+    return { source, gainNode: chain.gainNode as AudioNode & { gain: AudioParam } };
   }
 
   async exportWav(layers: SoundLayer[], duration: number = 2): Promise<AudioBuffer> {
@@ -1253,7 +1384,10 @@ export class AudioEngine {
       }
       rackOut = cursor;
     }
-    this.createMasterFXChain(offlineCtx, rackOut, offlineCtx.destination);
+    const masterChain = this.createMasterFXChain(offlineCtx, rackOut, offlineCtx.destination);
+    // Match the live audition: the fixed chain uses hardcoded limiter defaults
+    // otherwise, so exports would ignore the user's master-dynamics settings.
+    this.applyLimiterConfig(masterChain.limiter, masterChain.makeupGain, 0, useMasterDynamicsStore.getState().settings);
 
     for (const layer of layers) {
       if (!isLayerAudibleInMix(layer, layers)) continue;
@@ -1282,16 +1416,18 @@ export class AudioEngine {
 
     const rendered = await offlineCtx.startRendering();
     
-    // Apply 5ms anti-click micro fades at the extreme ends of exported WAV
+    // Apply 5ms anti-click micro fades at the extreme ends of exported WAV.
+    // Equal-power cosine curves (linear ramps have a slope discontinuity and
+    // can still click on sub-200Hz material — a 5ms window is under one cycle).
     const fadeLen = Math.floor(0.005 * rendered.sampleRate);
     for (let c = 0; c < rendered.numberOfChannels; c++) {
       const data = rendered.getChannelData(c);
       for (let i = 0; i < Math.min(fadeLen, data.length); i++) {
-        data[i] *= (i / fadeLen);
+        data[i] *= Math.sin((i / fadeLen) * (Math.PI / 2));
       }
       for (let i = 0; i < Math.min(fadeLen, data.length); i++) {
         const idx = data.length - 1 - i;
-        data[idx] *= (i / fadeLen);
+        data[idx] *= Math.cos((i / fadeLen) * (Math.PI / 2));
       }
     }
     
@@ -1366,16 +1502,17 @@ export class AudioEngine {
 
     const rendered = await offlineCtx.startRendering();
 
-    // Anti-click micro fades at both ends (mirrors exportWav).
+    // Anti-click micro fades at both ends (mirrors exportWav). Equal-power
+    // cosine curves instead of linear ramps (see exportWav note).
     const fadeLen = Math.floor(0.005 * rendered.sampleRate);
     for (let c = 0; c < rendered.numberOfChannels; c++) {
       const data = rendered.getChannelData(c);
       for (let i = 0; i < Math.min(fadeLen, data.length); i++) {
-        data[i] *= i / fadeLen;
+        data[i] *= Math.sin((i / fadeLen) * (Math.PI / 2));
       }
       for (let i = 0; i < Math.min(fadeLen, data.length); i++) {
         const idx = data.length - 1 - i;
-        data[idx] *= i / fadeLen;
+        data[idx] *= Math.cos((i / fadeLen) * (Math.PI / 2));
       }
     }
 
@@ -1417,6 +1554,7 @@ export class AudioEngine {
     const panNode = ctx.createStereoPanner();
     const filter = ctx.createBiquadFilter();
     const dist = ctx.createWaveShaper();
+    dist.oversample = '4x'; // 4x oversample kills alias fold-back from the distortion curve
     const compressor = ctx.createDynamicsCompressor();
     const delay = ctx.createDelay();
     const feedback = ctx.createGain();
@@ -1455,7 +1593,7 @@ export class AudioEngine {
         }
       } else {
         // Silent buffer if no audio sample loaded yet
-        s.buffer = ctx.createBuffer(1, Math.floor(44100 * 0.1), 44100);
+        s.buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.1), ctx.sampleRate);
       }
 
       // Playback speed and transposition
@@ -1503,13 +1641,8 @@ export class AudioEngine {
 
       driftLfo1.start(layerStartTime);
       driftLfo2.start(layerStartTime);
-      driftLfo1.stop(lfoStopTime);
-      driftLfo2.stop(lfoStopTime);
-      
-      if (ctx === this.context) {
-        this.activeSources.push(driftLfo1);
-        this.activeSources.push(driftLfo2);
-      }
+      this.trackHelper(ctx, driftLfo1, lfoStopTime);
+      this.trackHelper(ctx, driftLfo2, lfoStopTime);
       
       source = s;
     } else {
@@ -1542,14 +1675,15 @@ export class AudioEngine {
 
     // Amplitude Envelope & FX/Synth fallbacks
     const env = layer.envelope || DEFAULT_ENVELOPE;
-    const fx = layer.fx || DEFAULT_FX;
-    const synth = layer.synth || DEFAULT_SYNTH;
 
     const safeAttack = Math.max(0.005, env.attack ?? 0.005);
     const safeDecay = Math.max(0.005, env.decay ?? 0.1);
     const safeRelease = Math.max(0.005, env.release ?? 0.1);
     const peakGain = Math.max(0, layer.gain);
     const sustainGain = Math.max(0, peakGain * (env.sustain ?? 0.8));
+    // Every helper source below (LFOs, noise, oscillators) is given this
+    // scheduled stop so none of them outlive the layer's sound.
+    const helperStopTime = layerStartTime + playDur + safeRelease + 0.05;
 
     gainNode.gain.cancelScheduledValues(layerStartTime);
     gainNode.gain.setValueAtTime(0, layerStartTime);
@@ -1561,18 +1695,36 @@ export class AudioEngine {
     if (playDur <= safeAttack) {
       const peakVal = peakGain * (playDur / safeAttack);
       gainNode.gain.linearRampToValueAtTime(peakVal, relStart);
-      gainNode.gain.linearRampToValueAtTime(0, relStart + safeRelease);
+      // Exponential release (musical decay). Linear ramps to 0 sound abrupt on
+      // tails; exponential is the perceptually-correct fade. Guards against
+      // ramping exponentially from an already-zero level (invalid in Web Audio).
+      if (peakVal > 0.0001) {
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, relStart + safeRelease);
+        gainNode.gain.setValueAtTime(0, relStart + safeRelease + 0.005);
+      } else {
+        gainNode.gain.linearRampToValueAtTime(0, relStart + safeRelease);
+      }
     } else if (playDur <= safeAttack + safeDecay) {
       const decayProgress = (playDur - safeAttack) / safeDecay;
       const midVal = peakGain - (peakGain - sustainGain) * decayProgress;
       gainNode.gain.linearRampToValueAtTime(peakGain, attackEnd);
       gainNode.gain.linearRampToValueAtTime(midVal, relStart);
-      gainNode.gain.linearRampToValueAtTime(0, relStart + safeRelease);
+      if (midVal > 0.0001) {
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, relStart + safeRelease);
+        gainNode.gain.setValueAtTime(0, relStart + safeRelease + 0.005);
+      } else {
+        gainNode.gain.linearRampToValueAtTime(0, relStart + safeRelease);
+      }
     } else {
       gainNode.gain.linearRampToValueAtTime(peakGain, attackEnd);
       gainNode.gain.linearRampToValueAtTime(sustainGain, decayEnd);
       gainNode.gain.setValueAtTime(sustainGain, relStart);
-      gainNode.gain.linearRampToValueAtTime(0, relStart + safeRelease);
+      if (sustainGain > 0.0001) {
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, relStart + safeRelease);
+        gainNode.gain.setValueAtTime(0, relStart + safeRelease + 0.005);
+      } else {
+        gainNode.gain.linearRampToValueAtTime(0, relStart + safeRelease);
+      }
     }
 
     // FX: Bitcrush & Distortion chaining
@@ -1616,6 +1768,7 @@ export class AudioEngine {
       exciterHighpass.frequency.setValueAtTime(3800, layerStartTime);
       
       const exciterShaper = ctx.createWaveShaper();
+      exciterShaper.oversample = '4x';
       exciterShaper.curve = this.makeDistortionCurve(0.45);
       
       const exciterEnv = ctx.createGain();
@@ -1660,12 +1813,14 @@ export class AudioEngine {
       
       // 2. Spectral foldback
       const spectralFold = ctx.createWaveShaper();
+      spectralFold.oversample = '2x';
       spectralFold.curve = this.makeSpectralFoldCurve(2 + Math.random() * 8);
       nodePipeline.connect(spectralFold);
       nodePipeline = spectralFold;
 
       // 3. Aliasing boost
       const aliasing = ctx.createWaveShaper();
+      aliasing.oversample = '2x';
       aliasing.curve = this.makeAliasingCurve(0.5 + Math.random() * 0.5);
       nodePipeline.connect(aliasing);
       nodePipeline = aliasing;
@@ -1684,7 +1839,7 @@ export class AudioEngine {
       nodePipeline = panner;
 
       probLFO.start(layerStartTime);
-      if (ctx === this.context) this.activeSources.push(probLFO);
+      this.trackHelper(ctx, probLFO, helperStopTime);
     }
 
     if (this.bypassFX) {
@@ -1699,6 +1854,7 @@ export class AudioEngine {
 
     if (layer.fx.bitcrush > 0 && layer.fx.bitcrushEnabled !== false) {
       const bitcrushNode = ctx.createWaveShaper();
+      bitcrushNode.oversample = '4x';
       bitcrushNode.curve = this.makeBitcrushCurve(layer.fx.bitcrush);
       nodePipeline.connect(bitcrushNode);
       nodePipeline = bitcrushNode;
@@ -1737,8 +1893,9 @@ export class AudioEngine {
       // Filter Drive (analog tube saturation curve) sandwiched between stages
       const driveVal = (layer.fx.filterDrive ?? 0) + (layer.macroGrit ?? 0) * 0.5;
       if (driveVal > 0) {
-        const driveShaper = ctx.createWaveShaper();
-        driveShaper.curve = this.makeDistortionCurve(driveVal * 0.25);
+      const driveShaper = ctx.createWaveShaper();
+      driveShaper.oversample = '4x';
+      driveShaper.curve = this.makeDistortionCurve(driveVal * 0.25);
         filter.connect(driveShaper);
         driveShaper.connect(filterStage2);
         nodePipeline = filterStage2;
@@ -1817,7 +1974,7 @@ export class AudioEngine {
     }
 
     // FX: Delay
-    if (layer.fx.tapeDelayPreset && layer.fx.delayEnabled !== false && (ctx instanceof AudioContext)) {
+    if (layer.fx.tapeDelayPreset && layer.fx.delayEnabled !== false && (ctx instanceof BaseAudioContext)) {
       const tapeDsp = new TapeDelayDSP(ctx as AudioContext);
       tapeDsp.applyPreset(layer.fx.tapeDelayPreset);
       nodePipeline.connect(tapeDsp.inputNode);
@@ -1868,7 +2025,7 @@ export class AudioEngine {
           spreadLFO.connect(spreadGain);
           spreadGain.connect(spreadPanner.pan);
           spreadLFO.start(layerStartTime);
-          if (ctx === this.context) this.activeSources.push(spreadLFO);
+          this.trackHelper(ctx, spreadLFO, helperStopTime);
           
           delay.connect(spreadPanner);
           spreadPanner.connect(panNode);
@@ -1884,7 +2041,6 @@ export class AudioEngine {
       
       // Upgrade: Multi-voice Chorus with Spread
       const voices = chorusSpread > 0 ? 3 : 1;
-      const chorusMerger = ctx.createChannelMerger(2);
       const wetGain = ctx.createGain();
       wetGain.gain.value = safeAudioValue(layer.fx.chorusMix / voices, 0.5);
 
@@ -1902,14 +2058,8 @@ export class AudioEngine {
         lfo.connect(lfoGain);
         lfoGain.connect(chorusDelay.delayTime);
 
-        if (ctx === this.context) {
-          this.activeSources.push(lfo);
-          lfo.onended = () => {
-            const index = this.activeSources.indexOf(lfo);
-            if (index > -1) this.activeSources.splice(index, 1);
-          };
-        }
         lfo.start(layerStartTime);
+        this.trackHelper(ctx, lfo, helperStopTime);
 
         nodePipeline.connect(chorusDelay);
         
@@ -1939,8 +2089,7 @@ export class AudioEngine {
       
       panNode.pan.setValueAtTime(layer.pan, layerStartTime);
       autoPanLFO.start(layerStartTime);
-      
-      if (ctx === this.context) this.activeSources.push(autoPanLFO);
+      this.trackHelper(ctx, autoPanLFO, helperStopTime);
     } else {
       panNode.pan.setValueAtTime(layer.pan, layerStartTime);
     }
@@ -2008,7 +2157,7 @@ export class AudioEngine {
           hsfSource = noiseFilter;
           
           noiseSrc.start(layerStartTime);
-          if (ctx === this.context) this.activeSources.push(noiseSrc);
+          this.trackHelper(ctx, noiseSrc, helperStopTime);
           break;
         }
         case 'additive': {
@@ -2036,10 +2185,8 @@ export class AudioEngine {
           
           additiveOsc1.start(layerStartTime);
           additiveOsc2.start(layerStartTime);
-          if (ctx === this.context) {
-            this.activeSources.push(additiveOsc1);
-            this.activeSources.push(additiveOsc2);
-          }
+          this.trackHelper(ctx, additiveOsc1, helperStopTime);
+          this.trackHelper(ctx, additiveOsc2, helperStopTime);
           break;
         }
         case 'fm': {
@@ -2060,10 +2207,8 @@ export class AudioEngine {
           hsfSource = fmCarrier;
           fmModulator.start(layerStartTime);
           fmCarrier.start(layerStartTime);
-          if (ctx === this.context) {
-            this.activeSources.push(fmModulator);
-            this.activeSources.push(fmCarrier);
-          }
+          this.trackHelper(ctx, fmModulator, helperStopTime);
+          this.trackHelper(ctx, fmCarrier, helperStopTime);
           break;
         }
         case 'resonator': {
@@ -2115,7 +2260,7 @@ export class AudioEngine {
           
           hsfSource = ksDelay;
           burstSrc.start(layerStartTime);
-          if (ctx === this.context) this.activeSources.push(burstSrc);
+          this.trackHelper(ctx, burstSrc, helperStopTime);
           break;
         }
         case 'granular': {
@@ -2137,10 +2282,8 @@ export class AudioEngine {
           hsfSource = granGain;
           granOsc.start(layerStartTime);
           granLfo.start(layerStartTime);
-          if (ctx === this.context) {
-            this.activeSources.push(granOsc);
-            this.activeSources.push(granLfo);
-          }
+          this.trackHelper(ctx, granOsc, helperStopTime);
+          this.trackHelper(ctx, granLfo, helperStopTime);
           break;
         }
       }
@@ -2166,18 +2309,8 @@ export class AudioEngine {
       const material = layer.fx.mrsMaterial || 'metal';
       const density = layer.fx.mrsDensity || 0.5;
       const chaos = layer.fx.mrsChaos || 0.5;
-      
-      const cacheKey = `${material}_${Math.round(density * 10)}`;
-      let swarmBuffer = this.swarmBuffers.get(cacheKey);
-      
-      // We will lazily create swarm buffers, but since we are in a synchronous-looking playback pipeline 
-      // for batching, wait... playLayer is synchronous, but batchAudioProcessor is async.
-      // We should ideally have swarm buffers pre-generated. 
-      // For now, if it's missing, we skip or use a tiny delay. But wait, createSwarmBuffer is async.
-      // Let's do a trick: we'll create a delay network if buffer isn't ready, but wait, playLayer doesn't await.
-      // Actually, we can use a network of comb filters to simulate the swarm directly if we can't await!
-      
-      // Let's build a real-time Micro-Resonator Swarm using 8-16 comb filters (delay nodes with feedback)
+
+      // Build a real-time Micro-Resonator Swarm using comb filters (delay nodes with feedback)
       const numResonators = 4 + Math.floor(density * 12); // 4 to 16 real-time resonators
       const resMix = ctx.createGain();
       resMix.gain.value = 1.0 / Math.sqrt(numResonators);
@@ -2204,7 +2337,7 @@ export class AudioEngine {
           driftLFO.connect(driftGain);
           driftGain.connect(resDelay.delayTime);
           driftLFO.start(layerStartTime);
-          if (ctx === this.context) this.activeSources.push(driftLFO);
+          this.trackHelper(ctx, driftLFO, helperStopTime);
         }
         
         resDelay.delayTime.value = 1.0 / freq;
@@ -2304,15 +2437,17 @@ export class AudioEngine {
       tilGain.connect(destination);
       
       texSrc.start(layerStartTime);
-      if (ctx === this.context) this.activeSources.push(texSrc);
+      this.trackHelper(ctx, texSrc, helperStopTime);
     }
 
     // --- SubLab Style 808 Designer Module ---
     if (layer.subDesign?.subEnabled) {
       const sub = layer.subDesign;
       const subOsc = ctx.createOscillator();
-      const subGain = ctx.createGain();
-      const subSaturation = ctx.createWaveShaper();
+const subGain = ctx.createGain();
+const subSaturation = ctx.createWaveShaper();
+subSaturation.oversample = '4x';
+
       
       // Pitch tracking logic
       let subFreq = 60; // Default C1-ish
@@ -2368,8 +2503,7 @@ export class AudioEngine {
         xSub.connect(xSubGain);
         xSubGain.connect(subGain);
         xSub.start(layerStartTime);
-        xSub.stop(layerStartTime + playDur + env.release);
-        if (ctx === this.context) this.activeSources.push(xSub);
+        this.trackHelper(ctx, xSub, layerStartTime + playDur + env.release);
       }
 
       // Harmonic Saturation
@@ -2386,86 +2520,105 @@ export class AudioEngine {
       const safeSubAttack = 0.008; // 8ms anti-click attack for sub 808 transients
       subGain.gain.setValueAtTime(0, layerStartTime);
       subGain.gain.linearRampToValueAtTime(sub.subLevel * driveGain, layerStartTime + safeSubAttack);
-      subGain.gain.linearRampToValueAtTime(0, layerStartTime + playDur + env.release);
+      const subReleaseLevel = sub.subLevel * driveGain;
+      if (subReleaseLevel > 0.0001) {
+        // Exponential release on the 808 body avoids the "thump" of a linear cut.
+        subGain.gain.exponentialRampToValueAtTime(0.0001, layerStartTime + playDur + env.release);
+        subGain.gain.setValueAtTime(0, layerStartTime + playDur + env.release + 0.005);
+      } else {
+        subGain.gain.linearRampToValueAtTime(0, layerStartTime + playDur + env.release);
+      }
 
       subOsc.start(layerStartTime);
-      subOsc.stop(layerStartTime + playDur + env.release);
       subOsc.connect(subGain);
-      
-      if (ctx === this.context) this.activeSources.push(subOsc);
+      this.trackHelper(ctx, subOsc, layerStartTime + playDur + env.release);
     }
 
     return { source, gainNode: compressor };
   }
 
   private makeBitcrushCurve(amount: number) {
-    const steps = Math.max(2, Math.floor(Math.pow(2, 16 * (1 - amount * 0.75))));
-    const n_samples = 44100;
-    const curve = new Float32Array(n_samples);
-    for (let i = 0; i < n_samples; ++i) {
-      const x = (i * 2) / n_samples - 1;
-      curve[i] = Math.round(x * steps) / steps;
-    }
-    return curve;
+    return cachedCurve(bitcrushCurveCache, `bc:${amount.toFixed(3)}`, () => {
+      const steps = Math.max(2, Math.floor(Math.pow(2, 16 * (1 - amount * 0.75))));
+      const n_samples = 44100;
+      const curve = new Float32Array(n_samples);
+      for (let i = 0; i < n_samples; ++i) {
+        const x = (i * 2) / n_samples - 1;
+        curve[i] = Math.round(x * steps) / steps;
+      }
+      return curve;
+    });
   }
 
   private makeSpectralFoldCurve(amount: number) {
-    const n_samples = 44100;
-    const curve = new Float32Array(n_samples);
-    for (let i = 0; i < n_samples; ++i) {
-      const x = (i * 2) / n_samples - 1;
-      curve[i] = Math.sin(x * Math.PI * amount);
-    }
-    return curve;
+    return cachedCurve(spectralFoldCurveCache, `sf:${amount.toFixed(2)}`, () => {
+      const n_samples = 44100;
+      const curve = new Float32Array(n_samples);
+      for (let i = 0; i < n_samples; ++i) {
+        const x = (i * 2) / n_samples - 1;
+        curve[i] = Math.sin(x * Math.PI * amount);
+      }
+      return curve;
+    });
   }
 
   private makeAliasingCurve(amount: number) {
-    const n_samples = 44100;
-    const curve = new Float32Array(n_samples);
-    for (let i = 0; i < n_samples; ++i) {
-      const x = (i * 2) / n_samples - 1;
-      const steps = 4 + Math.floor((1 - amount) * 20);
-      curve[i] = Math.floor(x * steps) / steps;
-    }
-    return curve;
+    return cachedCurve(aliasingCurveCache, `al:${amount.toFixed(3)}`, () => {
+      const n_samples = 44100;
+      const curve = new Float32Array(n_samples);
+      for (let i = 0; i < n_samples; ++i) {
+        const x = (i * 2) / n_samples - 1;
+        const steps = 4 + Math.floor((1 - amount) * 20);
+        curve[i] = Math.floor(x * steps) / steps;
+      }
+      return curve;
+    });
   }
 
   private makeDistortionCurve(amount: number, harmonic2nd: number = 0, harmonic3rd: number = 0, type: string = 'tube') {
-    const k = amount * 100;
-    const n_samples = 44100;
-    const curve = new Float32Array(n_samples);
-    const deg = Math.PI / 180;
-    
-    const h2 = harmonic2nd / 100;
-    const h3 = harmonic3rd / 100;
+    return cachedCurve(
+      distortionCurveCache,
+      `dist:${amount.toFixed(3)}:${harmonic2nd}:${harmonic3rd}:${type}`,
+      () => {
+        const n_samples = 44100;
+        const curve = new Float32Array(n_samples);
 
-    for (let i = 0; i < n_samples; ++i) {
-      let x = (i * 2) / n_samples - 1;
-      let out = x;
+        const h2 = harmonic2nd / 100;
+        const h3 = harmonic3rd / 100;
 
-      if (type === 'clip') {
-        const threshold = 1.0 - amount * 0.9;
-        if (x > threshold) out = threshold;
-        else if (x < -threshold) out = -threshold;
-        else out = x;
-        out *= (1 + amount * 3);
-      } else if (type === 'tape') {
-        const drive = amount * 4;
-        out = Math.atan(x * Math.PI * (1 + drive)) / Math.PI;
-      } else if (type === 'fuzz') {
-        const fuzz = amount * 20;
-        out = Math.sign(x) * (1 - Math.exp(-Math.abs(x) * fuzz));
-      } else {
-        // Tube (Default)
-        out = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+        for (let i = 0; i < n_samples; ++i) {
+          let x = (i * 2) / n_samples - 1;
+          let out = x;
+
+          if (type === 'clip') {
+            const threshold = 1.0 - amount * 0.9;
+            if (x > threshold) out = threshold;
+            else if (x < -threshold) out = -threshold;
+            else out = x;
+            out *= (1 + amount * 3);
+          } else if (type === 'tape') {
+            const drive = amount * 4;
+            out = Math.atan(x * Math.PI * (1 + drive)) / Math.PI;
+          } else if (type === 'fuzz') {
+            const fuzz = Math.min(8, amount * 20);
+            out = Math.sign(x) * (1 - Math.exp(-Math.abs(x) * fuzz));
+          } else {
+            // Tube (Default): normalized tanh saturation — reaches ±1 at full scale
+            // with a zero-crossing slope that grows with drive. The old arctan-style
+            // curve had a fixed ~0.35 output ceiling, so cranking "distortion" just
+            // shrank the level instead of adding harmonics.
+            const g = 1 + amount * 4;
+            out = Math.tanh(g * x) / Math.tanh(g);
+          }
+
+          if (h2 > 0) out += h2 * (x * x - 0.5);
+          if (h3 > 0) out += h3 * (x * x * x);
+
+          curve[i] = Math.max(-1, Math.min(1, Math.tanh(out)));
+        }
+        return curve;
       }
-      
-      if (h2 > 0) out += h2 * (x * x - 0.5);
-      if (h3 > 0) out += h3 * (x * x * x);
-      
-      curve[i] = Math.max(-1, Math.min(1, Math.tanh(out)));
-    }
-    return curve;
+    );
   }
 }
 

@@ -70,4 +70,54 @@ describe('sequencerStore — per-pattern programs', () => {
   it('exposes four banks', () => {
     expect(BANK_IDS).toEqual(['A', 'B', 'C', 'D']);
   });
+
+  it('setBankProgram replaces the flat program slots', () => {
+    useSequencerStore.getState().setBankProgram('B', ['kick', 'snare', '']);
+    const s = useSequencerStore.getState();
+    expect(s.programs.B[0]).toBe('kick');
+    expect(s.programs.B[1]).toBe('snare');
+    expect(s.programs.B[2]).toBe(null);
+  });
+
+  it('setActiveBank switches the active bank', () => {
+    useSequencerStore.getState().setActiveBank('D');
+    expect(useSequencerStore.getState().activeBank).toBe('D');
+  });
+
+  it('activatePatternPrograms is a no-op for an unknown pattern', () => {
+    useSequencerStore.getState().setPatternProgramSlot('A', 'A', 0, 'kick');
+    useSequencerStore.getState().activatePatternPrograms('does-not-exist');
+    expect(useSequencerStore.getState().programs.A[0]).toBe('kick');
+  });
+
+  it('prunePrograms flags a change when the flat view holds a stale slot', () => {
+    useSequencerStore.setState((s) => ({
+      programs: {
+        ...s.programs,
+        A: s.programs.A.map((x, i) => (i === 3 ? 'stale-layer' : x)),
+      },
+    }));
+    useSequencerStore.getState().prunePrograms(new Set());
+    expect(useSequencerStore.getState().programs.A[3]).toBe(null);
+  });
+
+  it('setPatternProgram writes a program and mirrors the active pattern', () => {
+    useSequencerStore.getState().setPatternProgram('A', 'A', ['k1', 'k2']);
+    const s = useSequencerStore.getState();
+    expect(s.patternPrograms.A.A[0]).toBe('k1');
+    expect(s.patternPrograms.A.A[1]).toBe('k2');
+    expect(s.programs.A[0]).toBe('k1');
+  });
+
+  it('setPatternProgram does not mirror non-active patterns', () => {
+    useSequencerStore.getState().setPatternProgram('C', 'B', ['snare']);
+    expect(useSequencerStore.getState().patternPrograms.C.B[0]).toBe('snare');
+    expect(useSequencerStore.getState().programs.B[0]).toBe(null);
+  });
+
+  it('setPatternProgramsAll replaces the whole pattern map', () => {
+    const map = useSequencerStore.getState().patternPrograms;
+    useSequencerStore.getState().setPatternProgramsAll(map);
+    expect(useSequencerStore.getState().patternPrograms).toBe(map);
+  });
 });

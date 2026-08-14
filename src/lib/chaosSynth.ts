@@ -8,9 +8,8 @@ import {
   generateAnalogOscSample,
   ZDFLadderFilter,
   getVoiceAgeParameters,
-  WarmthEngineDSP,
 } from '../audio/dsp/AnalogEngineDSP';
-import { createFilterFamily, type FilterFamily } from '../audio/dsp/FilterFamily';
+import { createFilterFamily } from '../audio/dsp/FilterFamily';
 
 /**
  * Procedural Chaos Sound FX & Synthesis Engine.
@@ -162,7 +161,6 @@ export function generateChaosSynthBuffer(
   const familyFilter = family && family !== 'zdf' && family !== 'custom'
     ? createFilterFamily(family)
     : null;
-  const warmthEngine = new WarmthEngineDSP();
 
   // Sound Designer Parameters
   const uniWidth = settings.unisonWidth ?? 0.7;
@@ -455,21 +453,14 @@ export function generateChaosSynthBuffer(
       const subPhaseAlignRad = (subPhaseAlign * Math.PI) / 180;
       const subPhase = phase * 0.5 + subPhaseAlignRad;
       const subType = settings.subType || 'sine';
-      
-      let subWave = 0;
-      if (subType === 'sine') {
-        subWave = Math.sin(subPhase);
-      } else if (subType === 'triangle') {
-        const normSub = (((subPhase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI);
-        subWave = Math.abs(normSub - 0.5) * 4.0 - 1.0;
-      } else if (subType === 'square') {
-        const normSub = (((subPhase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI);
-        subWave = normSub < 0.5 ? 1.0 : -1.0;
-      } else if (subType === 'sawtooth') {
-        const normSub = (((subPhase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI);
-        subWave = normSub * 2.0 - 1.0;
-      }
-      
+
+      // Band-limited sub via the same polyBLEP generator as the main oscillator.
+      // The old naive square/saw/triangle (straight phase math) aliased harshly
+      // at high notes — mixed up to 50% subLevel, that buzz sat on every patch.
+      const normSub = (((subPhase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI);
+      const subFreq = driftedFreq * 0.5;
+      const subWave = generateAnalogOscSample(normSub, subFreq / sampleRate, subType, 0.5);
+
       rawWave = rawWave * (1 - settings.subLevel * 0.5) + subWave * settings.subLevel * 0.5;
     }
 
@@ -633,7 +624,10 @@ export function generateChaosSynthBuffer(
     }
     
     if (bitcrushDepth > 0) {
-      const steps = Math.pow(2, 16 - bitcrushDepth * 14);
+      // Clamp steps to >= 2: for bitcrushDepth much above ~1, 2^(16-14*depth)
+      // underflows to 0 and Math.round(x*0)/0 is NaN (silently corrupting the
+      // whole buffer). A floor of 2 keeps it a valid (extreme) quantizer.
+      const steps = Math.max(2, Math.pow(2, 16 - bitcrushDepth * 14));
       outputSample = Math.round(outputSample * steps) / steps;
     }
 

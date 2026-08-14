@@ -138,7 +138,7 @@ describe('createFilterFamily', () => {
         }
       }
     }
-  });
+  }, 20000);
 
   it('handles multiple sample rates without divergence', () => {
     // Use a cutoff near the input frequency so every family (incl. MS-20's

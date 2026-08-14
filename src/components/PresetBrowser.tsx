@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { presets } from '../presets';
 import { useRackStore } from '../store/rackStore';
 import { saveProject, fetchUserProjects } from '../lib/db';
-import { Bookmark, Save, Trash2, FolderOpen, Cloud, Star, Search } from 'lucide-react';
+import { Bookmark, Save, Trash2, FolderOpen, Star, Search } from 'lucide-react';
 
 export const PresetBrowser: React.FC = () => {
   const { modules, setModules } = useRackStore();

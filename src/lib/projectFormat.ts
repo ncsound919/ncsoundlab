@@ -17,12 +17,6 @@ import type {
   Pattern,
   PatternCell,
   RackModule,
-  SubDesignSettings,
-  SynthSettings,
-  FXSettings,
-  FXPreset,
-  SoundKitSample,
-  BatchProcessOptions,
 } from '../types';
 import type { BankId, Program } from '../store/sequencerStore';
 import type { PatternId } from '../store/patternStore';

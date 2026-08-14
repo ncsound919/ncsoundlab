@@ -11,6 +11,8 @@
     "clean": "node -e \"const fs=require('fs');for(const p of ['dist']){try{fs.rmSync(p,{recursive:true,force:true});}catch{}}\"",
     "lint": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "coverage:check": "node scripts/check-new-code-coverage.mjs",
     "test:e2e": "playwright test",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

@@ -34,7 +34,11 @@ export interface StoredSampleLibrarySample {
   bpm?: number;
   gain: number;
   pitch: number;
-  sampleData: string;
+  /**
+   * Base64-encoded 16-bit PCM WAV. Optional so library LIST queries can omit
+   * the multi-MB payload; `decodeLibrarySample` re-fetches the full row by id.
+   */
+  sampleData?: string;
   sampleMeta: { sampleRate: number; channels: number; length: number };
   analysis?: StoredSampleAnalysis;
   sizeBytes?: number;

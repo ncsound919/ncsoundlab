@@ -78,7 +78,11 @@ export function normalizeBuffer(ctx: AudioContext, buffer: AudioBuffer, targetLe
 export function trimBuffer(ctx: AudioContext, buffer: AudioBuffer, startPct: number, endPct: number): AudioBuffer {
   const startFrame = Math.max(0, Math.floor(startPct * buffer.length));
   const endFrame = Math.min(buffer.length, Math.floor(endPct * buffer.length));
-  const newLength = Math.max(1, endFrame - startFrame);
+  // Normalize an inverted range (startPct > endPct) instead of producing a
+  // 1-sample silent buffer from an empty subarray.
+  const from = Math.min(startFrame, endFrame);
+  const to = Math.max(startFrame, endFrame);
+  const newLength = Math.max(1, to - from);
 
   const result = ctx.createBuffer(buffer.numberOfChannels, newLength, buffer.sampleRate);
 
@@ -88,16 +92,15 @@ export function trimBuffer(ctx: AudioContext, buffer: AudioBuffer, startPct: num
   for (let c = 0; c < buffer.numberOfChannels; c++) {
     const srcData = buffer.getChannelData(c);
     const destData = result.getChannelData(c);
-    destData.set(srcData.subarray(startFrame, endFrame));
+    destData.set(srcData.subarray(from, to));
 
-    // Anti-click attack micro-fade
+    // Anti-click attack/release micro-fades — equal-power cosine curves.
     for (let i = 0; i < attackFadeLength; i++) {
-      destData[i] *= (i / attackFadeLength);
+      destData[i] *= Math.sin((i / attackFadeLength) * (Math.PI / 2));
     }
-    // Anti-click release micro-fade
     for (let i = 0; i < releaseFadeLength; i++) {
       const idx = newLength - 1 - i;
-      destData[idx] *= (i / releaseFadeLength);
+      destData[idx] *= Math.cos((i / releaseFadeLength) * (Math.PI / 2));
     }
   }
 
@@ -105,7 +108,7 @@ export function trimBuffer(ctx: AudioContext, buffer: AudioBuffer, startPct: num
 }
 
 /**
- * Applies a linear Fade In to the beginning of the buffer.
+ * Applies an equal-power Fade In to the beginning of the buffer.
  * @param durationSec - Duration of the fade in seconds.
  */
 export function fadeInBuffer(ctx: AudioContext, buffer: AudioBuffer, durationSec: number): AudioBuffer {
@@ -117,7 +120,7 @@ export function fadeInBuffer(ctx: AudioContext, buffer: AudioBuffer, durationSec
   for (let c = 0; c < result.numberOfChannels; c++) {
     const data = result.getChannelData(c);
     for (let i = 0; i < fadeLength; i++) {
-      const gain = i / fadeLength;
+      const gain = Math.sin((i / fadeLength) * (Math.PI / 2));
       data[i] *= gain;
     }
   }
@@ -126,7 +129,7 @@ export function fadeInBuffer(ctx: AudioContext, buffer: AudioBuffer, durationSec
 }
 
 /**
- * Applies a linear Fade Out to the end of the buffer.
+ * Applies an equal-power Fade Out to the end of the buffer.
  * @param durationSec - Duration of the fade in seconds.
  */
 export function fadeOutBuffer(ctx: AudioContext, buffer: AudioBuffer, durationSec: number): AudioBuffer {
@@ -140,7 +143,7 @@ export function fadeOutBuffer(ctx: AudioContext, buffer: AudioBuffer, durationSe
   for (let c = 0; c < result.numberOfChannels; c++) {
     const data = result.getChannelData(c);
     for (let i = 0; i < fadeLength; i++) {
-      const gain = 1 - (i / fadeLength);
+      const gain = Math.cos((i / fadeLength) * (Math.PI / 2));
       data[startIdx + i] *= gain;
     }
   }
@@ -160,9 +163,13 @@ export function glitchBuffer(ctx: AudioContext, buffer: AudioBuffer, intensity: 
     const numGlitches = Math.floor(intensity * 12);
 
     for (let g = 0; g < numGlitches; g++) {
-      // Pick a random glitch start sample and duration (e.g. 10ms to 80ms)
+      // Pick a random glitch start sample and duration (e.g. 10ms to 80ms).
       const glitchDur = Math.floor((0.01 + Math.random() * 0.07) * buffer.sampleRate);
-      const startIdx = Math.floor(Math.random() * (totalSamples - glitchDur - 1));
+      // Clamp so the start index is always within bounds on very short buffers
+      // (otherwise the multiplier can be negative and glitches silently no-op).
+      const maxStart = Math.max(0, totalSamples - glitchDur - 1);
+      if (maxStart <= 0) break;
+      const startIdx = Math.floor(Math.random() * maxStart);
 
       const type = Math.random() > 0.5 ? 'silence' : 'noise';
 

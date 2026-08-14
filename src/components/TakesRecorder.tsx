@@ -14,19 +14,17 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Play, Square, SkipForward, Trash2, Check, Headphones, CircleDot } from 'lucide-react';
+import { Square, Trash2, Check, Headphones, CircleDot } from 'lucide-react';
 import { createAudioCapture } from '../audio/transport/audioCapture';
 import { audioEngine } from '../lib/audioEngine';
 import {
   planLoopRecording,
   commitTake,
   selectKeeper,
-  isInsidePunch,
   type Take,
   type PunchRegion,
 } from '../audio/transport/takesRecorder';
 import { createMetronome } from '../audio/transport/metronome';
-import { buildCountInBeats, isCountInActive } from '../audio/transport/countIn';
 
 interface TakesRecorderProps {
   bpm: number;
@@ -43,7 +41,6 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
   bpm,
   loopLengthSec,
   onAddLayer,
-  onAddSlicedLayers,
   onSlice,
   onToast,
 }) => {
@@ -62,6 +59,11 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
   const planRef = useRef(planLoopRecording({ loops: 3, loopLengthSec }));
   const auditionSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // Mirrors `isRecording` synchronously (the state value is stale inside the
+  // count-in `await`), so stop-during-count-in can actually cancel the pending
+  // capture instead of the timer silently starting the mic afterwards.
+  const recordingRef = useRef(false);
+  const cycleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Keep the plan in sync with controls.
   useEffect(() => {
@@ -72,6 +74,7 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
   useEffect(() => {
     return () => {
       timersRef.current.forEach(clearTimeout);
+      if (cycleTimerRef.current) clearInterval(cycleTimerRef.current);
       if (captureRef.current) captureRef.current.dispose();
       metronomeRef.current?.dispose();
       if (auditionSourceRef.current) {
@@ -98,7 +101,7 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
   };
 
   const startRecording = async () => {
-    if (isRecording) return;
+    if (isRecording || recordingRef.current) return;
     const ctx = audioEngine.getContext();
     if (!ctx) return;
     if (ctx.state === 'suspended') await ctx.resume();
@@ -107,6 +110,7 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
     setTakes([]);
     setCycle(0);
     setIsRecording(true);
+    recordingRef.current = true;
 
     // Count-in clicks.
     const beats = Math.max(0, countInBeats);
@@ -121,6 +125,10 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
       }
       // Wait for count-in, then start the mic.
       await new Promise<void>((res) => schedule(res, Math.max(0, countInSec * 1000)));
+      // The user may have pressed Stop during the count-in — don't start the
+      // mic for a recording nobody wants (previously the pending timer started
+      // it anyway, leaving an orphan MediaRecorder/stream running).
+      if (!recordingRef.current) return;
     }
 
     setPhase('recording');
@@ -128,6 +136,7 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
     try {
       await captureRef.current.start();
     } catch (e) {
+      recordingRef.current = false;
       onToast?.('Mic permission denied or unavailable', 'error');
       setIsRecording(false);
       setPhase('idle');
@@ -143,6 +152,20 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
       }
     }
 
+    // Track the current loop cycle for the UI (it never advanced before — the
+    // display was permanently "cycle 1/N"). Computed from audio-clock time so
+    // it tracks the actual capture position, not a JS timer.
+    const captureStart = ctx.currentTime;
+    cycleTimerRef.current = setInterval(() => {
+      if (!recordingRef.current) {
+        if (cycleTimerRef.current) { clearInterval(cycleTimerRef.current); cycleTimerRef.current = null; }
+        return;
+      }
+      const elapsed = ctx.currentTime - captureStart;
+      const c = Math.max(0, Math.min(planRef.current.loops - 1, Math.floor(elapsed / loopLengthSec)));
+      setCycle(c);
+    }, 250);
+
     // Loop the capture: for each cycle, stop+restart? MediaRecorder keeps one
     // blob per stop. Instead, we schedule cycle boundaries and split on stop.
     // For simplicity + testability we record one continuous blob and slice it
@@ -152,7 +175,9 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
   const stopRecording = async () => {
     if (!isRecording) return;
     setIsRecording(false);
+    recordingRef.current = false;
     setPhase('idle');
+    if (cycleTimerRef.current) { clearInterval(cycleTimerRef.current); cycleTimerRef.current = null; }
     const ctx = audioEngine.getContext();
     if (!ctx || !captureRef.current) {
       setTakes([]);

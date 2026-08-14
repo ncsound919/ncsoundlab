@@ -48,8 +48,39 @@ npm run preview      # serve ./dist locally
 ```bash
 npm run lint         # tsc --noEmit
 npm test             # vitest run (unit + component)
+npm run test:coverage # vitest run --coverage (unit + coverage report)
+npm run coverage:check # new-code coverage gate (>= 90% on added/modified code)
 npm run test:e2e     # playwright test
 ```
+
+### New-code coverage gate (90%)
+
+The app enforces **90% statement coverage on new code** — not the whole legacy
+app. `scripts/check-new-code-coverage.mjs` compares your diff against the
+coverage report:
+
+- **New files** must be ≥ 90% covered (whole file).
+- **Modified files** must have ≥ 90% of their *added* lines covered.
+- Import declarations and test files are excluded.
+
+```bash
+npm run test:coverage            # generate coverage/coverage-final.json first
+npm run coverage:check           # checks the current working tree vs HEAD
+COVERAGE_BASE=origin/main npm run coverage:check   # CI: check the PR diff
+```
+
+CI runs the gate on every push/PR (`origin/main...HEAD`). The overall app has a
+modest global floor (`vitest.config.ts` → `coverage.thresholds`) so the suite
+can't silently regress; the new-code gate is where the real requirement lives.
+
+> Note: `git diff` line numbers are used, so run the check from a clean-ish
+> tree (or against a base ref) for the most accurate signal. Untested
+> in-flight work shows up as `FAIL` until its tests land — that is the gate
+> working as intended. v8/istanbul source maps on this project misattribute a
+> handful of genuinely-executed lines (component `useState` hooks, module-level
+> `export const fn = …` arrows); the gate carries a small noise budget for that
+> (see `COVERAGE_NOISE_ALLOWANCE`), and new files still need an 80% floor
+> (`COVERAGE_NEW_MIN_PCT`).
 
 > **Note on `evolutionEngine.test.ts`:** this suite forks a Vitest worker that, on some Windows sessions with a constrained virtual-memory commit (small/disabled pagefile, Memory Integrity + Mandatory ASLR, Defender scanning, or a parent job object with a per-process commit cap), is denied its first semi-space `VirtualAlloc` and aborts with `Committing semi space failed`. That is an OS-level commit denial, not a V8/Vitest issue. Set `CONSTRAINED_ENV=1` in the shell that runs `npm test` to skip it on the affected machine; on a healthy dev box or CI, leave it unset.
 
@@ -117,6 +148,26 @@ vercel --prod
 ```
 
 Or connect the repo to Vercel and it auto-detects Vite (build command `npm run build`, output `dist`).
+
+### Demo gate & $5 one-time purchase
+
+The web build ships as a **free, timed 20-minute demo**. Flow:
+
+1. A first-time visitor gets a **welcome modal** explaining the free session.
+2. A **countdown pill** ticks in the header while they jam (20 minutes, wall-clock based — refreshing doesn't reset it).
+3. When time's up, a **paywall modal** prompts them to buy the full desktop app for a **one-time $5** — no accounts, no memberships.
+4. Purchasers can unlock the web demo on a browser via the "Already purchased?" link (honor-system; the real product is the offline desktop EXE). After checkout, the Windows installer is published at [GitHub Releases](https://github.com/ncsound919/ncsoundlab/releases).
+
+The desktop (Tauri) build is **not** gated — it's the full product.
+
+**Wire up Stripe** (one-time, no backend required):
+
+1. In your Stripe Dashboard, create a **Product** priced at **$5.00** (one-time).
+2. Create a **Payment Link** for it.
+3. Paste the full `https://buy.stripe.com/...` URL into `PURCHASE_URL` in `src/lib/demoConfig.ts`.
+4. Adjust the session length in `DEMO_SESSION_MS` (same file) if you want a different trial.
+
+> Note: `vibeserve_stripe_create_payment` (Stripe MCP) creates Payment *Intents*, which need a backend + publishable key — not suitable for this static, local-first app. A hosted Payment Link is the right fit.
 
 ### Static hosting (alternative)
 

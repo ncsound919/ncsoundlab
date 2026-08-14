@@ -8,18 +8,12 @@ import {
   Play, 
   Square, 
   Repeat, 
-  Volume2, 
   Sliders, 
-  Clock, 
-  Scissors, 
-  Activity,
-  ArrowRight,
   Maximize2,
   X
 } from 'lucide-react';
 import { SoundLayer } from '../types';
 import { Fader } from './Fader';
-import { Knob } from './Knob';
 import { ChannelStrip } from './ChannelStrip';
 import { SendsPanel } from './SendsPanel';
 import { LayerEQPanel } from './LayerEQPanel';
@@ -52,7 +46,6 @@ export function LayerMixer({
   selectedLayerId,
   onSelectLayer,
   onUpdateLayer,
-  onPlayLayer,
   onStop,
   onPlayAll,
   isPlaying,

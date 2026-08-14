@@ -57,7 +57,7 @@ export const buildStemFilename = (
   layerName: string,
   index: number,
   take: number,
-  options: StemExportOptions = {}
+  _options: StemExportOptions = {}
 ): string => {
   const name = sanitiseTrackName(layerName);
   const idx = String(index + 1).padStart(2, '0');

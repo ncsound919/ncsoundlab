@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { BatchProcessOptions, SoundKitSample, SampleCategory, StyleProfile, VariantProfile } from '../types';
 import { analyzeAudioBuffer, processAudioBuffer, generateVariants } from '../lib/batchAudioProcessor';
 import { audioEngine } from '../audio/AudioEngine';
@@ -14,7 +14,6 @@ import {
   CheckCircle2,
   Sliders,
   Layers,
-  Scissors,
   Sparkles,
   RefreshCw,
   AlertTriangle,
@@ -22,12 +21,6 @@ import {
   X,
   Play,
   Square,
-  CheckSquare,
-  Square as SquareOutline,
-  Filter,
-  ArrowRight,
-  Volume2,
-  VolumeX,
 } from 'lucide-react';
 
 interface WaveformProps {
@@ -213,7 +206,6 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
     highPassFreq: 20,
     lowPassFreq: 20000,
     fadeOutDurationSec: 0.05,
-    fadeInDurationSec: 0.0,
     reverbSpace: 0,
     bitcrushDepth: 0,
     stereoWidening: 100,
@@ -308,15 +300,24 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
       } catch (err: any) {
         console.error(`Failed decoding ${file.name}`, err);
         if (isMountedRef.current) {
-          setErrors((prev) => [...prev, `${file.name}: ${err.message || 'Decode failed'}`]);
+          setErrors((prev) => [...prev, `${file.name}: ${err && typeof err.message === 'string' ? err.message : 'Decode failed'}`]);
         }
       }
     }
 
     if (isMountedRef.current) {
       setStagedItems((prev) => {
-        const existingNames = new Set(prev.map((i) => i.file.name));
-        const freshUnique = newStaged.filter((i) => !existingNames.has(i.file.name));
+        // Dedupe on full relative path when available (so `Kick/kick.wav` and
+        // `Extra/kick.wav` from one folder-drop are distinct), falling back to
+        // the file name. Checks both the existing batch AND within this drop.
+        const existingKeys = new Set(prev.map((i) => i.file.webkitRelativePath || i.file.name));
+        const seen = new Set<string>();
+        const freshUnique = newStaged.filter((i) => {
+          const key = i.file.webkitRelativePath || i.file.name;
+          if (existingKeys.has(key) || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
         return [...prev, ...freshUnique];
       });
 
@@ -448,13 +449,14 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
     const selected = stagedItems.filter((i) => i.selected);
     if (selected.length === 0) return;
 
-    setIsCompiling(true);
     const audioCtx = audioEngine.getContext();
     if (!audioCtx) return;
 
     const compiledSamples: SoundKitSample[] = [];
 
-    for (const item of selected) {
+    try {
+      setIsCompiling(true);
+      for (const item of selected) {
       if (variantCount > 1) {
         // Generate multiple variants
         const profile = STYLE_PROFILES[activeProfile];
@@ -508,11 +510,18 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
     }
 
     onAddSamplesToKit(compiledSamples);
-    setIsCompiling(false);
 
     // Auto close modal on successful compilation
     if (onClose) {
       onClose();
+    }
+    } catch (err: any) {
+      setErrors((prev) => [
+        ...prev,
+        `Compile failed: ${err && typeof err.message === 'string' ? err.message : 'unknown error'}`,
+      ]);
+    } finally {
+      setIsCompiling(false);
     }
   };
 

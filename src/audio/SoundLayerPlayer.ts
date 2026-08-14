@@ -88,6 +88,15 @@ export class SoundLayerPlayer {
 
     const startTime = ctx.currentTime;
 
+    // A sample layer with no decoded buffer can't play — don't silently
+    // synthesize a tone for it (mirrors audioEngine.triggerLayer).
+    if (layer.type === 'sample' && !layer.audioBuffer) return;
+
+    // Defensive: a non-finite/negative/absurd duration would otherwise flow
+    // into createBuffer length (Infinity → RangeError), envelope ramps, and
+    // the source .stop() scheduling.
+    const safeDuration = Number.isFinite(duration) && duration > 0 ? Math.min(duration, 30) : 1;
+
     // Calculate custom gain override from setGain (dB to linear)
     const dbGain = this.getGain(layer.id);
     const customLinearGain = dbToGain(dbGain);
@@ -100,6 +109,7 @@ export class SoundLayerPlayer {
 
     // Create primary oscillator or sample source
     let sourceNode: AudioBufferSourceNode | OscillatorNode;
+    let startOffset = 0;
 
     const noteGainNode = ctx.createGain();
     const panNode = ctx.createStereoPanner();
@@ -116,6 +126,14 @@ export class SoundLayerPlayer {
       // Calculate playback rate from MIDI note transposition (note 60 = 1x speed)
       const semitonesFromMiddleC = (noteNumber - 60) + (layer.pitch || 0);
       s.playbackRate.value = safeAudioValue(Math.pow(2, semitonesFromMiddleC / 12), 1);
+      // Honor the layer's crop (playStartPct/playEndPct are 0..1 fractions) so
+      // MIDI/note playback matches the edited region instead of the whole file.
+      const startPct = Math.max(0, Math.min(1, layer.playStartPct ?? 0));
+      const endPct = Math.max(0, Math.min(1, layer.playEndPct ?? 1));
+      const bufferDur = layer.audioBuffer.duration;
+      if (endPct > startPct) {
+        startOffset = startPct * bufferDur;
+      }
       sourceNode = s;
     } else {
       const midiFrequency = 440 * Math.pow(2, (noteNumber - 69) / 12);
@@ -124,7 +142,7 @@ export class SoundLayerPlayer {
         ...synth,
         frequency: midiFrequency,
       };
-      const noteDur = Math.max(0.2, duration + (env.release || 0.1) + 0.1);
+      const noteDur = Math.max(0.2, safeDuration + (env.release || 0.1) + 0.1);
       const s = ctx.createBufferSource();
       s.buffer = generateChaosSynthBuffer(ctx, settings, noteDur);
       sourceNode = s;
@@ -140,25 +158,25 @@ export class SoundLayerPlayer {
     noteGainNode.gain.cancelScheduledValues(startTime);
     noteGainNode.gain.setValueAtTime(0, startTime);
 
-    const relStart = startTime + duration;
+    const relStart = startTime + safeDuration;
     const attackEnd = startTime + safeAttack;
     const decayEnd = attackEnd + safeDecay;
 
-    if (duration <= safeAttack) {
-      const peakVal = peakGain * (duration / safeAttack);
+    if (safeDuration <= safeAttack) {
+      const peakVal = peakGain * (safeDuration / safeAttack);
       noteGainNode.gain.linearRampToValueAtTime(peakVal, relStart);
-      noteGainNode.gain.linearRampToValueAtTime(0, relStart + safeRelease);
-    } else if (duration <= safeAttack + safeDecay) {
-      const decayProgress = (duration - safeAttack) / safeDecay;
+      this.releaseEnvelope(noteGainNode, peakVal, relStart, safeRelease);
+    } else if (safeDuration <= safeAttack + safeDecay) {
+      const decayProgress = (safeDuration - safeAttack) / safeDecay;
       const midVal = peakGain - (peakGain - sustainGain) * decayProgress;
       noteGainNode.gain.linearRampToValueAtTime(peakGain, attackEnd);
       noteGainNode.gain.linearRampToValueAtTime(midVal, relStart);
-      noteGainNode.gain.linearRampToValueAtTime(0, relStart + safeRelease);
+      this.releaseEnvelope(noteGainNode, midVal, relStart, safeRelease);
     } else {
       noteGainNode.gain.linearRampToValueAtTime(peakGain, attackEnd);
       noteGainNode.gain.linearRampToValueAtTime(sustainGain, decayEnd);
       noteGainNode.gain.setValueAtTime(sustainGain, relStart);
-      noteGainNode.gain.linearRampToValueAtTime(0, relStart + safeRelease);
+      this.releaseEnvelope(noteGainNode, sustainGain, relStart, safeRelease);
     }
 
     // Filter FX
@@ -186,8 +204,8 @@ export class SoundLayerPlayer {
     const nodeItem = { source: sourceNode, gainNode: noteGainNode };
     this.activeNodes.get(layer.id)!.push(nodeItem);
 
-    sourceNode.start(startTime);
-    sourceNode.stop(startTime + duration + safeRelease + 0.005);
+    sourceNode.start(startTime, startOffset || 0);
+    sourceNode.stop(startTime + safeDuration + safeRelease + 0.005);
 
     sourceNode.onended = () => {
       const active = this.activeNodes.get(layer.id);
@@ -201,24 +219,42 @@ export class SoundLayerPlayer {
   }
 
   /**
+   * Exponential (musical) release for a note's gain envelope. Linear ramps to 0
+   * sound abrupt on tails; exponential decay is the perceptually-correct fade.
+   * Guards against ramping exponentially from an already-zero level.
+   */
+  private releaseEnvelope(gainNode: GainNode, fromLevel: number, relStart: number, releaseSec: number): void {
+    if (fromLevel > 0.0001) {
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, relStart + releaseSec);
+      gainNode.gain.setValueAtTime(0, relStart + releaseSec + 0.005);
+    } else {
+      gainNode.gain.linearRampToValueAtTime(0, relStart + releaseSec);
+    }
+  }
+
+  /**
    * Stop all active note playback for a layer cleanly with anti-click fade
    */
   stop(layerId: string): void {
     const active = this.activeNodes.get(layerId);
     if (active) {
-      const now = sharedAudioEngine.getContext().currentTime;
+      const ctx = sharedAudioEngine.getContext();
+      if (!ctx) return;
+      const now = ctx.currentTime;
       active.forEach(({ source, gainNode }) => {
+        // Schedule the physical stop after the anti-click fade regardless of
+        // whether the gain ramp succeeds below.
+        setTimeout(() => {
+          try {
+            source.stop();
+          } catch (e) {}
+        }, 12);
         try {
           if (gainNode) {
             gainNode.gain.cancelScheduledValues(now);
             gainNode.gain.setValueAtTime(gainNode.gain.value, now);
             gainNode.gain.linearRampToValueAtTime(0, now + 0.008);
           }
-          setTimeout(() => {
-            try {
-              source.stop();
-            } catch (e) {}
-          }, 12);
         } catch (e) {
           try {
             source.stop();

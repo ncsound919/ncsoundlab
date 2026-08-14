@@ -89,7 +89,6 @@ describe('historyStore — basic commit/undo/redo', () => {
   });
 
   it('caps the past stack at the limit', () => {
-    const store = useHistoryStore;
     const limit = useHistoryStore.getState().limit;
     for (let i = 0; i < limit + 5; i++) {
       useHistoryStore.getState().commit(empty({ bpm: 100 + i }));

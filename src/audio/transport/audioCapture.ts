@@ -1,7 +1,7 @@
 export interface AudioCapture {
   isSupported(): boolean;
   start(): Promise<MediaStream>;
-  stop(_stream: MediaStream): Promise<Blob>;
+  stop(_stream?: MediaStream): Promise<Blob>;
   decodeBlobToBuffer(blob: Blob, ctx: BaseAudioContext): Promise<AudioBuffer>;
   dispose(): void;
 }

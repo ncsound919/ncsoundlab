@@ -7,6 +7,8 @@ describe('EvolutionPanel', () => {
   const mockVariations = [
     {
       id: 'var-1',
+      name: 'Mutant Generation 1',
+      role: 'lead',
       buffer: {} as any,
       chaosLevel: 0.5,
       spectralDensity: 0.5,

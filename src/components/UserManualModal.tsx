@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  X, BookOpen, Sparkles, Volume2, Layers, Zap, Sliders, Music, 
-  HelpCircle, ArrowRight, ShieldCheck, Flame, Radio, Play, CheckCircle2,
-  Package, Compass, Cpu, Activity, RotateCcw, Copy, Wand2, Image,
-  FolderPlus, Cloud, Hash, Download, Check, Search, Dna, Command,
-  Gauge, Waves, SlidersHorizontal, Terminal, Box, ChevronRight, Dices, Lock, Unlock
+  X, BookOpen, Sparkles, Layers, Zap, Sliders, 
+  ShieldCheck, Flame, Radio, Play,
+  Package, Compass, Cpu, Activity, RotateCcw, Wand2,
+  FolderPlus, Cloud, Download, Search, Dna, Command,
+  Dices, Lock
 } from 'lucide-react';
 
 interface UserManualModalProps {
@@ -27,6 +27,12 @@ type ChapterId =
   | 'mutant-evolution'
   | 'smart-randomizer'
   | 'producer-cookbook'
+  | 'beat-studio'
+  | 'console-mixer'
+  | 'sampling-recording'
+  | 'pro-tools-stems'
+  | 'projects-autosave'
+  | 'demo-purchase'
   | 'hotkey-reference';
 
 interface Chapter {
@@ -49,7 +55,13 @@ const CHAPTERS: Chapter[] = [
   { id: 'mutant-evolution', title: '10. Evolution Engine Stage 04', badge: 'CHAOS MUTATOR', icon: <Dna className="text-pink-400" size={18} /> },
   { id: 'smart-randomizer', title: '11. Smart Selective Randomizer', badge: 'SECTION LOCKS', icon: <Dices className="text-blue-400" size={18} /> },
   { id: 'producer-cookbook', title: '12. Producer Cookbook Recipes', badge: 'COOKBOOK & AUDIO', icon: <Flame className="text-rose-500" size={18} /> },
-  { id: 'hotkey-reference', title: '13. Keyboard Hotkey Index', badge: 'COMMANDS', icon: <Command className="text-blue-400" size={18} /> },
+  { id: 'beat-studio', title: '13. Beat Studio & Sequencer', badge: 'MPC PADS', icon: <Zap className="text-rose-400" size={18} /> },
+  { id: 'console-mixer', title: '14. Console Mixer & Sends', badge: 'MIX & BUSSES', icon: <Sliders className="text-indigo-400" size={18} /> },
+  { id: 'sampling-recording', title: '15. Sampling & Recording', badge: 'TAKES & CHOPS', icon: <Layers className="text-teal-400" size={18} /> },
+  { id: 'pro-tools-stems', title: '16. Stems, AAF & Pro Tools', badge: 'INTERCHANGE', icon: <Download className="text-sky-400" size={18} /> },
+  { id: 'projects-autosave', title: '17. Projects & Autosave', badge: 'SAVE / LOAD', icon: <FolderPlus className="text-amber-400" size={18} /> },
+  { id: 'demo-purchase', title: '18. Web Demo & Purchase', badge: 'GET THE APP', icon: <Cloud className="text-yellow-400" size={18} /> },
+  { id: 'hotkey-reference', title: '19. Keyboard Hotkey Index', badge: 'COMMANDS', icon: <Command className="text-blue-400" size={18} /> },
 ];
 
 function playDemoSound(type: string) {
@@ -209,6 +221,8 @@ export function UserManualModal({ isOpen, onClose }: UserManualModalProps) {
     { key: 'Dup', action: 'Duplicate Selected Layer with All Settings Intact' },
     { key: 'Del / Backspace', action: 'Delete Selected Sound Layer' },
     { key: 'Esc', action: 'Close Modal Windows & Clear Selection' },
+    { key: 'Arrow Left / Right', action: 'Navigate Between Workflow Stages' },
+    { key: '1–9', action: 'Jump to a Workflow Stage by Number' },
   ];
 
   const filteredHotkeys = HOTKEYS.filter(
@@ -235,7 +249,7 @@ export function UserManualModal({ isOpen, onClose }: UserManualModalProps) {
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-black tracking-tight text-white font-sans">COMPLETE STUDIO PRODUCER MANUAL</h2>
                   <span className="px-2.5 py-0.5 bg-blue-600/20 border border-blue-500/40 text-blue-300 font-mono text-[10px] font-bold rounded-full">
-                    12 DEEP SYSTEM CHAPTERS 🚀
+                    18 DEEP SYSTEM CHAPTERS 🚀
                   </span>
                 </div>
                 <p className="text-xs text-gray-400 font-mono">Master every single synth parameter, DSP routing, 3D spatial visualizer, Stage 04 Evolution Engine & kit creator!</p>
@@ -1001,7 +1015,290 @@ export function UserManualModal({ isOpen, onClose }: UserManualModalProps) {
                 </div>
               )}
 
-              {/* CHAPTER 12: HOTKEY REFERENCE */}
+              {/* CHAPTER 13: BEAT STUDIO & SEQUENCER */}
+              {activeChapter === 'beat-studio' && (
+                <div className="space-y-6">
+                  <div className="space-y-2 border-b border-[#1c1c26] pb-4">
+                    <div className="text-rose-400 text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-2">
+                      <Zap size={16} /> Stage 03: Beat Studio
+                    </div>
+                    <h2 className="text-xl font-extrabold text-white">Beat Studio & Sequencer — MPC Pads, Step Grid & Piano Roll</h2>
+                    <p className="text-xs text-gray-400">
+                      Build full beats: hit MPC pads live, program 16/32-step patterns per layer, and arrange them into a song chain.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-rose-400 font-mono flex items-center gap-1.5">
+                        <Zap size={14} /> MPC PAD BANK
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Four banks (A/B/C/D) × 16 pads map to your sound layers. Hit pads live with pointer or QWERTY keys — velocity scales with pointer Y position.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-sky-400 font-mono flex items-center gap-1.5">
+                        <Activity size={14} /> STEP SEQUENCER
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Program patterns per layer over 16 or 32 steps with per-step velocity and probability. Swing and groove templates add human feel.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-purple-400 font-mono flex items-center gap-1.5">
+                        <Layers size={14} /> SONG CHAIN
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Chain patterns A–D into an arrangement and let the transport drive the whole song with a master BPM.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#111116] border border-[#22222a] rounded-xl p-4 space-y-2">
+                    <h4 className="text-xs font-bold text-white font-mono">TRANSPORT & RECORDING</h4>
+                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                      Use the transport bar to play/stop, set BPM, quantize input, and record. The metronome, count-in and
+                      per-take recording capture your performance with real velocity. Keyboard shortcuts: Spacebar = play/stop,
+                      R = arm record.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* CHAPTER 14: CONSOLE MIXER & SENDS */}
+              {activeChapter === 'console-mixer' && (
+                <div className="space-y-6">
+                  <div className="space-y-2 border-b border-[#1c1c26] pb-4">
+                    <div className="text-indigo-400 text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-2">
+                      <Sliders size={16} /> Stage 04: Studio Console
+                    </div>
+                    <h2 className="text-xl font-extrabold text-white">Console Mixer & Sends — Faders, Channel Strips & Busses</h2>
+                    <p className="text-xs text-gray-400">
+                      Mix every layer on a full-screen console: faders, pan, mute/solo, per-channel EQ and dynamics, plus FX send busses.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-indigo-400 font-mono flex items-center gap-1.5">
+                        <Sliders size={14} /> CHANNEL STRIP
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Per-layer fader, pan, mute, solo and meter. Each strip carries its own EQ, compressor and FX chain routed into the mix.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-amber-400 font-mono flex items-center gap-1.5">
+                        <RotateCcw size={14} /> SEND / RETURN BUSSES
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Send any channel to shared reverb and delay return busses. Adjust send level per channel; the return sum feeds the master.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-rose-400 font-mono flex items-center gap-1.5">
+                        <Cpu size={14} /> MASTER DYNAMICS
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        The master console hosts a brickwall limiter and compressor so the final mix stays clean and loud without clipping.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#111116] border border-[#22222a] rounded-xl p-4">
+                    <h4 className="text-xs font-bold text-white font-mono mb-1">REAL METERS, NOT FAKES</h4>
+                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                      Every channel and the master show real peak/RMS metering from the Web Audio analysers — move a fader and watch the meter respond.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* CHAPTER 15: SAMPLING & RECORDING */}
+              {activeChapter === 'sampling-recording' && (
+                <div className="space-y-6">
+                  <div className="space-y-2 border-b border-[#1c1c26] pb-4">
+                    <div className="text-teal-400 text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-2">
+                      <Layers size={16} /> Sample & Record
+                    </div>
+                    <h2 className="text-xl font-extrabold text-white">Sampling & Recording — Library, Chop Editor, Takes & Waveform DSP</h2>
+                    <p className="text-xs text-gray-400">
+                      Import your own audio, organize it into a persistent sample library, chop loops, record takes with punch-in, and edit waveforms destructively.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-teal-400 font-mono flex items-center gap-1.5">
+                        <FolderPlus size={14} /> SAMPLE BROWSER & LIBRARY
+                      </div>
+                      <p className="text-xs text-gray-300 leading-relaxed">
+                        Drag-and-drop WAV/MP3/OGG/AIFF files, keep them in persistent folders with search and preview, and drop samples straight onto pads or layers.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-orange-400 font-mono flex items-center gap-1.5">
+                        <Zap size={14} /> CHOP EDITOR
+                      </div>
+                      <p className="text-xs text-gray-300 leading-relaxed">
+                        Auto-chop on transients (onset detection) or split evenly/tap to chop a loop into slices, then map each slice to its own pad with tuning.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-sky-400 font-mono flex items-center gap-1.5">
+                        <Radio size={14} /> TAKES RECORDER
+                      </div>
+                      <p className="text-xs text-gray-300 leading-relaxed">
+                        Record mic/instrument input with metronome + count-in, punch in/out on a loop, and keep multiple takes to comp the best one.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-emerald-400 font-mono flex items-center gap-1.5">
+                        <Activity size={14} /> WAVEFORM EDITOR
+                      </div>
+                      <p className="text-xs text-gray-300 leading-relaxed">
+                        Select a region of any sample and apply destructive DSP: trim, normalize, pitch-shift, saturate, bitcrush, reverb, stereo width and more.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* CHAPTER 16: STEMS, AAF & PRO TOOLS */}
+              {activeChapter === 'pro-tools-stems' && (
+                <div className="space-y-6">
+                  <div className="space-y-2 border-b border-[#1c1c26] pb-4">
+                    <div className="text-sky-400 text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-2">
+                      <Download size={16} /> Pro Interchange
+                    </div>
+                    <h2 className="text-xl font-extrabold text-white">Stems, AAF & Pro Tools — Round-Trip With Your DAW</h2>
+                    <p className="text-xs text-gray-400">
+                      Get your mix out into Pro Tools and back again: per-layer stems, a multi-track bundle, and a real SMPTE AAF file (desktop).
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-sky-400 font-mono flex items-center gap-1.5">
+                        <Download size={14} /> STEM EXPORT
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Render every audible layer as its own WAV stem at 16/24/32-bit and 44.1/48/96 kHz — with or without its send FX baked in.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-blue-400 font-mono flex items-center gap-1.5">
+                        <Package size={14} /> MULTI-TRACK BUNDLE
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Export a .zip with the master mixdown, one WAV per stem, a Pro Tools Markers.csv tempo map, and import instructions.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-purple-400 font-mono flex items-center gap-1.5">
+                        <Command size={14} /> AAF EXPORT / IMPORT
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Desktop app: write a real SMPTE ST 377-1 AAF (one track per stem, embedded PCM) and import AAFs back for A/B and tempo work.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#111116] border border-[#22222a] rounded-xl p-4">
+                    <h4 className="text-xs font-bold text-white font-mono mb-1">REFERENCE TRACKS & TEMPO DETECTION</h4>
+                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                      Drop a reference track into the Compare stage for A/B loudness matching (real EBU R128 / BS.1770-4 integrated LUFS via the Compare Engine),
+                      and auto-detect its BPM to snap your project tempo to match.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* CHAPTER 17: PROJECTS & AUTOSAVE */}
+              {activeChapter === 'projects-autosave' && (
+                <div className="space-y-6">
+                  <div className="space-y-2 border-b border-[#1c1c26] pb-4">
+                    <div className="text-amber-400 text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-2">
+                      <FolderPlus size={16} /> Persistence
+                    </div>
+                    <h2 className="text-xl font-extrabold text-white">Projects & Autosave — Save Everything, Lose Nothing</h2>
+                    <p className="text-xs text-gray-400">
+                      Full project round-trip: layers with their audio, patterns, pads, song chain and mixer state — saved locally and recoverable.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-amber-400 font-mono flex items-center gap-1.5">
+                        <FolderPlus size={14} /> SAVE / LOAD PROJECT
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Save the whole session to IndexedDB or export a self-contained .nsl project file (samples embedded), then reload it later with audio intact.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-emerald-400 font-mono flex items-center gap-1.5">
+                        <RotateCcw size={14} /> UNDO / REDO HISTORY
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        Ctrl/Cmd+Z undoes and Ctrl/Cmd+Y redoes across layers, patterns, pads, song chain and mixer — a real command history, not just layer edits.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-blue-400 font-mono flex items-center gap-1.5">
+                        <Cloud size={14} /> AUTOSAVE & RECOVERY
+                      </div>
+                      <p className="text-xs text-gray-300">
+                        The app autosaves your full project while you work. If a session is interrupted, a recovery banner offers to restore the latest version.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* CHAPTER 18: WEB DEMO & PURCHASE */}
+              {activeChapter === 'demo-purchase' && (
+                <div className="space-y-6">
+                  <div className="space-y-2 border-b border-[#1c1c26] pb-4">
+                    <div className="text-yellow-400 text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-2">
+                      <Cloud size={16} /> Try & Buy
+                    </div>
+                    <h2 className="text-xl font-extrabold text-white">Web Demo & Purchase — 20 Minutes, Then One-Time $5</h2>
+                    <p className="text-xs text-gray-400">
+                      The web build is a free, timed 20-minute demo. The desktop app (Windows) is the full product — one-time purchase, no subscriptions.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-yellow-400 font-mono flex items-center gap-1.5">
+                        <Play size={14} /> THE FREE DEMO
+                      </div>
+                      <p className="text-xs text-gray-300 leading-relaxed">
+                        A countdown pill tracks your 20-minute session (wall-clock based — refreshing doesn't reset it). When time's up, the paywall explains the full product.
+                      </p>
+                    </div>
+                    <div className="bg-[#121218] border border-[#22222e] rounded-xl p-4 space-y-2">
+                      <div className="text-xs font-bold text-blue-400 font-mono flex items-center gap-1.5">
+                        <Download size={14} /> FULL DESKTOP APP
+                      </div>
+                      <p className="text-xs text-gray-300 leading-relaxed">
+                        A one-time $5 unlocks the offline Windows app: no accounts, no cloud, no limits. Premium sound kits in the catalog are part of the paid product.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#111116] border border-[#22222a] rounded-xl p-4">
+                    <h4 className="text-xs font-bold text-white font-mono mb-1">DESKTOP EXTRAS</h4>
+                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                      The desktop build adds Pro Tools AAF export/import and runs fully offline. All your kits, projects and favorites persist locally in the app's own data folder.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* CHAPTER 19: HOTKEY REFERENCE */}
               {activeChapter === 'hotkey-reference' && (
                 <div className="space-y-6">
                   <div className="space-y-2 border-b border-[#1c1c26] pb-4">
@@ -1050,7 +1347,7 @@ export function UserManualModal({ isOpen, onClose }: UserManualModalProps) {
           <div className="bg-[#121218] border-t border-[#22222e] px-6 py-3 flex items-center justify-between shrink-0 font-mono text-xs text-gray-400">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-              <span>Interactive Manual Active — 12 System Chapters Loaded</span>
+              <span>Interactive Manual Active — 18 System Chapters Loaded</span>
             </div>
             <button 
               onClick={onClose}

@@ -32,15 +32,20 @@ describe('generateProgression', () => {
     expect(a).toEqual(b);
   });
 
-  it('produces in-key roots', () => {
-    const key = 'G';
-    const scale = [0, 2, 4, 5, 7, 9, 11];
-    const prog = generateProgression({ key, scaleType: 'major', bars: 8, mode: 'functional', seed: 3 });
-    const rootIdx = NOTE_NAMES_SHARP.indexOf(key);
-    for (const c of prog) {
-      const pc = NOTE_NAMES_SHARP.indexOf(c.root);
-      const inScale = scale.includes(((pc - rootIdx) % 12 + 12) % 12);
-      expect(inScale).toBe(true);
+  it('produces in-key roots (absolute scale pitch classes) for ANY key', () => {
+    // Regression: roots used to be computed as (keyOffset + scalePc), which
+    // double-counted the key offset and produced out-of-key roots for every
+    // key except C (e.g. C# major yielded E/D/G/B instead of C#/D#/E#/...).
+    const keys = ['C', 'C#', 'D', 'Eb', 'F', 'F#', 'G', 'Bb'];
+    for (const key of keys) {
+      const prog = generateProgression({ key, scaleType: 'major', bars: 8, mode: 'functional', seed: 3 });
+      const keyRootIdx = NOTE_NAMES_SHARP.indexOf(key);
+      const scalePcs = [0, 2, 4, 5, 7, 9, 11].map((i) => (keyRootIdx + i) % 12);
+      // First chord must actually be the tonic.
+      expect(prog[0].root).toBe(NOTE_NAMES_SHARP[keyRootIdx]);
+      for (const c of prog) {
+        expect(scalePcs).toContain(NOTE_NAMES_SHARP.indexOf(c.root));
+      }
     }
   });
 

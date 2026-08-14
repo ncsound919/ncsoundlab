@@ -1,4 +1,3 @@
-import * as Tone from 'tone';
 import { audioEngine } from '../../lib/audioEngine';
 import { createClickNodes } from './clickNodes';
 

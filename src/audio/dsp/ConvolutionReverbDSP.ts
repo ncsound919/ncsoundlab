@@ -238,7 +238,6 @@ export class ConvolutionReverbDSP {
   private tiltHigh: BiquadFilterNode;
 
   // Convolver / Multiband Splitter
-  private mode: 'fullband' | 'multiband' = 'fullband';
   private mainConvolver: ConvolverNode;
 
   // Multiband Crossover Nodes
@@ -391,7 +390,6 @@ export class ConvolutionReverbDSP {
 
     this.tiltHigh.connect(this.mainConvolver);
     this.mainConvolver.connect(this.dampingFilter);
-    this.mode = 'fullband';
   }
 
   private connectMultibandMode() {
@@ -412,8 +410,6 @@ export class ConvolutionReverbDSP {
     this.lowConvolver.connect(this.dampingFilter);
     this.midConvolver.connect(this.dampingFilter);
     this.highConvolver.connect(this.dampingFilter);
-
-    this.mode = 'multiband';
   }
 
   private setSaturationCurve(amount: number) {

@@ -57,7 +57,10 @@ export function detectOnsets(buffer: AudioBuffer, options: OnsetOptions = {}): O
   } = options;
 
   const sr = buffer.sampleRate;
-  const data = buffer.getChannelData(channel) ?? buffer.getChannelData(0);
+  // getChannelData throws IndexSizeError for out-of-range channels — it never
+  // returns undefined, so the `?? fallback` below would be dead. Clamp instead.
+  const safeChannel = Math.max(0, Math.min(buffer.numberOfChannels - 1, channel));
+  const data = buffer.getChannelData(safeChannel);
   const hop = frameSize / 2; // 50% overlap for a smooth flux curve
   const bins = frameSize / 2;
 
@@ -105,8 +108,11 @@ export function detectOnsets(buffer: AudioBuffer, options: OnsetOptions = {}): O
 
   if (hits.length === 0) return [];
 
-  // Normalize strength relative to peak flux.
-  const peakFlux = Math.max(...flux);
+  // Normalize strength relative to peak flux. Iterate instead of
+  // `Math.max(...flux)` — on long reference audio `flux` can exceed the
+  // engine's argument-count limit and throw "Maximum call stack size exceeded".
+  let peakFlux = 0;
+  for (const f of flux) if (f > peakFlux) peakFlux = f;
   for (const h of hits) {
     h.strength = peakFlux > 0 ? flux[h.sampleIndex / hop] / peakFlux : 0;
   }

@@ -180,7 +180,7 @@ export const clearGrooveOffsets = (pattern: Pattern): Pattern => {
 };
 
 export const applyGrooveToPatternId = (
-  patternId: PatternId,
+  _patternId: PatternId,
   templateId: string,
   setPattern: (p: Pattern) => void,
   layerIds?: string[]

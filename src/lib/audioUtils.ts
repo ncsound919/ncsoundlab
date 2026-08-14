@@ -96,15 +96,18 @@ export function audioBufferToWav(buffer: AudioBuffer, bitDepth: 16 | 24 | 32 = 3
       if (bitDepth === 32) {
         view.setFloat32(offset + index, sample, true);
       } else if (bitDepth === 24) {
-        // 24-bit PCM
+        // 24-bit PCM. TPDF dither (±1 LSB) decorrelates quantization noise so
+        // tails and fades don't get a grainy, breathing noise floor.
         sample = sample < 0 ? sample * 0x800000 : sample * 0x7FFFFF;
+        sample += Math.random() + Math.random() - 1; // triangular PDF, ±1 LSB
         const intSample = Math.round(sample);
         view.setUint8(offset + index, intSample & 0xFF);
         view.setUint8(offset + index + 1, (intSample >> 8) & 0xFF);
         view.setUint8(offset + index + 2, (intSample >> 16) & 0xFF);
       } else {
-        // 16-bit PCM
+        // 16-bit PCM (with TPDF dither).
         sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+        sample += Math.random() + Math.random() - 1; // triangular PDF, ±1 LSB
         view.setInt16(offset + index, Math.round(sample), true);
       }
       
@@ -251,7 +254,36 @@ export function synthesizeSampleBuffer(
 }
 
 /**
- * Ensures a numerical value is finite and safe for Web Audio API.
+ * Remove DC offset from an AudioBuffer by subtracting each channel's arithmetic
+ * mean. Returns a NEW buffer (the input is untouched). DC offset causes a
+ * "thump"/pop at sample start and on loop/release, skews peak analysis, and
+ * wastes headroom. Cheap (one pass per channel).
+ */
+export function removeDcOffset(buffer: AudioBuffer): AudioBuffer {
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const src = buffer.getChannelData(c);
+    const dest = new Float32Array(src.length);
+    let sum = 0;
+    for (let i = 0; i < src.length; i++) sum += src[i];
+    const mean = src.length > 0 ? sum / src.length : 0;
+    for (let i = 0; i < src.length; i++) dest[i] = src[i] - mean;
+    channels.push(dest);
+  }
+  // Build the output without relying on the `AudioBuffer` constructor (missing
+  // in jsdom / old Safari). A getChannelData()-shaped object is all the WAV
+  // encoder consumes.
+  return {
+    numberOfChannels: buffer.numberOfChannels,
+    length: buffer.length,
+    sampleRate: buffer.sampleRate,
+    duration: buffer.duration ?? buffer.length / buffer.sampleRate,
+    getChannelData: (c: number) => channels[c] ?? channels[0],
+  } as unknown as AudioBuffer;
+}
+
+/**
+ * Ensure a numerical value is finite and safe for Web Audio API.
  */
 export function safeAudioValue(val: any, fallback: number = 0): number {
   if (typeof val !== 'number' || !isFinite(val)) {

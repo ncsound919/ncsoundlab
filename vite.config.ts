@@ -17,7 +17,10 @@ export default defineConfig(() => {
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Ignore build/artifacts dirs so Tauri/Node writing them cannot crash the watcher (EBUSY).
+      watch: process.env.DISABLE_HMR === 'true' ? null : {
+        ignored: ['**/node_modules/**', '**/dist/**', '**/src-tauri/target/**', '**/playwright-report/**', '**/test-results/**'],
+      },
     },
     build: {
       rollupOptions: {

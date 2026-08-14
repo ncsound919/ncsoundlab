@@ -18,7 +18,6 @@ import { resolvePadKey, DEFAULT_PAD_KEYS } from '../lib/padKeyMap';
 import {
   snapToScale,
   chordFromRoot,
-  resolveSplit,
   DEFAULT_SCALE_LOCK,
   DEFAULT_CHORD_MODE,
   DEFAULT_SPLIT,
@@ -68,14 +67,6 @@ export const PerformanceControls: React.FC<PerformanceControlsProps> = ({
   splitRef.current = split;
   enabledRef.current = enabled;
   padSlotsRef.current = padSlots;
-
-  // ---- Resolve a note to the correct layer via the split + scale lock ----
-  const resolveNoteTarget = useCallback((midiNote: number): string | null => {
-    const side = resolveSplit(midiNote, splitRef.current);
-    if (side === 'lower') return splitRef.current.lowerLayerId;
-    if (side === 'upper') return splitRef.current.upperLayerId;
-    return null; // use active row
-  }, []);
 
   const keyDown = useCallback((e: KeyboardEvent) => {
     if (!enabledRef.current) return;

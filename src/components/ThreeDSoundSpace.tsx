@@ -4,7 +4,7 @@
  */
 
 import React, { useRef, useEffect, useState } from 'react';
-import { SoundLayer } from '../types';
+import { SoundLayer, DEFAULT_FX } from '../types';
 import { Layers, Mic, Speaker, Waves, Maximize2, X } from 'lucide-react';
 
 interface ThreeDSoundSpaceProps {
@@ -100,6 +100,7 @@ export const ThreeDSoundSpace: React.FC<ThreeDSoundSpaceProps> = ({
             pan,
             gain,
             fx: {
+              ...DEFAULT_FX,
               ...(targetLayer.fx || {}),
               filterFreq
             }
@@ -137,6 +138,7 @@ export const ThreeDSoundSpace: React.FC<ThreeDSoundSpaceProps> = ({
       pan: newPan,
       gain: newGain,
       fx: {
+        ...DEFAULT_FX,
         ...(layer.fx || {}),
         filterFreq
       }

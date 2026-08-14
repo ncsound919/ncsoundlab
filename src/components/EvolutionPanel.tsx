@@ -108,6 +108,7 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
     }
     audioEngine.stop();
     const ctx = audioEngine.getContext();
+    if (!ctx) return;
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(ctx.destination);

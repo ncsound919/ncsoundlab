@@ -8,10 +8,10 @@
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
   planLoopRecording,
+  patternLoopLengthSec,
   isInsidePunch,
   cycleAt,
   commitTake,
-  muteOutsidePunch,
   selectKeeper,
   sortTakesKeeperFirst,
   type Take,
@@ -48,6 +48,27 @@ const makeBuffer = (length: number, sampleRate = 1000, channels = 1): AudioBuffe
   for (let c = 0; c < channels; c++) b.getChannelData(c).fill(0.5);
   return b;
 };
+
+describe('patternLoopLengthSec', () => {
+  it('16 steps at 120 BPM is one bar (4 beats = 2s)', () => {
+    expect(patternLoopLengthSec(16, 120)).toBeCloseTo(2, 5);
+  });
+
+  it('scales with step length and BPM', () => {
+    expect(patternLoopLengthSec(32, 120)).toBeCloseTo(4, 5);
+    expect(patternLoopLengthSec(16, 100)).toBeCloseTo(2.4, 5);
+    expect(patternLoopLengthSec(32, 100)).toBeCloseTo(4.8, 5);
+  });
+
+  it('regression: is the loop, not the old 4x-beats value', () => {
+    // The previous inline formula `((stepLength/4)*4)*(60/bpm)` evaluated to
+    // stepLength * (60/bpm) = 16 beats = 8s for 16 steps @120 — a take that
+    // never aligned with the 1-bar pattern loop.
+    const loop = patternLoopLengthSec(16, 120);
+    expect(loop).toBeCloseTo(2, 5);
+    expect(loop).toBeLessThan(16 * (60 / 120));
+  });
+});
 
 describe('planLoopRecording', () => {
   it('clamps loops to >= 1 and computes starts', () => {

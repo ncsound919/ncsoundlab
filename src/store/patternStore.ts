@@ -180,7 +180,11 @@ export const usePatternStore = create<PatternStore>((set, get) => ({
   setBpm: (bpm) =>
     set((s) => {
       const p = s.patterns[s.activePatternId];
-      return { patterns: { ...s.patterns, [s.activePatternId]: { ...p, bpm } } };
+      // Guard against 0/NaN from cleared number inputs: a 0 bpm would make
+      // sequencer interval delays (60000 / bpm) resolve to Infinity and the
+      // melodic step trigger would pass Infinity as a buffer length.
+      const safeBpm = Math.max(30, Math.min(300, Number.isFinite(bpm) ? bpm : 120));
+      return { patterns: { ...s.patterns, [s.activePatternId]: { ...p, bpm: safeBpm } } };
     }),
 
   setTimeSignature: (beats, noteValue) =>

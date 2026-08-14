@@ -98,7 +98,9 @@ const RULES: SophisticationRule[] = [
     minLevel: 3,
     priority: 5,
     appliesAt: (ctx) => ctx.functionalRole === 'D' && ctx.isTurnaround,
-    transform: (chord) => (chord.type === '7' || chord.type === '9' || chord.type === '13') ? { ...chord, type: '7alt' } : chord,
+    // CHORD_QUALITIES key is `alt` (not `7alt`) — a `7alt` type would fall back
+    // to a plain major triad when voiced.
+    transform: (chord) => (chord.type === '7' || chord.type === '9' || chord.type === '13') ? { ...chord, type: 'alt' } : chord,
   },
   {
     id: 'tritone-sub',
@@ -120,7 +122,7 @@ const RULES: SophisticationRule[] = [
 
 function inferRole(chord: TheoryChord, idx: number): HarmonicContext['functionalRole'] {
   if (idx === 0) return 'T';
-  if (/^(7|9|13|7b9|7#9|7alt|7b5|7#5|13b9|7#11|dim|dim7)$/.test(chord.type)) return 'D';
+  if (/^(7|9|13|7b9|7#9|7alt|alt|7b5|7#5|13b9|7#11|dim|dim7)$/.test(chord.type)) return 'D';
   if (/^(maj|maj7|maj9|maj13|maj7#11|6|6\/9)$/.test(chord.type)) return 'T';
   return 'PD';
 }

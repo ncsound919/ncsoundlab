@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -33,15 +35,10 @@ jobs:
       - name: Type-check (tsc --noEmit)
         run: npm run lint
 
-      - name: Unit tests (vitest)
-        run: npm test
-        env:
-          # evolutionEngine.test.ts is environment-sensitive: its fork-pool
-          # worker dies on constrained environments (2-core CI runners, tight
-          # /dev/shm, Windows commit-charge races) and Vitest v4 misreports the
-          # dead worker as a 5000ms "timeout". The test's own header designates
-          # CONSTRAINED_ENV=1 as the skip switch for exactly this case.
-          CONSTRAINED_ENV: 1
+      - name: Unit tests + coverage + new-code gate
+        run: |
+          npm run test:coverage
+          COVERAGE_BASE=origin/main npm run coverage:check
 
       - name: Build (vite)
         run: npm run build
@@ -52,6 +49,29 @@ jobs:
           name: dist
           path: dist/
           if-no-files-found: error
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: npm run test:e2e
+        env:
+          CI: true
 
   backend:
     name: Backend (cargo test)

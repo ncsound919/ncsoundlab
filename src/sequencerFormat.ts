@@ -1,6 +1,6 @@
 import { isV1Export, isV2Export } from './types';
 import { migrateFromV1 } from './store/patternStore';
-import type { Pattern, SequenceExport, SequenceExportV2, SongChain } from './types';
+import type { Pattern, SequenceExportV2, SongChain } from './types';
 
 export function exportV2(
   _activeId: string,

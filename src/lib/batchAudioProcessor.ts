@@ -51,9 +51,14 @@ export function analyzeAudioBuffer(buffer: AudioBuffer, fileName: string): Audio
 
   // Meyda-powered spectral features (rms, zero-crossing rate, spectral centroid).
   const meydaSignal = toPow2Signal(channel0);
-  // The typed `extract` signature omits the runtime 4th config argument
-  // ({ sampleRate, bufferSize }), which is honored by the implementation.
-  // Call it bound to Meyda (no destructuring) because extract relies on `this`.
+  // Meyda's `extract(feature, signal, previousSignal)` ignores any 4th config
+  // arg and reads module-level `bufferSize`/`sampleRate` (defaults 512/44100).
+  // Set them to the actual window so the FFT covers the signal and the
+  // centroid converts to Hz correctly; otherwise spectral features are
+  // computed on a truncated 256-bin spectrum and classification skews wildly.
+  const meydaCfg = Meyda as unknown as { bufferSize: number; sampleRate: number };
+  meydaCfg.bufferSize = meydaSignal.length;
+  meydaCfg.sampleRate = sampleRate;
   const features = (Meyda.extract as unknown as (
     feature: string | string[],
     signal: Float32Array,
@@ -66,7 +71,8 @@ export function analyzeAudioBuffer(buffer: AudioBuffer, fileName: string): Audio
     { sampleRate, bufferSize: meydaSignal.length }
   );
   const rms = features.rms;
-  // spectralCentroid is returned in FFT bins; convert to Hz.
+  // spectralCentroid is returned in FFT bins; convert to Hz (bin spacing =
+  // sampleRate / bufferSize now that bufferSize matches the signal window).
   const spectralCentroid = (features.spectralCentroid * sampleRate) / meydaSignal.length;
   const zcr = features.zcr;
   const rmsDb = rms > 0 ? 20 * Math.log10(rms) : -96;
@@ -84,7 +90,10 @@ export function analyzeAudioBuffer(buffer: AudioBuffer, fileName: string): Audio
   const decayTime = durationSeconds - attackTime;
 
   const noiseRatio = Math.min(1, zcr * 2.5);
-  const transientStrength = (transients / durationSeconds) * 10;
+  // Guard against 0/ε durations (empty or ~2ms buffers): the documented
+  // transientSharpness range is 0–10, so clamp instead of emitting NaN/Infinity.
+  const safeDuration = durationSeconds > 0 ? durationSeconds : 1;
+  const transientStrength = Math.max(0, Math.min(10, (transients / safeDuration) * 10));
 
   const suggestedCategory = classifyCategory(
     fileName,
@@ -122,8 +131,8 @@ function classifyCategory(
   fileName: string,
   duration: number,
   transient: number,
-  peakDb: number,
-  rmsDb: number,
+  _peakDb: number,
+  _rmsDb: number,
   centroid: number,
   noise: number
 ): SampleCategory {
@@ -226,7 +235,12 @@ export function processAudioBuffer(
     }
   }
 
-  const trimmedLength = Math.max(1024, endIndex - startIndex + 1);
+  // Bound the trimmed length to what actually exists in the source. The old
+  // `Math.max(1024, …)` floor silently LENGTHENED any sample shorter than 1024
+  // samples (~23 ms) with a zero tail, and `src[startIndex + i]` read past the
+  // end of the buffer — corrupting duration/analysis/pitch for short one-shots.
+  const available = origLength - startIndex;
+  const trimmedLength = Math.max(1, Math.min(available, endIndex - startIndex + 1));
 
   // Create working buffer
   const outBuffer = audioCtx.createBuffer(numChannels, trimmedLength, sampleRate);

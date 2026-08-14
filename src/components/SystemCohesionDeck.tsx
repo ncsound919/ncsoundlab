@@ -13,20 +13,11 @@ import {
   Play, 
   Square, 
   Copy, 
-  Clipboard, 
-  Link2, 
   Sparkles, 
-  Zap, 
-  Volume2, 
-  Settings, 
   ChevronUp, 
   ChevronDown,
   RefreshCw,
-  FolderHeart,
-  HelpCircle,
-  Eye,
-  CheckCircle,
-  AlertCircle
+  CheckCircle
 } from 'lucide-react';
 import { SoundLayer } from '../types';
 import { audioEngine } from '../lib/audioEngine';
@@ -46,7 +37,6 @@ export const SystemCohesionDeck: React.FC<SystemCohesionDeckProps> = ({
   selectedLayerId,
   onUpdateLayer,
   onAddToast,
-  activeTab,
   setActiveTab,
   bpm
 }) => {
@@ -162,29 +152,6 @@ export const SystemCohesionDeck: React.FC<SystemCohesionDeckProps> = ({
     onAddToast(`Copied sound & FX settings from ${selectedLayer.name}`, 'success');
   };
 
-  const handlePasteSettings = (targetLayerId: string) => {
-    if (!copiedSettings) {
-      onAddToast('Copy settings first before pasting', 'warn');
-      return;
-    }
-    const target = layers.find(l => l.id === targetLayerId);
-    if (!target) return;
-
-    onUpdateLayer(targetLayerId, {
-      envelope: { ...copiedSettings.envelope },
-      fx: { ...copiedSettings.fx },
-      pitch: copiedSettings.pitch,
-      gain: copiedSettings.gain,
-      pan: copiedSettings.pan,
-      macroPunch: copiedSettings.macroPunch,
-      macroGrit: copiedSettings.macroGrit,
-      macroSpace: copiedSettings.macroSpace,
-      macroDepth: copiedSettings.macroDepth,
-      synth: copiedSettings.synth && target.type === 'synth' ? { ...copiedSettings.synth } : target.synth
-    });
-    onAddToast(`Pasted settings onto ${target.name} successfully`, 'success');
-  };
-
   const toggleLinkLayer = (layerId: string) => {
     if (layerId === selectedLayerId) return; // Can't link itself as child
     setLinkedLayers(prev => 
@@ -226,7 +193,6 @@ export const SystemCohesionDeck: React.FC<SystemCohesionDeckProps> = ({
   const [arpStep, setArpStep] = useState(0);
   const [arpPattern, setArpPattern] = useState<boolean[]>([true, false, true, false, true, true, false, true]);
   const [arpRate, setArpRate] = useState<'1/8' | '1/16' | '1/8t' | 'offbeat'>('1/8');
-  const [swingAmount, setSwingAmount] = useState(0);
   const arpTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const toggleArpStep = (idx: number) => {

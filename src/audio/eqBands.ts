@@ -161,7 +161,6 @@ export const eqBandResponseDb = (band: EQBand, freq: number): number => {
   switch (band.type) {
     case 'peaking': {
       // Approximation of RBJ peaking biquad magnitude.
-      const A = Math.pow(10, g / 40);
       const f0 = f;
       const octaves = Math.log2(freq / f0);
       return g / (1 + Math.pow(2 * octaves * q, 2));

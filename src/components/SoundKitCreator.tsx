@@ -21,7 +21,6 @@ import {
   DollarSign,
   Layers,
   CheckCircle2,
-  Share2,
   FolderPlus,
   ShoppingBag,
   ArrowRight,
@@ -193,7 +192,6 @@ export const SoundKitCreator: React.FC<SoundKitCreatorProps> = ({
 
     try {
       const zip = new JSZip();
-      const ctx = getAudioContext();
 
       const folderName = kitTitle.replace(/[^a-zA-Z0-9_-]/g, '_').toUpperCase();
       const kitFolder = zip.folder(folderName) || zip;

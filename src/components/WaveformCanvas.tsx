@@ -18,6 +18,44 @@ interface WaveformCanvasProps {
 const CANVAS_HEIGHT = 200;
 const GRID_SPACING = 40;
 
+/* ── Pure helpers (module-level, exported for tests) ───── */
+
+/** Number of peak columns and samples-per-column for a given css width. */
+export function calcPeakCols(dataLength: number, cssWidth: number): { step: number; cols: number } {
+  const step = Math.max(1, Math.ceil(dataLength / cssWidth));
+  const cols = Math.min(cssWidth, Math.ceil(dataLength / step));
+  return { step, cols };
+}
+
+/**
+ * Compute per-column min/max pairs into a Float32Array of length `cols * 2`
+ * laid out as [min0, max0, min1, max1, ...].
+ */
+export function computeWaveformPeaks(data: Float32Array, cols: number, step: number): Float32Array {
+  const peaks = new Float32Array(cols * 2);
+  for (let i = 0; i < cols; i++) {
+    let min = 1.0;
+    let max = -1.0;
+    const offset = i * step;
+    const end = Math.min(offset + step, data.length);
+    for (let j = offset; j < end; j++) {
+      const datum = data[j];
+      if (datum < min) min = datum;
+      if (datum > max) max = datum;
+    }
+    peaks[i * 2] = min;
+    peaks[i * 2 + 1] = max;
+  }
+  return peaks;
+}
+
+/** Clamp a clientX within a canvas rect to a 0..1 progress value. */
+export function pctFromClientX(clientX: number, rect: { left: number; width: number }): number {
+  if (rect.width <= 0) return 0;
+  const x = clientX - rect.left;
+  return Math.max(0, Math.min(1, x / rect.width));
+}
+
 export function WaveformCanvas({ 
   buffer, 
   className, 
@@ -28,9 +66,12 @@ export function WaveformCanvas({
 }: WaveformCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const animFrameRef = useRef<number | null>(null);
   const isDraggingRef = useRef<boolean>(false);
   const dragStartPctRef = useRef<number>(0);
+  // Reusable per-frame scratch buffers (hoisted to avoid ~12KB of GC churn at
+  // 60fps); reallocated only when their dimensions actually change.
+  const peaksRef = useRef<Float32Array | null>(null);
+  const freqDataRef = useRef<Uint8Array | null>(null);
 
   // ─── Core draw routine — single min-max pass, DPR-aware with real-time dynamics ──
   const draw = useCallback(() => {
@@ -87,7 +128,10 @@ export function WaveformCanvas({
       try {
         const analyser = audioEngine.getAnalyser();
         if (analyser) {
-          activeFreqData = new Uint8Array(analyser.frequencyBinCount);
+          if (!freqDataRef.current || freqDataRef.current.length !== analyser.frequencyBinCount) {
+            freqDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+          }
+          activeFreqData = freqDataRef.current;
           analyser.getByteFrequencyData(activeFreqData);
           let sum = 0;
           for (let i = 0; i < activeFreqData.length; i++) {
@@ -123,24 +167,13 @@ export function WaveformCanvas({
     }
 
     const data = buffer.getChannelData(0);
-    const step = Math.max(1, Math.ceil(data.length / cssWidth));
-    const cols = Math.min(cssWidth, Math.ceil(data.length / step));
+    const { step, cols } = calcPeakCols(data.length, cssWidth);
 
-    const peaks: Float32Array = new Float32Array(cols * 2);
-
-    for (let i = 0; i < cols; i++) {
-      let min = 1.0;
-      let max = -1.0;
-      const offset = i * step;
-      const end = Math.min(offset + step, data.length);
-      for (let j = offset; j < end; j++) {
-        const datum = data[j];
-        if (datum < min) min = datum;
-        if (datum > max) max = datum;
-      }
-      peaks[i * 2] = min;
-      peaks[i * 2 + 1] = max;
+    if (!peaksRef.current || peaksRef.current.length !== cols * 2) {
+      peaksRef.current = new Float32Array(cols * 2);
     }
+    const peaks = peaksRef.current;
+    peaks.set(computeWaveformPeaks(data, cols, step));
 
     // Glow pass (reacts to real-time energy when playing)
     const glowScale = playingNow ? 1 + avgEnergy * 0.8 : 1;
@@ -230,8 +263,7 @@ export function WaveformCanvas({
     const canvas = canvasRef.current;
     if (!canvas) return 0;
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    return Math.max(0, Math.min(1, x / rect.width));
+    return pctFromClientX(e.clientX, rect);
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {

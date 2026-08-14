@@ -1,4 +1,4 @@
-import { SoundLayer, DEFAULT_ENVELOPE, DEFAULT_FX, DEFAULT_SYNTH } from '../types';
+import { SoundLayer, DEFAULT_FX, DEFAULT_SYNTH } from '../types';
 
 export interface SoundPreset {
   id: string;

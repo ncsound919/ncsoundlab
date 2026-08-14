@@ -11,23 +11,24 @@
  */
 
 import React, { useState } from 'react';
-import { Sparkles, Play, Drum, RefreshCw, PenLine } from 'lucide-react';
+import { Sparkles, Drum, RefreshCw, PenLine, ShieldCheck, ShieldAlert } from 'lucide-react';
 import {
   makeProgression,
   voiceChords,
   progressionChords,
-  type ScaleLockSettings,
-  DEFAULT_SCALE_LOCK,
+  progressionMetrics,
+  isSonicallyViable,
+  resolveScaleType,
+  type ProgressionMetrics,
 } from '../lib/musicTheory';
 import type { TheoryChord } from '../lib/theory/progression';
-import { midiToNoteName, noteName } from '../lib/theory/pitch';
 
 interface TheoryPanelProps {
   onPlayNote: (midi: number, velocity?: number) => void;
   onStopNote: (midi: number) => void;
   onSendToPads?: (roots: string[]) => void;
   /** Write the voiced progression into the active pattern row as melodic notes. */
-  onApplyToPattern?: (chords: Array<{ root: string; type: string }>) => void;
+  onApplyToPattern?: (chords: TheoryChord[]) => void;
 }
 
 const KEYS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
@@ -48,18 +49,31 @@ export const TheoryPanel: React.FC<TheoryPanelProps> = ({ onPlayNote, onStopNote
   const [bars, setBars] = useState(8);
   const [prog, setProg] = useState<TheoryChord[]>([]);
   const [seed, setSeed] = useState(42);
+  const [quality, setQuality] = useState<ProgressionMetrics | null>(null);
   const [playingIdx, setPlayingIdx] = useState<number | null>(null);
   const activeSourcesRef = React.useRef<AudioBufferSourceNode[]>([]);
+  const previewTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear any pending auto-stop timer on unmount / re-preview so stale timers
+  // can't call setState or stop a newer voicing.
+  React.useEffect(() => () => {
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+  }, []);
 
   const generate = () => {
+    // Monte Carlo trials (smart-randomizer style): generate several candidate
+    // progressions and keep the highest-scoring one, so the panel consistently
+    // lands on a sonically viable progression instead of an occasional dud.
     const next = makeProgression(key, {
       scaleType: scale,
       bars,
       mode,
       complexity,
       seed,
+      trials: 6,
     });
     setProg(next);
+    setQuality(progressionMetrics(next, key, resolveScaleType(scale)));
   };
 
   const previewChord = (idx: number) => {
@@ -73,11 +87,13 @@ export const TheoryPanel: React.FC<TheoryPanelProps> = ({ onPlayNote, onStopNote
     // Play each note of the voicing via the melodic note path (scale-aware).
     voicing.notes.forEach((n) => onPlayNote(n, 0.8));
     setPlayingIdx(idx);
-    // Stop after ~1.5s.
-    window.setTimeout(() => {
+    // Stop after ~1.5s (replace any prior timer so rapid clicks don't stack).
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = setTimeout(() => {
       voicing.notes.forEach((n) => onStopNote(n));
       activeSourcesRef.current = [];
       setPlayingIdx(null);
+      previewTimerRef.current = null;
     }, 1500);
   };
 
@@ -142,6 +158,19 @@ export const TheoryPanel: React.FC<TheoryPanelProps> = ({ onPlayNote, onStopNote
             <span className="text-[9px] font-mono text-slate-500">
               {prog.reduce((s, c) => s + c.duration, 0)} beats · {prog.length} chords · seed {seed}
             </span>
+            {quality && (
+              <span
+                className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide ${
+                  isSonicallyViable(prog, key, resolveScaleType(scale))
+                    ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                    : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                }`}
+                title={`score ${quality.score} · ${quality.uniqueChords} unique chords · ${quality.cadences} cadence(s) · avg root motion ${quality.avgRootMotion.toFixed(1)}st`}
+              >
+                {isSonicallyViable(prog, key, resolveScaleType(scale)) ? <ShieldCheck size={10} /> : <ShieldAlert size={10} />}
+                score {quality.score}
+              </span>
+            )}
             {onApplyToPattern && (
               <button
                 type="button"

@@ -88,4 +88,11 @@ describe('detectOnsets', () => {
     const hits = detectOnsets(buf, { sensitivity: 0.9, minGapSec: 0.03 });
     expect(hits.filter((h) => Math.abs(h.time - 0.5) < 0.08).length).toBeLessThanOrEqual(1);
   });
+
+  it('clamps an out-of-range channel index instead of throwing (regression)', () => {
+    // getChannelData throws IndexSizeError for out-of-range channels; the old
+    // `getChannelData(channel) ?? getChannelData(0)` fallback was dead code.
+    const buf = makeBuffer([{ atSec: 0.5, freq: 200 }]);
+    expect(() => detectOnsets(buf, { channel: 5 })).not.toThrow();
+  });
 });

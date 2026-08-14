@@ -20,15 +20,14 @@ import {
   Play, 
   Square, 
   Star, 
-  Tag, 
-  Filter, 
   Search, 
   Layers, 
-  ArrowRight, 
-  CheckCircle2, 
   Zap,
-  FolderOpen
+  FolderOpen,
+  Lock
 } from 'lucide-react';
+import { useDemoSession } from '../demo/DemoSessionContext';
+import { PURCHASE_URL, DEMO_PRICE_DISPLAY, DEMO_PRODUCT_NAME } from '../lib/demoConfig';
 
 interface SoundKitCatalogProps {
   customKits: SoundKit[];
@@ -236,6 +235,9 @@ export const SoundKitCatalog: React.FC<SoundKitCatalogProps> = ({
 }) => {
   const [cloudKits, setCloudKits] = useState<SoundKit[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+  const { status: demoStatus } = useDemoSession();
+  const isPaidUnlocked = demoStatus === 'purchased';
+  const [purchaseGateKit, setPurchaseGateKit] = useState<SoundKit | null>(null);
   
   // Combine custom kits, cloud kits, and factory kits safely deduplicated by ID
   const allKits = useMemo(() => {
@@ -353,6 +355,12 @@ export const SoundKitCatalog: React.FC<SoundKitCatalogProps> = ({
   };
 
   const handleDownloadKit = async (kit: SoundKit, isCommercial = false) => {
+    // Monetization integrity: paid kits are only downloadable by purchasers
+    // (desktop app owners / unlocked web sessions). Free kits download freely.
+    if (kit.price > 0 && !isCommercial && !isPaidUnlocked) {
+      setPurchaseGateKit(kit);
+      return;
+    }
     setDownloadingKitId(kit.id);
     try {
       const zip = new JSZip();
@@ -709,18 +717,70 @@ export const SoundKitCatalog: React.FC<SoundKitCatalogProps> = ({
                 disabled={downloadingKitId === selectedKit.id}
                 className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-yellow-400 text-black font-extrabold text-xs uppercase tracking-widest hover:opacity-95 shadow-[0_0_16px_rgba(37,99,235,0.3)] transition-all flex items-center justify-center gap-2"
               >
-                <Download className="w-4 h-4" />
+                {selectedKit.price > 0 && !isPaidUnlocked ? (
+                  <Lock className="w-4 h-4" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
                 <span>
                   {downloadingKitId === selectedKit.id
                     ? 'Downloading Package...'
                     : selectedKit.price === 0
                     ? 'Download Free Kit (.zip)'
-                    : `Buy & Download Kit ($${selectedKit.price.toFixed(2)})`}
+                    : isPaidUnlocked
+                    ? 'Download Kit (.zip)'
+                    : `Unlock Kit — $${selectedKit.price.toFixed(2)}`}
                 </span>
               </button>
             </div>
           </div>
         )}
+
+      {/* Paid-Kit Purchase Gate Modal */}
+      {purchaseGateKit && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          onClick={() => setPurchaseGateKit(null)}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${purchaseGateKit.title} is a paid kit`}
+            className="w-full max-w-md rounded-2xl border border-blue-500/40 bg-[#0c0c10] p-6 sm:p-8 shadow-[0_0_60px_rgba(37,99,235,0.3)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 text-xs font-mono font-black uppercase tracking-widest text-yellow-400 mb-3">
+              <Lock size={14} /> Premium sound kit
+            </div>
+            <h2 className="text-xl font-fastblaze tracking-wide text-white mb-2">
+              {purchaseGateKit.title}
+            </h2>
+            <p className="text-sm text-slate-300 mb-5">
+              This kit is part of the paid {DEMO_PRODUCT_NAME} product. Get the full desktop app
+              for a one-time {DEMO_PRICE_DISPLAY} — then every premium kit in the catalog is yours
+              to download, royalty-free.
+            </p>
+            <div className="flex flex-col gap-2">
+              <a
+                href={PURCHASE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-yellow-400 px-4 py-3 text-black text-sm font-black uppercase tracking-wider hover:opacity-95 transition-all"
+              >
+                <Download size={16} />
+                Get {DEMO_PRODUCT_NAME} — {DEMO_PRICE_DISPLAY}
+              </a>
+              <button
+                onClick={() => setPurchaseGateKit(null)}
+                className="rounded-xl px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                Back to catalog
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

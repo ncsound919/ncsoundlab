@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { sliceBufferIntoPads, isMediaRecorderSupported } from './audioCapture';
+import { sliceBufferIntoPads } from './audioCapture';
 
 // jsdom does not expose AudioBuffer. Provide a minimal shape matching the
 // subset the slicing code uses (length, sampleRate, numberOfChannels,

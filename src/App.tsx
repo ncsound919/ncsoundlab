@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Play, 
@@ -15,26 +15,18 @@ import {
   Layers, 
   Volume2, 
   Music,
-  Waves,
-  Settings2,
   Zap,
   Sliders,
   Activity,
-  FolderOpen,
   Package,
   ShoppingBag,
   Drum,
   Cloud,
-  Save,
   PanelLeftClose,
   PanelLeft,
   ChevronRight,
   ChevronLeft,
-  Check,
   Sparkles,
-  ArrowRight,
-  PackagePlus,
-  ShieldCheck,
   Plus,
   Move3d,
   BookOpen,
@@ -57,7 +49,6 @@ import { audioEngine } from './lib/audioEngine';
 import { audioEngine as sharedAudioEngine } from './audio/AudioEngine';
 import { audioBufferToWav } from './lib/audioUtils';
 const WaveformEditor = lazy(() => import('./components/WaveformEditor').then(m => ({ default: m.WaveformEditor })));
-import { Fader } from './components/Fader';
 import { Knob } from './components/Knob';
 
 // Lazy loaded heavy components
@@ -94,19 +85,19 @@ import {
 } from './lib/waveformEditor';
 import { generateChaosSynthBuffer } from './lib/chaosSynth';
 import { generateEvolutionVariations } from './lib/evolutionEngine';
-import { analyzeAudioBuffer } from './lib/batchAudioProcessor';
 
 // Hardware & Sound Kit Components
 import { MasterMeter } from './components/MasterMeter';
 import { ToastContainer, ToastMessage } from './components/ToastContainer';
+import { DemoSessionProvider } from './demo/DemoSessionContext';
+import { DemoCountdown } from './components/DemoCountdown';
+import { DemoGateModal } from './components/DemoGateModal';
 import { useSequencerStore, BankId } from './store/sequencerStore';
 import { usePatternStore } from './store/patternStore';
 import { useRackStore } from './store/rackStore';
-import { useMasterDynamicsStore } from './store/masterDynamicsStore';
-import { useHistoryStore, buildSnapshot, useCanUndo, useCanRedo, type HistorySnapshot } from './store/historyStore';
+import { useHistoryStore, buildSnapshot, snapshotsEqual, useCanUndo, useCanRedo, type HistorySnapshot } from './store/historyStore';
 import {
   scheduleAutosave,
-  flushAutosave,
   installAutosaveFlushHandlers,
   uninstallAutosaveFlushHandlers,
   readAutosaveDocument,
@@ -245,6 +236,29 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('soundlab');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
+  // Deep-linkable stages: ?stage=<id> on load, and the hash stays in sync
+  // with navigation so users can bookmark/share a specific workflow stage
+  // and use browser back/forward.
+  const STAGE_IDS = useMemo(() => new Set<string>(WORKFLOW_STAGES.map((s) => s.id)), []);
+
+  useEffect(() => {
+    const stageFromHash = () => {
+      const match = window.location.hash.match(/^#stage=([a-z]+)/);
+      if (match && STAGE_IDS.has(match[1])) setActiveTab(match[1] as TabType);
+    };
+    stageFromHash();
+    window.addEventListener('hashchange', stageFromHash);
+    return () => window.removeEventListener('hashchange', stageFromHash);
+  }, [STAGE_IDS]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const nextHash = `#stage=${activeTab}`;
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, '', nextHash);
+    }
+  }, [activeTab]);
+
   const [layers, setLayersInternal] = useState<SoundLayer[]>([]);
   const [masterLevel, setMasterLevel] = useState(0.8);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -309,6 +323,13 @@ export default function App() {
       bpm: patternStore.patterns[patternStore.activePatternId].bpm,
       timeSignature: patternStore.patterns[patternStore.activePatternId].timeSignature,
     });
+    // Skip commits that are byte-for-byte identical to the current history head.
+    // Undo/redo re-applies the snapshot state via the applier (sharing the same
+    // object references), so without this dedup the resulting re-commit would
+    // both break consecutive undos AND clear the `future` stack, killing redo.
+    const history = useHistoryStore.getState();
+    const last = history.past[history.past.length - 1];
+    if (last && snapshotsEqual(last, snap)) return;
     useHistoryStore.getState().commit(snap);
   }, [layers, masterLevel, patternStore, sequencerStore]);
 
@@ -340,7 +361,6 @@ export default function App() {
   const [isAddToKitOpen, setIsAddToKitOpen] = useState(false);
   const [pendingKitSample, setPendingKitSample] = useState<SoundKitSample | null>(null);
   const [abState, setAbState] = useState<'A' | 'B'>('B');
-  const [monitorTab, setMonitorTab] = useState<'waveform' | 'spatial'>('waveform');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // UX Enhancement States & Handlers
@@ -375,7 +395,7 @@ export default function App() {
   const [chopCount, setChopCount] = useState(4);
   const [chopBuffer, setChopBuffer] = useState<AudioBuffer | null>(null);
   const [chopFileName, setChopFileName] = useState('sample');
-  const [activeSnapshotName, setActiveSnapshotName] = useState<'A' | 'B' | null>(null);
+  const [, setActiveSnapshotName] = useState<'A' | 'B' | null>(null);
 
   const addToast = (message: string, type: 'success' | 'info' | 'warn' | 'error' = 'info') => {
     const id = crypto.randomUUID();
@@ -502,13 +522,9 @@ export default function App() {
   // Waveform Edit Lab States
   const [selectionStart, setSelectionStart] = useState<number>(0);
   const [selectionEnd, setSelectionEnd] = useState<number>(1);
-  const [fadeDuration, setFadeDuration] = useState<number>(0.1);
-  const [glitchIntensity, setGlitchIntensity] = useState<number>(0.4);
-  const [gainDB, setGainDB] = useState<number>(3.0);
-
-  // Chaos One-Shot Sidebar Generator States
-  const [chaosFXStyle, setChaosFXStyle] = useState<'swarm' | 'blast' | 'laser' | 'stutter' | 'drift'>('swarm');
-  const [sidebarMacroChaos, setSidebarMacroChaos] = useState<number>(0.65);
+  const [fadeDuration] = useState<number>(0.1);
+  const [glitchIntensity] = useState<number>(0.4);
+  const [gainDB] = useState<number>(3.0);
 
   // Sync A/B state with the audio engine
   useEffect(() => {
@@ -876,134 +892,6 @@ export default function App() {
     
     // Play back edited audio buffer immediately so they can audition the edit!
     audioEngine.playLayer({ ...selectedLayer, audioBuffer: edited });
-  };
-
-  const handleGenerateChaosFX = () => {
-    const ctx = audioEngine.getContext();
-    if (!ctx) return;
-
-    let oscType: any = 'sine';
-    let frequency = 440;
-    let subLevel = 0;
-    let phaseChaos = 0;
-    let cycleStretch = 0;
-    let fractalHarmonics = 0;
-    let harmonicBias = 0;
-    let lorenzRate = 0;
-    let logisticChaos = 0;
-    let feedbackTurbulence = 0;
-    let grainCount = 0;
-    let grainDrift = 0;
-    let grainSizeJitter = 0;
-    let sprayRadius = 0;
-    let sampleRateChaos = 0;
-    let errorInjection = 0;
-
-    const m = sidebarMacroChaos; // macro scaling factor
-
-    switch (chaosFXStyle) {
-      case 'swarm':
-        oscType = 'sawtooth';
-        frequency = 120 + Math.random() * 260;
-        phaseChaos = 0.4 + m * 0.5;
-        fractalHarmonics = 0.5 + m * 0.4;
-        grainCount = Math.floor(25 + m * 60);
-        grainDrift = 0.3 + m * 0.6;
-        grainSizeJitter = 0.4 + m * 0.5;
-        sprayRadius = 0.8;
-        errorInjection = 0.02 + m * 0.05;
-        break;
-      case 'blast':
-        oscType = 'sine';
-        frequency = 35 + Math.random() * 35; // ultra low
-        subLevel = 1.0;
-        lorenzRate = 0.5 + m * 0.4;
-        logisticChaos = 0.6 + m * 0.3;
-        feedbackTurbulence = 0.5 + m * 0.45;
-        sampleRateChaos = 0.3 + m * 0.5;
-        break;
-      case 'laser':
-        oscType = 'triangle';
-        frequency = 550 + Math.random() * 650;
-        cycleStretch = 0.5 + m * 0.4;
-        fractalHarmonics = 0.6 + m * 0.3;
-        harmonicBias = 0.5 + m * 0.4;
-        lorenzRate = 0.8;
-        break;
-      case 'stutter':
-        oscType = 'square';
-        frequency = 90 + Math.random() * 120;
-        phaseChaos = 0.8;
-        feedbackTurbulence = 0.7 + m * 0.25;
-        grainCount = Math.floor(10 + m * 30);
-        grainDrift = 0.9;
-        sampleRateChaos = 0.5 + m * 0.4;
-        errorInjection = 0.08 + m * 0.02;
-        break;
-      case 'drift':
-        oscType = 'sine';
-        frequency = 180 + Math.random() * 200;
-        lorenzRate = 0.3 + m * 0.5;
-        phaseChaos = 0.2 + m * 0.4;
-        feedbackTurbulence = 0.5 + m * 0.4;
-        fractalHarmonics = 0.4 + m * 0.4;
-        break;
-    }
-
-    const name = `👽_${chaosFXStyle.toUpperCase()}_FX`;
-
-    const generatedSynth = {
-      oscType,
-      detune: 0,
-      frequency,
-      pitchEnvAmount: chaosFXStyle === 'laser' ? -24 : 0,
-      pitchEnvDecay: 0.15,
-      subLevel,
-      phaseChaos,
-      cycleStretch,
-      fractalHarmonics,
-      harmonicBias,
-      lorenzRate,
-      logisticChaos,
-      feedbackTurbulence,
-      macroChaos: m,
-      grainCount,
-      grainDrift,
-      grainSizeJitter,
-      sprayRadius,
-      sampleRateChaos,
-      errorInjection,
-      zeroCrossingMutator: 0,
-    };
-
-    // Pre-synthesize the buffer so they see it instantly!
-    const audioBuffer = generateChaosSynthBuffer(ctx, generatedSynth, 1.5);
-
-    const newLayer: SoundLayer = {
-      id: crypto.randomUUID(),
-      name,
-      type: 'synth',
-      enabled: true,
-      gain: 0.8,
-      pan: 0,
-      pitch: 0,
-      envelope: { attack: 0.01, decay: 0.3, sustain: 0.5, release: 0.4 },
-      fx: { ...DEFAULT_FX, distortion: chaosFXStyle === 'blast' ? 0.4 : 0, reverbMix: 0.25 },
-      synth: generatedSynth,
-      audioBuffer,
-    };
-
-    setLayers(prev => {
-      // If we only have the default placeholder empty Synth Layer, replace it
-      if (prev.length === 1 && prev[0].type === 'synth' && prev[0].name === 'Synth Layer' && !prev[0].audioBuffer) {
-        return [newLayer];
-      }
-      return [...prev, newLayer];
-    });
-    setSelectedLayerId(newLayer.id);
-
-    // Play it instantly
-    audioEngine.playLayer(newLayer);
   };
 
   const handleEvolveLayer = async (
@@ -1387,66 +1275,6 @@ export default function App() {
     }
   };
 
-  const applyTemplate = (type: 'kick' | 'snare' | 'hat' | 'sub' | 'fm') => {
-    const id = crypto.randomUUID();
-    let template: Partial<SoundLayer> = { id, enabled: true, gain: 0.8 };
-
-    switch(type) {
-      case 'kick':
-        template = {
-          ...template,
-          name: '909_KICK_INIT',
-          type: 'synth',
-          envelope: { attack: 0.001, decay: 0.3, sustain: 0.1, release: 0.2 },
-          synth: { oscType: 'sine', detune: 0, frequency: 55, pitchEnvAmount: 24, pitchEnvDecay: 0.05, subLevel: 0.5 },
-          fx: { ...DEFAULT_FX, distortion: 0.2, filterFreq: 120, filterRes: 1 }
-        };
-        break;
-      case 'snare':
-        template = {
-          ...template,
-          name: 'IND_SNARE_INIT',
-          type: 'synth',
-          envelope: { attack: 0.001, decay: 0.1, sustain: 0.1, release: 0.1 },
-          synth: { oscType: 'square', detune: 0, frequency: 180, pitchEnvAmount: 12, pitchEnvDecay: 0.02, subLevel: 0 },
-          fx: { ...DEFAULT_FX, bitcrush: 0.3, filterFreq: 3000, filterRes: 2, reverbMix: 0.1 }
-        };
-        break;
-      case 'sub':
-        template = {
-          ...template,
-          name: 'DEEP_SUB_INIT',
-          type: 'synth',
-          envelope: { attack: 0.05, decay: 0.5, sustain: 0.8, release: 0.5 },
-          synth: { oscType: 'sine', detune: 0, frequency: 40, pitchEnvAmount: 0, pitchEnvDecay: 0.1, subLevel: 1.0 },
-          fx: { ...DEFAULT_FX, filterFreq: 80, filterRes: 0.5 }
-        };
-        break;
-      case 'hat':
-        template = {
-          ...template,
-          name: 'CRISP_HAT_INIT',
-          type: 'synth',
-          envelope: { attack: 0.001, decay: 0.08, sustain: 0.01, release: 0.05 },
-          synth: { oscType: 'triangle', detune: 12, frequency: 8000, pitchEnvAmount: 0, pitchEnvDecay: 0.01, subLevel: 0 },
-          fx: { ...DEFAULT_FX, filterFreq: 9000, filterType: 'highpass', bitcrush: 0.15 }
-        };
-        break;
-      case 'fm':
-        template = {
-          ...template,
-          name: 'FM_METALLIC_PERC',
-          type: 'synth',
-          envelope: { attack: 0.002, decay: 0.15, sustain: 0.05, release: 0.1 },
-          synth: { oscType: 'sawtooth', detune: 7, frequency: 440, pitchEnvAmount: 18, pitchEnvDecay: 0.03, subLevel: 0.2 },
-          fx: { ...DEFAULT_FX, distortion: 0.35, chorusMix: 0.4 }
-        };
-        break;
-    }
-    setLayers(prev => [...prev, template as SoundLayer]);
-    setSelectedLayerId(id);
-  };
-
   const playAll = () => {
     audioEngine.playAll(layers);
   };
@@ -1493,12 +1321,20 @@ export default function App() {
   };
 
   return (
+    <DemoSessionProvider>
     <div 
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDropFile}
       className="h-screen flex bg-[#08080a] text-[#e0e0e0] font-sans overflow-hidden relative"
     >
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-[200] focus:top-2 focus:left-2 focus:px-3 focus:py-2 focus:bg-yellow-400 focus:text-black focus:rounded-lg focus:text-xs focus:font-black focus:uppercase"
+      >
+        Skip to workspace
+      </a>
+      <h1 className="sr-only">NC Sound Lab</h1>
       {/* File Drag Overlay Feedback */}
       <AnimatePresence>
         {isDraggingFile && (
@@ -1531,9 +1367,9 @@ export default function App() {
                 className="w-11 h-11 object-contain shrink-0 drop-shadow-[0_0_10px_rgba(37,99,235,0.5)]"
               />
               <div className="min-w-0">
-                <h1 className="text-base font-fastblaze tracking-wider text-white uppercase drop-shadow-[0_0_12px_rgba(37,99,235,0.9)]">
+                <p className="text-base font-fastblaze tracking-wider text-white uppercase drop-shadow-[0_0_12px_rgba(37,99,235,0.9)]">
                   NC SOUNDLAB
-                </h1>
+                </p>
                 <p className="text-[9px] font-mono text-yellow-400 tracking-widest uppercase font-bold">
                   SOUND DESIGN ENGINE
                 </p>
@@ -1688,7 +1524,7 @@ export default function App() {
           {/* Quick Audio Controls inside Sidebar */}
           {!isSidebarCollapsed && (
             <div className="pt-4 border-t border-[#1a1a1e] space-y-3">
-              <div className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-[#52525b] px-2">
+              <div className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-[#a1a1aa] px-2">
                 MASTER AUDIO BUS
               </div>
 
@@ -1742,7 +1578,7 @@ export default function App() {
         {/* Sidebar Footer */}
         <div className="p-3 bg-[#0a0a0c] border-t border-[#1a1a1e]">
           {!isSidebarCollapsed ? (
-            <div className="flex items-center justify-between text-[9px] font-mono text-[#52525b]">
+            <div className="flex items-center justify-between text-[9px] font-mono text-[#a1a1aa]">
               <span className="flex items-center gap-1 text-blue-400 font-bold">
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
                 LOCAL STORAGE
@@ -1827,9 +1663,9 @@ export default function App() {
               {React.createElement(currentStage.icon, { size: 18 })}
             </div>
             <div className="min-w-0">
-              <h2 className="text-sm sm:text-base font-fastblaze tracking-wider text-white truncate">
+              <p className="text-sm sm:text-base font-fastblaze tracking-wider text-white truncate">
                 {currentStage.name}
-              </h2>
+              </p>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-[9px] font-mono font-bold text-yellow-400 uppercase tracking-widest">
                   Stage {currentStage.stageNumber}/{WORKFLOW_STAGES.length}
@@ -1946,6 +1782,19 @@ export default function App() {
               ?
             </button>
 
+            {/* Producer Manual Trigger (always reachable, incl. mobile) */}
+            <button
+              onClick={() => setIsUserManualOpen(true)}
+              className="p-2 bg-[#000000] hover:bg-[#1e3a8a] border border-[#1e293b] text-blue-400 rounded-xl transition-all flex items-center justify-center"
+              title="Open Studio Manual & System Guide"
+              aria-label="Open Studio Manual"
+            >
+              <BookOpen size={14} />
+            </button>
+
+            {/* Timed demo countdown (web demo only) */}
+            <DemoCountdown />
+
             {/* Play Working Sound Quick Button */}
             {selectedLayer && (
               <button 
@@ -2006,7 +1855,7 @@ export default function App() {
         )}
 
         {/* Main Stage Workspace Content */}
-        <main className="flex-1 overflow-hidden relative bg-[#08080a]">
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-hidden relative bg-[#08080a]">
           {/* Global Error Banner */}
           <AnimatePresence>
             {errorMessage && (
@@ -2063,6 +1912,8 @@ export default function App() {
                     </button>
                     <input 
                       ref={fileInputRef}
+                      id="sample-upload"
+                      name="sample-upload"
                       type="file" 
                       accept="audio/*" 
                       className="hidden" 
@@ -2139,6 +1990,7 @@ export default function App() {
                             <input
                               type="text"
                               value={l.name}
+                              aria-label={`Layer ${l.id} name`}
                               onClick={(e) => e.stopPropagation()}
                               onChange={(e) => updateLayer(l.id, { name: e.target.value })}
                               className="bg-transparent text-[11px] font-black text-white uppercase tracking-wider border-b border-transparent hover:border-slate-700 focus:border-yellow-400 focus:outline-none py-0.5 max-w-[140px] min-w-0 flex-1"
@@ -2158,6 +2010,7 @@ export default function App() {
                                     ? 'bg-emerald-600/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/20'
                                     : 'bg-black border-[#1e293b] text-slate-500 hover:text-slate-300'
                                 }`}
+                                aria-label={l.enabled ? 'Mute Layer' : 'Unmute Layer'}
                                 title={l.enabled ? 'Mute Layer' : 'Unmute Layer'}
                               >
                                 {l.enabled ? 'ON' : 'OFF'}
@@ -2165,20 +2018,23 @@ export default function App() {
                               <button
                                 onClick={() => audioEngine.playLayer(l)}
                                 className="p-1.5 rounded hover:bg-[#1a1a24] text-slate-400 hover:text-yellow-400 transition-colors"
+                                aria-label="Play Layer"
                                 title="Play Layer"
                               >
                                 <Play size={12} fill="currentColor" />
                               </button>
                               <button
-                                onClick={() => handleDuplicateLayer(l)}
+                                onClick={() => handleDuplicateLayer(l.id)}
                                 className="p-1.5 rounded hover:bg-[#1a1a24] text-slate-400 hover:text-white transition-colors"
+                                aria-label="Duplicate Layer"
                                 title="Duplicate Layer"
                               >
                                 <Layers size={13} />
                               </button>
                               <button
-                                onClick={() => setLayers(prev => prev.filter(item => item.id !== l.id))}
+                                onClick={() => removeLayer(l.id)}
                                 className="p-1.5 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors"
+                                aria-label="Delete Layer"
                                 title="Delete Layer"
                               >
                                 <Trash2 size={13} />
@@ -2199,18 +2055,21 @@ export default function App() {
                       <span className="text-xs font-black uppercase tracking-wider text-white">Sample Waveform & Detailed DSP Editor</span>
                       <span className="text-[9px] font-mono text-slate-500">(click to expand)</span>
                     </div>
-                    {selectedLayer && selectedLayer.type === 'synth' && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleBounceLayer(selectedLayer); }}
-                        className="px-3 py-1.5 bg-[#121215] border border-blue-500 hover:bg-blue-600 rounded text-[9.5px] uppercase font-bold text-blue-400 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
-                        title="Bounce this synth's current parameters into a brand new Sample Layer for waveform rendering"
-                      >
-                        <Sparkles className="w-3 h-3 text-sky-400" /> Bounce Synth to Sample
-                      </button>
-                    )}
                   </summary>
 
                   <div className="p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+                    {selectedLayer && selectedLayer.type === 'synth' && (
+                      <div className="lg:col-span-12 -mb-2 flex justify-end">
+                        <button
+                          onClick={() => handleBounceLayer(selectedLayer)}
+                          className="px-3 py-1.5 bg-[#121215] border border-blue-500 hover:bg-blue-600 rounded text-[9.5px] uppercase font-bold text-blue-400 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
+                          title="Bounce this synth's current parameters into a brand new Sample Layer for waveform rendering"
+                        >
+                          <Sparkles className="w-3 h-3 text-sky-400" /> Bounce Synth to Sample
+                        </button>
+                      </div>
+                    )}
+
                     {/* Visualizer Plot (8 cols) */}
                     <div className="lg:col-span-8 bg-black border border-[#1e293b] rounded-xl p-4 flex flex-col justify-between min-h-[220px]">
                       {selectedLayer ? (
@@ -2591,7 +2450,8 @@ export default function App() {
                     variations={evolutionVariations}
                     onSetVariations={setEvolutionVariations}
                     onAddLayer={(v) => addLayer('sample', v.buffer, `Mutant_${v.id.slice(0,4)}`)}
-                    onSaveToKit={(v) => {
+                    onSaveToKit={async (v) => {
+                      const { analyzeAudioBuffer } = await import('./lib/batchAudioProcessor');
                       const analysis = analyzeAudioBuffer(v.buffer, `Mutant_${v.id.slice(0,4)}.wav`);
                       const mockSample: SoundKitSample = {
                         id: v.id,
@@ -2699,7 +2559,7 @@ export default function App() {
       </Suspense>
 
         {/* Studio Workspace Bottom Status Bar */}
-        <footer className="h-8 bg-[#0a0a0c] border-t border-[#1f1f21] px-6 flex items-center justify-between text-[9px] text-[#52525b] flex-shrink-0 font-mono">
+        <footer className="h-8 bg-[#0a0a0c] border-t border-[#1f1f21] px-6 flex items-center justify-between text-[9px] text-[#a1a1aa] flex-shrink-0 font-mono">
           <div className="flex items-center space-x-6">
             <span className="flex items-center gap-1.5 text-blue-400 font-bold">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
@@ -2708,7 +2568,7 @@ export default function App() {
             <span>LATENCY: 0.8ms</span>
             <span className="hidden sm:inline">WORKFLOW: {currentStage.shortName.toUpperCase()}</span>
           </div>
-          <div className="uppercase tracking-widest text-gray-500">
+          <div className="uppercase tracking-widest text-[#a1a1aa]">
             SONIK STUDIO ARCHITECTURE v5.2 PRO
           </div>
         </footer>
@@ -2772,6 +2632,10 @@ export default function App() {
         toasts={toasts}
         onDismiss={handleDismissToast}
       />
+
+      {/* Timed demo gate (web only; disabled in the desktop build) */}
+      <DemoGateModal />
     </div>
+    </DemoSessionProvider>
   );
 }

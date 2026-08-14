@@ -29,8 +29,15 @@ import {
   voiceLeadingCost,
   type Voicing,
 } from './theory/voicing';
-import { generateProgression, type TheoryChord } from './theory/progression';
+import { generateProgression, generateBestProgression, type TheoryChord } from './theory/progression';
 import { applySophistication, type SophisticationLevel } from './theory/sophistication';
+import {
+  scoreProgression,
+  progressionMetrics,
+  progressionEnergy,
+  isSonicallyViable,
+  type ProgressionMetrics,
+} from './theory/quality';
 
 export interface ScaleLockSettings {
   /** Root pitch class, e.g. 'C', 'F#'. */
@@ -205,14 +212,31 @@ export const voicingSmoothness = (a: number[], b: number[]): number => voiceLead
 /**
  * Generate a deterministic chord progression in a key/scale (engine port).
  * Returns root+quality+duration chords suitable for `voiceChords` or pads.
+ *
+ * Pass `trials` > 1 to enable smart-randomizer style Monte Carlo selection:
+ * N candidates are generated and the highest-scoring one (by the quality
+ * rubric) is returned. Deterministic for a given seed.
  */
 export function makeProgression(
   key: string,
-  opts: { scaleType?: string; bars?: number; complexity?: number; mode?: 'functional' | 'section'; seed?: number } = {}
+  opts: { scaleType?: string; bars?: number; complexity?: number; mode?: 'functional' | 'section'; seed?: number; trials?: number } = {}
 ): TheoryChord[] {
+  const scaleType = resolveScaleType(opts.scaleType ?? 'major');
+  const { trials = 1 } = opts;
+  if (trials > 1) {
+    return generateBestProgression({
+      key,
+      scaleType,
+      bars: opts.bars,
+      complexity: opts.complexity,
+      mode: opts.mode,
+      seed: opts.seed,
+      trials,
+    });
+  }
   return generateProgression({
     key,
-    scaleType: resolveScaleType(opts.scaleType ?? 'major'),
+    scaleType,
     bars: opts.bars,
     complexity: opts.complexity,
     mode: opts.mode,
@@ -221,8 +245,8 @@ export function makeProgression(
 }
 
 /** Convert a progression to plain root+type pairs (for voicing/preview). */
-export function progressionChords(prog: TheoryChord[]): Array<{ root: string; type: string }> {
-  return prog.map((c) => ({ root: c.root, type: c.type }));
+export function progressionChords(prog: TheoryChord[]): TheoryChord[] {
+  return prog.map((c) => ({ ...c }));
 }
 
 /**
@@ -262,4 +286,17 @@ const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#',
 const noteNameOf = (pc: number): string => SHARP_NAMES[((pc % 12) + 12) % 12];
 
 // Re-export engine primitives so consumers share one source of truth.
-export { midi, noteToMidi, pitchClassOf, generateVoicingCandidates, pickBestVoicing, voiceLeadingCost };
+export {
+  midi,
+  noteToMidi,
+  pitchClassOf,
+  generateVoicingCandidates,
+  pickBestVoicing,
+  voiceLeadingCost,
+  generateBestProgression,
+  scoreProgression,
+  progressionMetrics,
+  progressionEnergy,
+  isSonicallyViable,
+  type ProgressionMetrics,
+};

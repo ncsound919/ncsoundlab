@@ -25,7 +25,6 @@ vi.mock('tone', () => {
 });
 
 import * as Tone from 'tone';
-import { audioEngine } from '../../lib/audioEngine';
 import { initTransport, getTransport, resetTransport } from './transport';
 
 describe('transport host', () => {

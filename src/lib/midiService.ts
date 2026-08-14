@@ -42,6 +42,9 @@ export function createMidiService(): MidiService {
   let noteOffHandler: MidiHandler | null = null;
   let stateHandler: ((inputs: MidiInputInfo[]) => void) | null = null;
   let enabled = false;
+  // Named (removable) re-subscribe callbacks: WebMidi is a module singleton, so
+  // anonymous arrows here would accumulate on every enable()/disable() cycle.
+  const onPortChange = () => subscribeToInputs();
 
   const listInputs = (): MidiInputInfo[] => {
     if (!enabled) return [];
@@ -85,8 +88,8 @@ export function createMidiService(): MidiService {
         enabled = true;
         subscribeToInputs();
         // Re-subscribe when ports connect/disconnect.
-        WebMidi.addListener('connected', () => subscribeToInputs());
-        WebMidi.addListener('disconnected', () => subscribeToInputs());
+        WebMidi.addListener('connected', onPortChange);
+        WebMidi.addListener('disconnected', onPortChange);
         notifyState();
         return true;
       } catch (err) {
@@ -100,6 +103,10 @@ export function createMidiService(): MidiService {
     async disable() {
       if (!enabled) return;
       try {
+        // Remove the port-change re-subscription listeners so enable/disable
+        // cycles don't accumulate callbacks on the module-global WebMidi.
+        WebMidi.removeListener('connected', onPortChange);
+        WebMidi.removeListener('disconnected', onPortChange);
         await WebMidi.disable();
       } catch { /* ignore */ }
       enabled = false;

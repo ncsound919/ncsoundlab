@@ -273,14 +273,3 @@ function makeSpectralFoldCurve(amount: number) {
   return curve;
 }
 
-function makeAliasingCurve(amount: number) {
-  const n_samples = 44100;
-  const curve = new Float32Array(n_samples);
-  for (let i = 0; i < n_samples; ++i) {
-    const x = (i * 2) / n_samples - 1;
-    // Step function distortion
-    const steps = 4 + Math.floor((1 - amount) * 20);
-    curve[i] = Math.floor(x * steps) / steps;
-  }
-  return curve;
-}

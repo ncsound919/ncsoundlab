@@ -17,7 +17,6 @@ import { Fader } from './Fader';
 import { Knob } from './Knob';
 import {
   ArrowRight,
-  Maximize2,
   Scissors,
 } from 'lucide-react';
 

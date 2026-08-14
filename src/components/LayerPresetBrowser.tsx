@@ -14,9 +14,6 @@ import {
   Check, 
   Trash2, 
   Save, 
-  Layers, 
-  Sparkles, 
-  Music, 
   Tag,
   FolderOpen
 } from 'lucide-react';

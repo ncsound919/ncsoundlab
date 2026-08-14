@@ -20,7 +20,7 @@ import {
   type StoredSampleLibraryFolder,
   type StoredSampleAnalysis,
 } from './db';
-import { audioBufferToBase64, base64ToAudioBuffer } from './audioUtils';
+import { audioBufferToBase64, base64ToAudioBuffer, removeDcOffset } from './audioUtils';
 
 /** Public sample-library entry (the same shape that's persisted). */
 export type SampleLibrarySample = StoredSampleLibrarySample;
@@ -208,7 +208,10 @@ export async function saveLibrarySample(input: SaveLibrarySampleInput): Promise<
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const analysis = input.analysis ?? analyzeLibrarySample(input.audioBuffer);
-  const sampleData = await audioBufferToBase64(input.audioBuffer, 16);
+  // Remove DC offset before encoding so the stored sample starts clean (no
+  // thump/pop on trigger) and its peak analysis isn't skewed by a mean lift.
+  const cleanBuffer = removeDcOffset(input.audioBuffer);
+  const sampleData = await audioBufferToBase64(cleanBuffer, 16);
   const row: StoredSampleLibrarySample = {
     id,
     name: sanitiseSampleName(input.name),
@@ -249,7 +252,10 @@ export async function fetchLibrarySamples(folderId: string | null = null): Promi
     ? await db.sampleLibrarySamples.toArray()
     : await db.sampleLibrarySamples.where('folderId').equals(folderId).toArray();
   rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-  return rows;
+  // Metadata-only: drop the multi-MB base64 PCM payload so the browser list
+  // state stays light (fetchLibrarySamples runs on every folder switch /
+  // rename / delete / import). decodeLibrarySample re-fetches the row by id.
+  return rows.map(({ sampleData: _data, ...meta }) => meta);
 }
 
 export async function fetchLibrarySample(id: string): Promise<SampleLibrarySample | undefined> {
@@ -291,6 +297,9 @@ interface CacheEntry {
 }
 
 const bufferCache = new Map<string, CacheEntry>();
+// Bound the decoded-PCM cache so a large library doesn't pin every decoded
+// AudioBuffer for the lifetime of the tab.
+const MAX_CACHE_ENTRIES = 24;
 
 /**
  * Decode a library sample's base64 audio into an AudioBuffer using the given
@@ -299,8 +308,20 @@ const bufferCache = new Map<string, CacheEntry>();
 export async function decodeLibrarySample(context: BaseAudioContext, sample: SampleLibrarySample): Promise<AudioBuffer> {
   const hit = bufferCache.get(sample.id);
   if (hit) return hit.buffer;
-  const buffer = await base64ToAudioBuffer(context, sample.sampleData);
+  // List rows are metadata-only (sampleData stripped); pull the full row lazily.
+  const full = sample.sampleData
+    ? sample
+    : await fetchLibrarySample(sample.id);
+  if (!full?.sampleData) {
+    throw new Error(`Sample "${sample.name}" has no audio data`);
+  }
+  const buffer = await base64ToAudioBuffer(context, full.sampleData);
   bufferCache.set(sample.id, { buffer });
+  if (bufferCache.size > MAX_CACHE_ENTRIES) {
+    // Evict the oldest entry (Map iteration is insertion-ordered).
+    const oldest = bufferCache.keys().next().value;
+    if (oldest !== undefined) bufferCache.delete(oldest);
+  }
   return buffer;
 }
 

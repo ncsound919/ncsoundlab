@@ -12,7 +12,7 @@
  *  - sends slices to pads with gain/tune applied
  */
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline';
 import SpectrogramPlugin from 'wavesurfer.js/dist/plugins/spectrogram';
@@ -23,6 +23,7 @@ import { audioEngine } from '../lib/audioEngine';
 import { SoundLayer, DEFAULT_ENVELOPE, DEFAULT_FX } from '../types';
 import { detectOnsets } from '../audio/onsetDetection';
 import { stretchSampleBuffer } from '../audio/dsp/TimeStretch';
+import { slicesFromMarkers, sliceRegion, autoMarkers } from '../lib/chopLogic';
 
 export interface ChopSound {
   name: string;
@@ -54,71 +55,6 @@ interface SliceMeta {
 }
 
 const defaultMeta = (): SliceMeta => ({ gain: 1, tune: 0, key: 'C', stretch: 1 });
-
-/** Boundary markers (0..1) → slices between them (with 0 and 1). */
-function slicesFromMarkers(markers: number[]): { start: number; end: number }[] {
-  const pts = [0, ...[...markers].sort((a, b) => a - b), 1];
-  const out: { start: number; end: number }[] = [];
-  for (let i = 0; i < pts.length - 1; i++) {
-    if (pts[i + 1] - pts[i] >= 0.001) out.push({ start: pts[i], end: pts[i + 1] });
-  }
-  return out;
-}
-
-/** Extract a [startPct, endPct] region of a buffer as a NEW AudioBuffer. */
-function sliceRegion(buffer: AudioBuffer, startPct: number, endPct: number): AudioBuffer {
-  const start = Math.max(0, Math.floor(startPct * buffer.length));
-  const end = Math.min(buffer.length, Math.floor(endPct * buffer.length));
-  const len = Math.max(1, end - start);
-  const channels = buffer.numberOfChannels;
-  const out = new AudioBuffer({ numberOfChannels: channels, length: len, sampleRate: buffer.sampleRate });
-  for (let c = 0; c < channels; c++) {
-    out.copyToChannel(buffer.getChannelData(c).subarray(start, end), c);
-  }
-  return out;
-}
-
-/** Smart silence-based auto slicing. */
-function autoMarkers(buffer: AudioBuffer, maxChops: number): number[] {
-  const data = buffer.getChannelData(0);
-  const sr = buffer.sampleRate;
-  const win = Math.max(256, Math.floor(sr * 0.01));
-  const rms: number[] = [];
-  let peak = 0;
-  for (let i = 0; i + win <= data.length; i += win) {
-    let sum = 0;
-    for (let j = i; j < i + win; j++) sum += data[j] * data[j];
-    const r = Math.sqrt(sum / win);
-    if (r > peak) peak = r;
-    rms.push(r);
-  }
-  if (peak <= 1e-5) return [];
-  const threshold = peak * 0.04;
-  const minLoud = Math.floor((sr * 0.03) / win);
-  const minSilent = Math.floor((sr * 0.02) / win);
-  const markers: number[] = [];
-  let loud = 0;
-  let silent = 0;
-  let last = -1;
-  for (let i = 0; i < rms.length; i++) {
-    if (rms[i] >= threshold) {
-      loud++;
-      silent = 0;
-      if (loud === minLoud && i / rms.length - last > 0.02) {
-        markers.push(i / rms.length);
-        last = i / rms.length;
-      }
-    } else {
-      silent++;
-      if (loud >= minLoud && silent === minSilent && i / rms.length - last > 0.02) {
-        markers.push(i / rms.length);
-        last = i / rms.length;
-      }
-      loud = 0;
-    }
-  }
-  return markers.slice(0, Math.max(0, maxChops - 1));
-}
 
 export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClose }: ChopEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -186,7 +122,7 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
     });
   };
 
-  const tapPad = (n: number) => {
+  const tapPad = (_n: number) => {
     if (!tapMode) return;
     const t = wsRef.current ? wsRef.current.getCurrentTime() : currentTimeRef.current;
     addMarkerAt(t);
@@ -243,11 +179,14 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
       let end = s.end;
       const stretch = m.stretch ?? 1;
       if (stretch !== 1) {
-        const region = sliceRegion(buffer, s.start, s.end);
-        const stretched = stretchSampleBuffer(region, { timeFactor: stretch });
-        buf = stretched.buffer;
-        start = 0;
-        end = 1;
+        const ctx = audioEngine.getContext();
+        if (ctx) {
+          const region = sliceRegion(ctx, buffer, s.start, s.end);
+          const stretched = stretchSampleBuffer(region, { timeFactor: stretch });
+          buf = stretched.buffer;
+          start = 0;
+          end = 1;
+        }
       }
       return {
         name: m.name || `${baseName}_CHOP_${String(i + 1).padStart(2, '0')}`,
@@ -261,7 +200,7 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
     onSendToPads(named);
   };
 
-  const padColor = (i: number) => `from-blue-600/40 to-blue-900/40 border-blue-500/50`;
+  const padColor = (_i: number) => `from-blue-600/40 to-blue-900/40 border-blue-500/50`;
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md" role="dialog" aria-modal="true" aria-label="Sample editor">

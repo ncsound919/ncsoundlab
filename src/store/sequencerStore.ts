@@ -46,7 +46,7 @@ interface SequencerStore {
   setPatternProgramsAll: (map: PatternPrograms) => void;
 }
 
-export const useSequencerStore = create<SequencerStore>((set, get) => ({
+export const useSequencerStore = create<SequencerStore>((set) => ({
   programs: { A: emptyProgram(), B: emptyProgram(), C: emptyProgram(), D: emptyProgram() },
   patternPrograms: emptyPatternPrograms(),
   activeBank: 'A',

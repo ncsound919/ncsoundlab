@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runCoverArtPipeline, hashStringToSeed, deriveCoverSeed, runPaletteAgent, runLayoutAgent, runTypographyAgent } from './coverArtAgents';
+import { runCoverArtPipeline, hashStringToSeed, deriveCoverSeed } from './coverArtAgents';
 
 describe('coverArtAgents', () => {
   it('hashStringToSeed should be deterministic and output number', () => {

@@ -37,6 +37,12 @@ const PAD_COLORS = [
   'bg-pink-500/70',
 ];
 
+// Fixed drum-style pitch per row used when a cell has no explicit MIDI note.
+const ROW_PITCHES = [36, 38, 40, 41, 43, 45, 47, 48, 50, 52, 53, 55, 57, 59, 60, 62];
+
+const resolveCellPitch = (rowIdx: number, note?: number): number =>
+  note !== undefined && note >= LOW_PITCH && note <= HIGH_PITCH ? note : ROW_PITCHES[rowIdx % ROW_PITCHES.length];
+
 export type Pattern = Record<string, { on: boolean; note?: number }[]>;
 
 interface PianoRollProps {
@@ -53,8 +59,8 @@ export function PianoRoll({ layers, pattern, currentStep, activeLayerId, onToggl
   const enabled = layers.filter((l) => l.enabled);
 
   // A cell's pitch: the stored midi note, else a fixed drum pitch per row.
-  const cellPitch = (layer: SoundLayer, rowIdx: number, note?: number) =>
-    note ?? Math.min(60, 36 + rowIdx);
+  const cellPitch = (_layer: SoundLayer, rowIdx: number, note?: number) =>
+    resolveCellPitch(rowIdx, note);
 
   const notes = useMemo(() => {
     const out: { layerId: string; step: number; pitch: number; color: string }[] = [];

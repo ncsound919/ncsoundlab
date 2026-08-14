@@ -61,6 +61,17 @@ export interface LoopRecordPlan {
 }
 
 /**
+ * Duration of one sequencer pattern loop in seconds. A pattern is `stepLength`
+ * 16th-notes, i.e. `stepLength / 4` beats (16 steps = 4 beats = 1 bar at 4/4).
+ * This is the loop length loop-recording takes must align to — the old inline
+ * call-site computed `stepLength` *beats*, which made every take 4x the
+ * pattern loop for a 16-step pattern.
+ */
+export function patternLoopLengthSec(stepLength: number, bpm: number): number {
+  return (stepLength * (60 / bpm)) / 4;
+}
+
+/**
  * Build a recording plan for `loops` passes. Punch-in/out defaults to the full
  * loop when disabled.
  */

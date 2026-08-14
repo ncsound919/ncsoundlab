@@ -150,7 +150,7 @@ const createInitialState = (
   color: COLORS[0],
 });
 
-const normalizeName = (value: string) =>
+export const normalizeName = (value: string) =>
   value
     .replace(/\s+/g, '_')
     .replace(/[^A-Za-z0-9_\-#]/g, '')
@@ -158,7 +158,7 @@ const normalizeName = (value: string) =>
     .replace(/^_+|_+$/g, '')
     .toUpperCase();
 
-const parseTags = (input: string) =>
+export const parseTags = (input: string) =>
   Array.from(
     new Set(
       input
@@ -167,6 +167,42 @@ const parseTags = (input: string) =>
         .filter(Boolean)
     )
   ).slice(0, 12);
+
+/**
+ * Pure form validation. Returns a map of field → error message; an empty map
+ * means the form is valid. Extracted for unit testing.
+ */
+export function validateSampleForm(
+  form: Pick<FormState, 'sampleName' | 'selectedKitId' | 'newKitTitle' | 'bpm' | 'creator'>,
+  parsedTags: string[]
+): ErrorState {
+  const nextErrors: ErrorState = {};
+  const cleanName = normalizeName(form.sampleName);
+
+  if (!cleanName) {
+    nextErrors.sampleName = 'Sample name is required.';
+  } else if (cleanName.length < 3) {
+    nextErrors.sampleName = 'Use at least 3 valid characters.';
+  }
+
+  if (form.selectedKitId === 'new' && !form.newKitTitle.trim()) {
+    nextErrors.newKitTitle = 'New kit title is required.';
+  }
+
+  if (!Number.isFinite(form.bpm) || form.bpm < 20 || form.bpm > 300) {
+    nextErrors.bpm = 'BPM must be between 20 and 300.';
+  }
+
+  if (!form.creator.trim()) {
+    nextErrors.creator = 'Creator name is required.';
+  }
+
+  if (parsedTags.length > 12) {
+    nextErrors.tags = 'Use 12 tags or fewer.';
+  }
+
+  return nextErrors;
+}
 
 export const AddToKitModal: React.FC<AddToKitModalProps> = ({
   isOpen,
@@ -257,34 +293,7 @@ export const AddToKitModal: React.FC<AddToKitModalProps> = ({
     updateField('tagsInput', nextTags.join(', '));
   };
 
-  const validate = (): ErrorState => {
-    const nextErrors: ErrorState = {};
-    const cleanName = normalizeName(form.sampleName);
-
-    if (!cleanName) {
-      nextErrors.sampleName = 'Sample name is required.';
-    } else if (cleanName.length < 3) {
-      nextErrors.sampleName = 'Use at least 3 valid characters.';
-    }
-
-    if (form.selectedKitId === 'new' && !form.newKitTitle.trim()) {
-      nextErrors.newKitTitle = 'New kit title is required.';
-    }
-
-    if (!Number.isFinite(form.bpm) || form.bpm < 20 || form.bpm > 300) {
-      nextErrors.bpm = 'BPM must be between 20 and 300.';
-    }
-
-    if (!form.creator.trim()) {
-      nextErrors.creator = 'Creator name is required.';
-    }
-
-    if (parsedTags.length > 12) {
-      nextErrors.tags = 'Use 12 tags or fewer.';
-    }
-
-    return nextErrors;
-  };
+  const validate = (): ErrorState => validateSampleForm(form, parsedTags);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

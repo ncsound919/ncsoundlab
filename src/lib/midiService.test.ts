@@ -18,14 +18,6 @@ const fakeNavigator = (withMidi = true) => {
 
 // We mock webmidi so the service runs deterministically without hardware.
 vi.mock('webmidi', () => {
-  const input = () => ({
-    id: 'in-1',
-    name: 'Fake Keyboard',
-    manufacturer: 'Test',
-    state: 'connected',
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-  });
   return {
     WebMidi: {
       inputs: [],

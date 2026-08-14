@@ -14,7 +14,6 @@ import {
   resolveSplit,
   resolveScaleType,
   DEFAULT_SCALE_LOCK,
-  DEFAULT_CHORD_MODE,
   DEFAULT_SPLIT,
   type KeyboardSplitSettings,
 } from './musicTheory';

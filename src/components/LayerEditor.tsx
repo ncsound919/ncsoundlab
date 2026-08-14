@@ -6,12 +6,11 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Sparkles, Save, Dices, Trash2, Music, Waves, Activity, 
-  Sliders, Settings2, Flame, FolderHeart, Compass, Plus, Play, Info, Zap,
-  Download, Copy, Scissors
+  Sliders, Settings2, Flame, FolderHeart, Play, Info, Zap,
+  Scissors
 } from 'lucide-react';
 import { SoundLayer, SynthSettings, FXSettings, Envelope, FXPreset, DEFAULT_ENVELOPE, DEFAULT_FX, DEFAULT_SYNTH } from '../types';
 import { Knob } from './Knob';
-import { audioEngine } from '../lib/audioEngine';
 import { SmartRandomizerModal } from './SmartRandomizerModal';
 import { SynthVisualizer } from './SynthVisualizer';
 

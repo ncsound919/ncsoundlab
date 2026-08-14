@@ -55,7 +55,7 @@ export const buildBeatMarkers = (
   totalBeats: number,
   bpm: number,
   startBeatSec = 0,
-  fps = 30,
+  _fps = 30,
   options?: { namePrefix?: string; barEvery?: number }
 ): MarkerRow[] => {
   const beatSec = 60 / bpm;
@@ -81,7 +81,7 @@ export const buildBeatMarkers = (
 export const buildArrangementMarkers = (
   arrangement: Arrangement,
   bpm: number,
-  fps = 30
+  _fps = 30
 ): MarkerRow[] => {
   const beatSec = 60 / bpm;
   return [...arrangement.clips]

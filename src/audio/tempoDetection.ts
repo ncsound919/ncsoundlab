@@ -174,7 +174,6 @@ export const detectBpm = (
     scores.push({ lag, score: autocorrelation(onset, lag) });
   }
   scores.sort((a, b) => b.score - a.score);
-  const best = scores[0];
 
   // Try each top candidate with three interpretations of `lag`:
   //   mul=0.5 — the lag is HALF a beat (a strong 1/2-note onset). The actual

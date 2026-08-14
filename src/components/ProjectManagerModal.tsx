@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, Save, Trash2, Cloud, FolderOpen, RefreshCw, 
-  AlertCircle, Sparkles, Tag, Clock, Check, HelpCircle,
+  AlertCircle, Clock, HelpCircle,
   FileCode, Layers, ArrowRight, Server, Database, Globe
 } from 'lucide-react';
 import { SoundLayer } from '../types';

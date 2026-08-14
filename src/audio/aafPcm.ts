@@ -55,10 +55,14 @@ export function interleavePcm(
       const sample = ch[i] ?? 0;
       const offset = (i * channels.length + c) * bytesPerSample;
       if (bits === 16) {
-        const v = Math.max(-32768, Math.min(32767, Math.round(sample * 0x8000)));
+        // TPDF dither (±1 LSB) decorrelates quantization noise.
+        const dithered = sample * 0x8000 + (Math.random() + Math.random() - 1);
+        const v = Math.max(-32768, Math.min(32767, Math.round(dithered)));
         view.setInt16(offset, v, true);
       } else {
-        const v = floatToInt24(sample);
+        // floatToInt24 is a pure quantizer; apply TPDF dither (±1 LSB) here.
+        const dithered = sample + (Math.random() + Math.random() - 1) / 0x800000;
+        const v = floatToInt24(dithered);
         view.setUint8(offset, v & 0xff);
         view.setUint8(offset + 1, (v >> 8) & 0xff);
         view.setUint8(offset + 2, (v >> 16) & 0xff);

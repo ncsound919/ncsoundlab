@@ -100,6 +100,24 @@ const BANK_ACCENT: Record<BankId, { tab: string; ring: string }> = {
   D: { tab: 'bg-fuchsia-600/20 border-fuchsia-500 text-fuchsia-300', ring: 'ring-fuchsia-400 shadow-[0_0_18px_rgba(232,121,249,0.4)]' },
 };
 
+/**
+ * MPC pad velocity from pointer height fraction (0 = top, 1 = bottom).
+ * Full level short-circuits to 1; otherwise the curve maps the height with a
+ * 0.1 floor so pads are never dead-quiet at the bottom edge.
+ */
+export function padVelocityFor(y01: number, curve: VelocityCurve, fullLevel: boolean): number {
+  if (fullLevel) return 1;
+  const t = Math.max(0, Math.min(1, 1 - y01)); // top (0) = loud
+  if (curve === 'exponential') return Math.max(0.1, t * t);
+  if (curve === 'log') return Math.max(0.1, Math.sqrt(t));
+  return Math.max(0.1, t);
+}
+
+/** Note-repeat interval in ms for a BPM and a per-quarter-note division. */
+export function noteRepeatIntervalMs(bpm: number, divisionsPerQuarter: number): number {
+  return (60000 / bpm) / divisionsPerQuarter;
+}
+
 export function MpcPadBank({
   entries,
   activeBank,
@@ -138,6 +156,7 @@ export function MpcPadBank({
   onPadDrop,
 }: MpcPadBankProps) {
   const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const repeatTargetRef = useRef<{ layerId: string; semitones: number } | null>(null);
 
   const stopRepeat = useCallback(() => {
     if (repeatRef.current) {
@@ -151,10 +170,21 @@ export function MpcPadBank({
   const startRepeat = useCallback((layerId: string, semitones: number) => {
     stopRepeat();
     if (!noteRepeat.active) return;
+    repeatTargetRef.current = { layerId, semitones };
     const divisionsPerQuarter = noteRepeat.division;
-    const intervalMs = (60000 / bpm) / divisionsPerQuarter;
+    const intervalMs = noteRepeatIntervalMs(bpm, divisionsPerQuarter);
     repeatRef.current = setInterval(() => onTriggerPad(layerId, semitones, 1), intervalMs);
   }, [bpm, noteRepeat.active, noteRepeat.division, onTriggerPad, stopRepeat]);
+
+  // Re-tempo an active repeat when the BPM or division changes — otherwise the
+  // running setInterval keeps the rate captured at press time (stale groove).
+  useEffect(() => {
+    if (noteRepeat.active && repeatTargetRef.current) {
+      const { layerId, semitones } = repeatTargetRef.current;
+      startRepeat(layerId, semitones);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bpm, noteRepeat.division]);
 
   const activeEntry = entries[selectedPad] || undefined;
   const selectedSwing = activeEntry ? Math.round(padSwing[activeEntry.layerId] ?? globalSwing) : 0;
@@ -163,13 +193,7 @@ export function MpcPadBank({
   const selectedChoke = activeEntry ? (padChoke[activeEntry.layerId] || 0) : 0;
   const selectedMuted = activeEntry ? !!padMuted[activeEntry.layerId] : false;
 
-  const velocityFor = (y: number) => {
-    if (fullLevel) return 1;
-    const t = Math.max(0, Math.min(1, 1 - y)); // top (0) = loud
-    if (velocityCurve === 'exponential') return Math.max(0.1, t * t);
-    if (velocityCurve === 'log') return Math.max(0.1, Math.sqrt(t));
-    return Math.max(0.1, t);
-  };
+  const velocityFor = (y: number) => padVelocityFor(y, velocityCurve, fullLevel);
 
   const handlePadDown = (entry: PadEntry | undefined, level: number, gridIdx: number, e: React.PointerEvent<HTMLButtonElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);

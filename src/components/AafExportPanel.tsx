@@ -41,7 +41,7 @@ const isTauri = (): boolean =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 /** Convert recovered PCM back to an AudioBuffer (for reference playback). */
-function pcmToAudioBuffer(
+export function pcmToAudioBuffer(
   pcm: Uint8Array,
   sampleRate: number,
   channels: number,

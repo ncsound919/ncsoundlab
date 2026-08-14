@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  X, Sparkles, Lock, Unlock, RefreshCw, Play, RotateCcw, Sliders, 
-  Dices, Zap, Flame, Shield, Activity, Layers, Radio, Volume2, Wand2,
-  Check, Info, Compass, Cpu, Music, ShieldCheck, ArrowRight
+  X, Sparkles, Lock, Unlock, Play, RotateCcw, Sliders, 
+  Dices, Zap, Flame, Activity, Radio, Volume2, Wand2,
+  Compass, Cpu, ShieldCheck
 } from 'lucide-react';
 import { SoundLayer, SynthSettings, FXSettings, Envelope, SubDesignSettings } from '../types';
 
@@ -69,7 +69,7 @@ const lerpVal = (current: number, min: number, max: number, amt: number): number
   return current + (randomTarget - current) * amt;
 };
 
-function applyStateWithLocks(
+export function applyStateWithLocks(
   lastState: Partial<SoundLayer>,
   currentState: SoundLayer,
   locks: SectionLocks
