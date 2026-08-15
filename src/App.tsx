@@ -673,7 +673,7 @@ export default function App() {
   useEffect(() => {
     const snapshot = {
       title: 'Untitled Session',
-      appVersion: '1.0.0',
+      appVersion: '1.1.0',
       layers,
       patterns: patternStore.patterns,
       activePatternId: patternStore.activePatternId,
@@ -693,7 +693,7 @@ export default function App() {
       // until the user acts, otherwise a stray autosave of a fresh session
       // would destroy the crash-recovery data before it can be restored.
       if (!hasAutoSave) {
-        scheduleAutosave(snapshot, '1.0.0');
+        scheduleAutosave(snapshot, '1.1.0');
       }
     }
   }, [layers, masterLevel, patternStore, sequencerStore, hasAutoSave]);

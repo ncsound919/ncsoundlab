@@ -53,5 +53,27 @@ jobs:
           releaseBody: |
             NC Sound Lab Studio installer (Windows).
             Auto-update bundle is included in the release assets.
+
+            ## v1.1.0 — Sample-accurate scheduling, stability & monetization
+
+            **Sequencer timing (research-backed)**
+            - Sample-accurate step scheduling: notes + swing/groove/pocket offsets now land on the Web Audio clock instead of JS timers (no more drift under main-thread load)
+            - `latencyHint: 'playback'` on the audio context for glitch-free sustained playback
+
+            **Stability & correctness**
+            - Fixed a Web Audio graph leak: per-trigger FX subgraphs (incl. tape-delay DSP) are now disconnected on end — memory no longer grows per pad hit
+            - Fixed MIDI note-chain leaks and per-layer analyser/gain leaks on project switch
+            - Fixed Add-to-Kit form wiping your edits on re-render
+            - Fixed autosave clobbering the crash-recovery snapshot on slow startups
+            - Guarded against double-fire on Evolve, publish, and chop-send (no more tab freezes)
+            - Recording stop no longer hangs; reverb IR caches bounded; corrupt project cache no longer crashes
+            - Removed dead components; tighter undo/redo (master rack now captured)
+
+            **Monetization / community**
+            - Email capture on the welcome gate + funnel analytics (demo_started / paywall_seen / purchased)
+            - The Kit Builder stays **free** — premium factory kits now download freely (give-back model)
+            - Paywall now promotes the founder's albums (Im Different / Free Lunch)
+
+            **Deep audit** — passed The Deep 3-engine deterministic audit (244 files); entity IDs hardened to `crypto.randomUUID()`
           releaseDraft: true
           prerelease: false

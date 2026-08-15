@@ -1,6 +1,6 @@
 [package]
 name = "nc-sound-lab"
-version = "1.0.0"
+version = "1.1.0"
 description = "NC Sound Lab Studio — desktop beatmaker & sound design workstation."
 authors = ["NC Sonic"]
 license = ""
