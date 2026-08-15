@@ -291,9 +291,10 @@ export default function App() {
       programs: snap.programs,
       activeBank: snap.activeBank,
     });
+    setRackModules(snap.masterRack);
     setMasterLevel(snap.masterLevel);
     setActiveSnapshotName(null);
-  }, []);
+  }, [setRackModules]);
 
   useEffect(() => {
     useHistoryStore.getState().setApplier(applyHistorySnapshot);
@@ -305,6 +306,7 @@ export default function App() {
   // Skip committing the very first state on mount (avoids a phantom undo
   // entry for the initial empty layers array).
   const isInitialMountRef = useRef(true);
+  const evolveInFlightRef = useRef(false);
   useEffect(() => {
     if (isInitialMountRef.current) {
       isInitialMountRef.current = false;
@@ -318,7 +320,7 @@ export default function App() {
       songChain: patternStore.songChain,
       activeBank: sequencerStore.activeBank,
       masterLevel,
-      masterRack: [],
+      masterRack: rackModules,
       globalSwing: 0,
       bpm: patternStore.patterns[patternStore.activePatternId].bpm,
       timeSignature: patternStore.patterns[patternStore.activePatternId].timeSignature,
@@ -331,7 +333,7 @@ export default function App() {
     const last = history.past[history.past.length - 1];
     if (last && snapshotsEqual(last, snap)) return;
     useHistoryStore.getState().commit(snap);
-  }, [layers, masterLevel, patternStore, sequencerStore]);
+  }, [layers, masterLevel, patternStore, sequencerStore, rackModules]);
 
   const handleUndo = () => {
     const restored = useHistoryStore.getState().undo();
@@ -484,6 +486,15 @@ export default function App() {
 
   const handleLoadProject = (newLayers: SoundLayer[], title: string) => {
     audioEngine.stop();
+    // Dispose the per-layer analyser/gain modules of the outgoing project so
+    // switching sessions doesn't leak audio nodes on the shared engine.
+    layers.forEach((l) => {
+      try {
+        sharedAudioEngine.disposeModule(l.id);
+      } catch {
+        // module may already be gone — ignore
+      }
+    });
     setIsPlaying(false);
     setLayers(newLayers);
     if (newLayers.length > 0) {
@@ -572,6 +583,7 @@ export default function App() {
   }, []);
 
   // Phase 0.4 — check for an autosave recovery document on startup.
+  const [recoveryChecked, setRecoveryChecked] = useState(false);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -583,6 +595,8 @@ export default function App() {
         }
       } catch (e) {
         console.warn('Failed reading autosave', e);
+      } finally {
+        if (!cancelled) setRecoveryChecked(true);
       }
     })();
     return () => { cancelled = true; };
@@ -639,15 +653,19 @@ export default function App() {
     return () => uninstallAutosaveFlushHandlers();
   }, []);
 
-  // Initialize with a default synth layer if empty (and no auto-save was restored)
+  // Initialize with a default synth layer if empty (and no auto-save was
+  // restored). Gated on the startup recovery check completing so a slow
+  // IndexedDB read can't let this add a throwaway layer that then clobbers the
+  // real recovery snapshot via autosave.
   useEffect(() => {
+    if (!recoveryChecked) return;
     const checkAndInit = setTimeout(() => {
       if (layers.length === 0 && !hasAutoSave) {
         addLayer('synth');
       }
     }, 100);
     return () => clearTimeout(checkAndInit);
-  }, [hasAutoSave, layers.length]);
+  }, [hasAutoSave, layers.length, recoveryChecked]);
 
   // Debounced autosave (Phase 0.4) — schedules a snapshot of the full
   // session to IndexedDB. `flushAutosave()` is invoked on
@@ -670,9 +688,15 @@ export default function App() {
       globalSwing: 0,
     };
     if (layers.length > 0 || patternStore.songChain.order.length > 0) {
-      scheduleAutosave(snapshot, '1.0.0');
+      // Never clobber a recovery snapshot that the user hasn't resolved yet —
+      // the recovery banner (Keep saved version / Discard) is the only writer
+      // until the user acts, otherwise a stray autosave of a fresh session
+      // would destroy the crash-recovery data before it can be restored.
+      if (!hasAutoSave) {
+        scheduleAutosave(snapshot, '1.0.0');
+      }
     }
-  }, [layers, masterLevel, patternStore, sequencerStore]);
+  }, [layers, masterLevel, patternStore, sequencerStore, hasAutoSave]);
 
   // Sync snapshots to localStorage
   useEffect(() => {
@@ -744,17 +768,8 @@ export default function App() {
 
       if (e.key === ' ') {
         e.preventDefault();
-        if (e.shiftKey) {
-          // Shift+Space: preview the full master mix
-          if (audioEngine.getIsPlaying()) {
-            audioEngine.stop();
-            addToast('Playback Stopped', 'info');
-          } else {
-            audioEngine.playAll(layers);
-            addToast('Playing Master Mix', 'info');
-          }
-          return;
-        }
+        // Space (and Shift+Space) toggle the master mix playback. The two
+        // branches were byte-identical, so they've been merged into one.
         if (audioEngine.getIsPlaying()) {
           audioEngine.stop();
           addToast('Playback Stopped', 'info');
@@ -778,6 +793,15 @@ export default function App() {
       } else if ((e.key === 'n' || e.key === 'N') && (e.ctrlKey || e.metaKey)) {
         // Phase 6.4 — Ctrl/Cmd+N new project (empty session).
         e.preventDefault();
+        // Release per-layer audio modules before clearing so a new session
+        // doesn't leave stale analyser/gain nodes behind.
+        layers.forEach((l) => {
+          try {
+            sharedAudioEngine.disposeModule(l.id);
+          } catch {
+            // module may already be gone — ignore
+          }
+        });
         setLayers([]);
         setSelectedLayerId(null);
         patternStore.reset();
@@ -900,6 +924,10 @@ export default function App() {
     fxOption: 'mutate' | 'freeze' | 'fx_only' = 'mutate'
   ) => {
     if (!layer.audioBuffer && layer.type === 'sample') return;
+    // Guard against double-fire: evolve runs 24 offline renders, so two
+    // overlapping runs would freeze the tab and race the result.
+    if (evolveInFlightRef.current) return;
+    evolveInFlightRef.current = true;
     
     setIsEvolving(true);
     try {
@@ -919,6 +947,7 @@ export default function App() {
       setErrorMessage('Evolution engine failed to mutate sound.');
     } finally {
       setIsEvolving(false);
+      evolveInFlightRef.current = false;
     }
   };
 
@@ -991,10 +1020,18 @@ export default function App() {
   };
 
   const handlePublishNewKit = async (newKit: SoundKit) => {
-    const updated = [newKit, ...publishedKits];
-    setPublishedKits(updated);
+    // Functional update so two rapid publishes can't overwrite each other via
+    // a stale `publishedKits` closure.
+    setPublishedKits((prev) => {
+      const next = [newKit, ...prev];
+      try {
+        localStorage.setItem('sonik_published_kits', JSON.stringify(next));
+      } catch {
+        // quota/private mode — non-fatal
+      }
+      return next;
+    });
     try {
-      localStorage.setItem('sonik_published_kits', JSON.stringify(updated));
       // Persist locally for multi-session availability
       await saveSoundKit(newKit);
     } catch (e) {

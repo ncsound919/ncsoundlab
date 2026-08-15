@@ -71,6 +71,7 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [baseName] = useState(() => fileName.replace(/\.[^.]+$/, '').toUpperCase());
+  const [isSending, setIsSending] = useState(false);
 
   const slicesList = slicesFromMarkers(markers);
   const duration = buffer.duration;
@@ -94,7 +95,9 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
       plugins,
     });
     wsRef.current = ws;
-    ws.loadBlob(audioBufferToWav(buffer), [buffer.getChannelData(0)], buffer.duration).catch(() => {});
+    ws.loadBlob(audioBufferToWav(buffer), [buffer.getChannelData(0)], buffer.duration).catch((err) => {
+      console.warn('Chop editor waveform load failed:', err);
+    });
     ws.on('timeupdate', (t) => { currentTimeRef.current = t; if (!disposed) setCurrentTime(t); });
     ws.on('play', () => { if (!disposed) setIsPlaying(true); });
     ws.on('pause', () => { if (!disposed) setIsPlaying(false); });
@@ -170,34 +173,40 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
   };
 
   const send = () => {
-    const named: ChopSound[] = slicesList.map((s, i) => {
-      const m = meta[s.start.toFixed(4)] || defaultMeta();
-      // Phase 5.2 — per-slice time-stretch: render the region, then (optionally)
-      // stretch it. Falls back to the original buffer + crop bounds.
-      let buf = buffer;
-      let start = s.start;
-      let end = s.end;
-      const stretch = m.stretch ?? 1;
-      if (stretch !== 1) {
-        const ctx = audioEngine.getContext();
-        if (ctx) {
-          const region = sliceRegion(ctx, buffer, s.start, s.end);
-          const stretched = stretchSampleBuffer(region, { timeFactor: stretch });
-          buf = stretched.buffer;
-          start = 0;
-          end = 1;
+    if (isSending) return;
+    setIsSending(true);
+    try {
+      const named: ChopSound[] = slicesList.map((s, i) => {
+        const m = meta[s.start.toFixed(4)] || defaultMeta();
+        // Phase 5.2 — per-slice time-stretch: render the region, then (optionally)
+        // stretch it. Falls back to the original buffer + crop bounds.
+        let buf = buffer;
+        let start = s.start;
+        let end = s.end;
+        const stretch = m.stretch ?? 1;
+        if (stretch !== 1) {
+          const ctx = audioEngine.getContext();
+          if (ctx) {
+            const region = sliceRegion(ctx, buffer, s.start, s.end);
+            const stretched = stretchSampleBuffer(region, { timeFactor: stretch });
+            buf = stretched.buffer;
+            start = 0;
+            end = 1;
+          }
         }
-      }
-      return {
-        name: m.name || `${baseName}_CHOP_${String(i + 1).padStart(2, '0')}`,
-        buffer: buf,
-        start,
-        end,
-        gain: m.gain,
-        tune: m.tune,
-      };
-    });
-    onSendToPads(named);
+        return {
+          name: m.name || `${baseName}_CHOP_${String(i + 1).padStart(2, '0')}`,
+          buffer: buf,
+          start,
+          end,
+          gain: m.gain,
+          tune: m.tune,
+        };
+      });
+      onSendToPads(named);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const padColor = (_i: number) => `from-blue-600/40 to-blue-900/40 border-blue-500/50`;
@@ -253,7 +262,7 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
           ))}
           <button onClick={() => setZoom((z) => Math.min(8, Math.round((z + 1) * 10) / 10))} className="p-1.5 rounded-lg bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all" title="Zoom in"><ZoomIn size={13} /></button>
           <button onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 1) * 10) / 10))} className="p-1.5 rounded-lg bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all" title="Zoom out"><ZoomOut size={13} /></button>
-          <button onClick={send} className="ml-auto px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider bg-fuchsia-600/20 border border-fuchsia-500/50 hover:bg-fuchsia-600/30 text-fuchsia-300 transition-all flex items-center gap-1.5"><Drum size={13} /> Send Slices → Pads</button>
+          <button onClick={send} disabled={isSending} className="ml-auto px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider bg-fuchsia-600/20 border border-fuchsia-500/50 hover:bg-fuchsia-600/30 text-fuchsia-300 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:pointer-events-none"><Drum size={13} /> {isSending ? 'Sending…' : 'Send Slices → Pads'}</button>
         </div>
 
         {/* Waveform with markers */}

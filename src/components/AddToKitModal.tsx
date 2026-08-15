@@ -225,14 +225,25 @@ export const AddToKitModal: React.FC<AddToKitModalProps> = ({
   const panelRef = useRef<HTMLDivElement>(null);
   const sampleNameRef = useRef<HTMLInputElement>(null);
   const successTimeoutRef = useRef<number | null>(null);
+  const wasOpenRef = useRef(false);
 
+  // Reset the form ONLY when the modal transitions from closed → open. Keeping
+  // this keyed on isOpen alone prevents the parent's re-renders (new
+  // onClose/defaultSampleName identities every render) from wiping the user's
+  // in-progress edits and re-focusing the name field mid-edit.
   useEffect(() => {
-    if (!isOpen) return;
+    const justOpened = isOpen && !wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+    if (!justOpened) return;
 
     setForm(createInitialState(availableKits, defaultSampleName));
     setErrors({});
     setIsSuccess(false);
     setIsSubmitting(false);
+  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!isOpen) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -256,7 +267,7 @@ export const AddToKitModal: React.FC<AddToKitModalProps> = ({
         window.clearTimeout(successTimeoutRef.current);
       }
     };
-  }, [isOpen, availableKits, defaultSampleName, onClose]);
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (!availableKits.some((k) => k.id === form.selectedKitId) && form.selectedKitId !== 'new') {

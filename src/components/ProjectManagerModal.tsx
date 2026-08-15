@@ -81,9 +81,13 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
     } catch (err) {
       console.warn('Error loading local projects, reading from cache', err);
       // Fallback to local cache
-      const cached = localStorage.getItem('sonik_projects_cache');
-      if (cached) {
-        setProjects(JSON.parse(cached));
+      try {
+        const cached = localStorage.getItem('sonik_projects_cache');
+        if (cached) {
+          setProjects(JSON.parse(cached));
+        }
+      } catch (cacheErr) {
+        console.warn('Project cache is corrupt', cacheErr);
       }
       onAddToast('Could not load projects. Using cached list.', 'info');
     } finally {
@@ -130,8 +134,13 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
     } catch (err) {
       onAddToast('Failed to save project locally.', 'warn');
       // Save locally to local cache list anyway for offline resilience
-      const cached = localStorage.getItem('sonik_projects_cache');
-      const cacheList: SavedSoundProject[] = cached ? JSON.parse(cached) : [];
+      let cacheList: SavedSoundProject[] = [];
+      try {
+        const cached = localStorage.getItem('sonik_projects_cache');
+        cacheList = cached ? JSON.parse(cached) : [];
+      } catch (cacheErr) {
+        console.warn('Project cache is corrupt', cacheErr);
+      }
       
       const offlineProj: SavedSoundProject = {
         id: projId,

@@ -79,6 +79,7 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
       metronomeRef.current?.dispose();
       if (auditionSourceRef.current) {
         try { auditionSourceRef.current.stop(); } catch {}
+        try { auditionSourceRef.current.disconnect(); } catch {}
       }
     };
   }, []);
@@ -216,6 +217,7 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
     if (!ctx || !take.buffer) return;
     if (auditionSourceRef.current) {
       try { auditionSourceRef.current.stop(); } catch {}
+      try { auditionSourceRef.current.disconnect(); } catch {}
       auditionSourceRef.current = null;
       setAuditioningId(null);
       if (auditioningId === take.id) return;
@@ -226,7 +228,11 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
     src.start(0);
     auditionSourceRef.current = src;
     setAuditioningId(take.id);
-    src.onended = () => { auditionSourceRef.current = null; setAuditioningId(null); };
+    src.onended = () => {
+      if (auditionSourceRef.current === src) auditionSourceRef.current = null;
+      try { src.disconnect(); } catch {}
+      setAuditioningId(null);
+    };
   };
 
   const sendTake = (take: Take) => {

@@ -30,15 +30,43 @@ export function createAudioCapture(): AudioCapture {
     async stop(_stream) {
       if (!activeRecorder) throw new Error('No active recorder');
       const rec = activeRecorder;
-      const blob = await new Promise<Blob>((res) => {
-        rec.addEventListener('dataavailable', (e) => res(e.data), { once: true });
-        rec.stop();
+      const blob = await new Promise<Blob>((res, rej) => {
+        const onError = () => rej(new Error('MediaRecorder error during stop'));
+        const off = () => {
+          if (typeof rec.removeEventListener === 'function') {
+            rec.removeEventListener('error', onError);
+          }
+        };
+        // Safety net: if the recorder never emits dataavailable (already
+        // stopped, never started, or a browser quirk), fail rather than hang
+        // the caller with the mic left active.
+        const hangTimer = setTimeout(() => {
+          off();
+          rej(new Error('MediaRecorder stop timed out'));
+        }, 3000);
+        if (typeof rec.addEventListener === 'function') {
+          rec.addEventListener('error', onError, { once: true });
+          rec.addEventListener('dataavailable', (e: BlobEvent) => {
+            clearTimeout(hangTimer);
+            off();
+            res(e.data);
+          }, { once: true });
+          rec.addEventListener('stop', () => clearTimeout(hangTimer), { once: true });
+        }
+        try {
+          rec.stop();
+        } catch (err) {
+          clearTimeout(hangTimer);
+          off();
+          rej(err as Error);
+        }
+      }).finally(() => {
+        if (activeStream) {
+          for (const t of activeStream.getTracks()) t.stop();
+          activeStream = null;
+        }
+        activeRecorder = null;
       });
-      if (activeStream) {
-        for (const t of activeStream.getTracks()) t.stop();
-        activeStream = null;
-      }
-      activeRecorder = null;
       return blob;
     },
 

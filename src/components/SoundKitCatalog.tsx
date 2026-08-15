@@ -314,6 +314,7 @@ export const SoundKitCatalog: React.FC<SoundKitCatalogProps> = ({
     // Stop previous playing source if any
     if (activeSourceRef.current) {
       try { activeSourceRef.current.stop(); } catch (e) {}
+      try { activeSourceRef.current.disconnect(); } catch {}
       activeSourceRef.current = null;
     }
 
@@ -343,7 +344,8 @@ export const SoundKitCatalog: React.FC<SoundKitCatalogProps> = ({
     setPlayingSampleId(sample.id);
 
     source.onended = () => {
-      activeSourceRef.current = null;
+      if (activeSourceRef.current === source) activeSourceRef.current = null;
+      try { source.disconnect(); } catch {}
       setPlayingSampleId((prev) => (prev === sample.id ? null : prev));
     };
   };

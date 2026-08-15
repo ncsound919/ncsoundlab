@@ -40,18 +40,30 @@ export function readDemoStart(): number | null {
 
 export function beginDemoSession(now = Date.now()): void {
   if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(LS_START, String(now));
-  localStorage.setItem(LS_STATUS, 'active');
+  try {
+    localStorage.setItem(LS_START, String(now));
+    localStorage.setItem(LS_STATUS, 'active');
+  } catch {
+    // quota-blocked / private mode — demo still works in-memory this session
+  }
 }
 
 export function expireDemoSession(): void {
   if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(LS_STATUS, 'expired');
+  try {
+    localStorage.setItem(LS_STATUS, 'expired');
+  } catch {
+    // ignore — non-fatal
+  }
 }
 
 export function unlockDemoSession(): void {
   if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(LS_STATUS, 'purchased');
+  try {
+    localStorage.setItem(LS_STATUS, 'purchased');
+  } catch {
+    // ignore — non-fatal
+  }
 }
 
 export function remainingMs(start: number, now = Date.now()): number {

@@ -238,6 +238,7 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
       if (activeSourceRef.current) {
         activeSourceRef.current.onended = null;
         activeSourceRef.current.stop();
+        try { activeSourceRef.current.disconnect(); } catch {}
         activeSourceRef.current = null;
       }
     };
@@ -353,6 +354,7 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
     if (activeSourceRef.current) {
       activeSourceRef.current.onended = null;
       activeSourceRef.current.stop();
+      try { activeSourceRef.current.disconnect(); } catch {}
       activeSourceRef.current = null;
     }
 
@@ -379,7 +381,8 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
     setPlayingItemId(item.id);
 
     source.onended = () => {
-      activeSourceRef.current = null;
+      if (activeSourceRef.current === source) activeSourceRef.current = null;
+      try { source.disconnect(); } catch {}
       setPlayingItemId((prev) => (prev === item.id ? null : prev));
     };
   };

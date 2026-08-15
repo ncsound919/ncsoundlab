@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, BookOpen, Sparkles, Layers, Zap, Sliders, 
@@ -64,9 +64,40 @@ const CHAPTERS: Chapter[] = [
   { id: 'hotkey-reference', title: '19. Keyboard Hotkey Index', badge: 'COMMANDS', icon: <Command className="text-blue-400" size={18} /> },
 ];
 
+// Module-level demo AudioContext so audition buttons don't spin up a fresh
+// context (and never close it) per click. The modal shares one context and
+// it is closed when the modal unmounts.
+let demoCtx: AudioContext | null = null;
+
+function getDemoCtx(): AudioContext | null {
+  try {
+    if (!demoCtx) {
+      demoCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    if (demoCtx.state === 'suspended') {
+      demoCtx.resume().catch(() => undefined);
+    }
+    return demoCtx;
+  } catch {
+    return null;
+  }
+}
+
+function closeDemoCtx() {
+  try {
+    if (demoCtx) {
+      demoCtx.close().catch(() => undefined);
+      demoCtx = null;
+    }
+  } catch {
+    demoCtx = null;
+  }
+}
+
 function playDemoSound(type: string) {
   try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const ctx = getDemoCtx();
+    if (!ctx) return;
     const now = ctx.currentTime;
     
     if (type === 'punch_kick') {
@@ -205,6 +236,13 @@ export function UserManualModal({ isOpen, onClose }: UserManualModalProps) {
   const [activeChapter, setActiveChapter] = useState<ChapterId>('welcome');
   const [activeTabDemo, setActiveTabDemo] = useState<'punch' | 'flat'>('punch');
   const [shortcutSearch, setShortcutSearch] = useState('');
+
+  // Release the shared demo AudioContext when the modal is closed/unmounted
+  // so repeated open/close cycles don't accumulate open contexts.
+  useEffect(() => {
+    if (!isOpen) return;
+    return () => closeDemoCtx();
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

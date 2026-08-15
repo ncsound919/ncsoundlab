@@ -1,6 +1,16 @@
 import { ConvolutionPreset } from '../../types';
 
-// Global Caches for Generated and Processed Impulse Responses
+// Global Caches for Generated and Processed Impulse Responses. Bounded LRU so
+// dragging IR-processing sliders can't grow the module caches without limit.
+const MAX_IR_CACHE = 48;
+function cacheSet(cache: Map<string, AudioBuffer>, key: string, value: AudioBuffer): void {
+  cache.set(key, value);
+  while (cache.size > MAX_IR_CACHE) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 const baseIrCache = new Map<string, AudioBuffer>();
 const processedIrCache = new Map<string, AudioBuffer>();
 
@@ -101,7 +111,7 @@ export function generateImpulseResponse(
     right[i] = nR * env;
   }
 
-  baseIrCache.set(cacheKey, buffer);
+  cacheSet(baseIrCache, cacheKey, buffer);
   return buffer;
 }
 
@@ -221,7 +231,7 @@ export function processImpulseResponseBuffer(
   }
 
   if (cacheKey) {
-    processedIrCache.set(cacheKey, processedBuffer);
+    cacheSet(processedIrCache, cacheKey, processedBuffer);
   }
 
   return processedBuffer;

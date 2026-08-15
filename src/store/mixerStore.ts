@@ -71,6 +71,3 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   },
   reset: () => set({ buses: JSON.parse(JSON.stringify(DEFAULT_BUSES)), layerSends: {} }),
 }));
-
-export const SEND_KEY_SEPARATOR = '::';
-export const makeSendKey = sendKey;

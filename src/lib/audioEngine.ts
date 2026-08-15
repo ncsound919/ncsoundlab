@@ -92,6 +92,13 @@ export class AudioEngine {
   // gain/pan → master bus.
   private sendBuses = new Map<string, { input: GainNode; returnGain: GainNode; pan: StereoPannerNode }>();
 
+  // Per-trigger cleanup registry: every live trigger's terminal nodes (and any
+  // per-trigger DSP like TapeDelayDSP) are stored here so they can be
+  // disconnected when the source ends. Without this, each pad hit / sequencer
+  // step permanently retains its FX subgraph on the audio graph, which grows
+  // without bound over a session. Keyed by the trigger's source node.
+  private triggerCleanups = new Map<AudioScheduledSourceNode, () => void>();
+
   constructor() {
     this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
     this.masterGain = this.context.createGain();
@@ -987,6 +994,28 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Register a per-trigger cleanup that disconnects every node this trigger
+   * wired into the live graph (terminal nodes feeding the master/destination,
+   * per-trigger DSP instances, etc.). Runs exactly once when the source ends.
+   */
+  private registerTriggerCleanup(source: AudioScheduledSourceNode, cleanup: () => void): void {
+    if (this.triggerCleanups.has(source)) return;
+    this.triggerCleanups.set(source, cleanup);
+  }
+
+  /** Run + forget a trigger's cleanup (idempotent; safe if already gone). */
+  private disposeTriggerCleanup(source: AudioScheduledSourceNode): void {
+    const cleanup = this.triggerCleanups.get(source);
+    if (!cleanup) return;
+    this.triggerCleanups.delete(source);
+    try {
+      cleanup();
+    } catch {
+      // a node may already be disconnected — never let cleanup throw
+    }
+  }
+
   async playLayer(layer: SoundLayer, duration?: number) {
     this.stop();
     if (!layer.enabled) return;
@@ -1109,6 +1138,9 @@ export class AudioEngine {
             // node already stopped / never started — ignore
           }
         }
+        // Release the whole per-trigger FX subgraph (terminals + per-trigger
+        // DSP) so chokes don't leave nodes on the audio graph.
+        if (source) this.disposeTriggerCleanup(source);
         source?.removeEventListener('ended', release);
       };
       if (source) {
@@ -1559,6 +1591,14 @@ export class AudioEngine {
     const delay = ctx.createDelay();
     const feedback = ctx.createGain();
 
+    // Nodes this trigger connects directly into the live graph tail (the
+    // master/destination). Disconnecting these when the source ends releases
+    // the whole per-trigger subgraph (and its reverb feedback loops) from the
+    // audio graph so memory doesn't grow for every pad hit / step.
+    const terminals: AudioNode[] = [];
+    // Per-trigger DSP that needs an explicit dispose (stops LFOs + disconnects).
+    let tapeDsp: TapeDelayDSP | null = null;
+
     // Source setup
     if (layer.type === 'sample') {
       const s = ctx.createBufferSource();
@@ -1670,6 +1710,7 @@ export class AudioEngine {
         if (index > -1) {
           this.activeSources.splice(index, 1);
         }
+        this.disposeTriggerCleanup(source);
       };
     }
 
@@ -1849,6 +1890,13 @@ export class AudioEngine {
       gainNode.connect(destination);
       this.tapLayerMeter(layer.id, gainNode, ctx);
       this.tapLayerSends(layer, gainNode, ctx, layerStartTime);
+      if (ctx === this.context && source) {
+        this.registerTriggerCleanup(source, () => {
+          for (const t of terminals) { try { t.disconnect(); } catch {} }
+          tapeDsp?.dispose();
+          gainNode.disconnect();
+        });
+      }
       return { source, gainNode };
     }
 
@@ -1975,7 +2023,7 @@ export class AudioEngine {
 
     // FX: Delay
     if (layer.fx.tapeDelayPreset && layer.fx.delayEnabled !== false && (ctx instanceof BaseAudioContext)) {
-      const tapeDsp = new TapeDelayDSP(ctx as AudioContext);
+      tapeDsp = new TapeDelayDSP(ctx as AudioContext);
       tapeDsp.applyPreset(layer.fx.tapeDelayPreset);
       nodePipeline.connect(tapeDsp.inputNode);
       tapeDsp.outputNode.connect(panNode);
@@ -2120,6 +2168,7 @@ export class AudioEngine {
     compressor.release.setValueAtTime(0.25, layerStartTime);
     gainNode.connect(compressor);
     compressor.connect(destination);
+    terminals.push(compressor);
     this.tapLayerMeter(layer.id, compressor, ctx);
     this.tapLayerSends(layer, compressor, ctx, layerStartTime);
 
@@ -2127,6 +2176,7 @@ export class AudioEngine {
     if (layer.fx.reverbMix > 0 && layer.fx.reverbEnabled !== false) {
       const reverbNode = this.createSchroederReverbNode(ctx, compressor, safeAudioValue(layer.fx.reverbMix, 0.35), layerStartTime);
       reverbNode.connect(destination);
+      terminals.push(reverbNode);
     }
 
     // --- Hybrid Source Fusion (HSF) ---
@@ -2298,6 +2348,7 @@ export class AudioEngine {
         hsfSource.connect(hsfEnvGain);
         hsfEnvGain.connect(hsfGain);
         hsfGain.connect(destination);
+        terminals.push(hsfGain);
       }
     }
 
@@ -2356,6 +2407,7 @@ export class AudioEngine {
       
       resMix.connect(mrsGain);
       mrsGain.connect(destination);
+      terminals.push(mrsGain);
     }
 
     // --- Module 8: Texture Injection Layer (TIL) ---
@@ -2435,6 +2487,7 @@ export class AudioEngine {
       texEnv.connect(texFilter);
       texFilter.connect(tilGain);
       tilGain.connect(destination);
+      terminals.push(tilGain);
       
       texSrc.start(layerStartTime);
       this.trackHelper(ctx, texSrc, helperStopTime);
@@ -2511,9 +2564,11 @@ subSaturation.oversample = '4x';
         subSaturation.curve = this.makeDistortionCurve(sub.harmonicSaturation * 0.5, sub.harmonic2nd || 0, sub.harmonic3rd || 0);
         subGain.connect(subSaturation);
         subSaturation.connect(destination);
+        terminals.push(subSaturation);
       } else {
         subGain.connect(destination);
       }
+      terminals.push(subGain);
 
       // Drive / Gain with anti-click 8ms attack ramp
       const driveGain = 1.0 + (sub.drive * 2);
@@ -2532,6 +2587,13 @@ subSaturation.oversample = '4x';
       subOsc.start(layerStartTime);
       subOsc.connect(subGain);
       this.trackHelper(ctx, subOsc, layerStartTime + playDur + env.release);
+    }
+
+    if (ctx === this.context && source) {
+      this.registerTriggerCleanup(source, () => {
+        for (const t of terminals) { try { t.disconnect(); } catch {} }
+        tapeDsp?.dispose();
+      });
     }
 
     return { source, gainNode: compressor };

@@ -83,12 +83,3 @@ export const useMasterDynamicsStore = create<MasterDynamicsStore>((set) => ({
     set((s) => ({ sidechains: s.sidechains.filter((r) => r.id !== id) })),
   reset: () => set({ settings: { ...DEFAULT_MASTER_DYNAMICS }, sidechains: [] }),
 }));
-
-export interface SidechainDuckNodes {
-  /** AnalyserNode tapped from the source — the envelope follower reads this. */
-  analyser: AnalyserNode;
-  /** GainNode that the envelope follower scales 0..1. */
-  gain: GainNode;
-  /** Dispose all internal nodes and listeners. */
-  dispose: () => void;
-}

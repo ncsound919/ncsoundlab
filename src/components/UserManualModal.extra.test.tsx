@@ -168,7 +168,7 @@ describe('UserManualModal', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it('logs an error when audio audition fails', () => {
+  it('gracefully no-ops when audio audition fails to construct a context', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.stubGlobal('AudioContext', class {
       constructor() {
@@ -178,6 +178,8 @@ describe('UserManualModal', () => {
     renderModal();
     fireEvent.click(screen.getByRole('button', { name: /3\. Transient Attack Punch/i }));
     fireEvent.click(screen.getByRole('button', { name: /Audition Demo/i }));
-    expect(errorSpy).toHaveBeenCalled();
+    // The shared-context helper swallows context-construction failures and
+    // returns null (audition silently no-ops) instead of throwing.
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });

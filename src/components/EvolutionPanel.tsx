@@ -46,6 +46,8 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
 }) => {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rawSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const isMountedRef = useRef(true);
 
   // Batch Field Recording Upload & Evolution Engine States
   const [uploadedBatch, setUploadedBatch] = useState<{ id: string; name: string; buffer: AudioBuffer; isEvolving: boolean }[]>([]);
@@ -79,6 +81,7 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
         console.error('Failed to decode batch file:', file.name, e);
       }
     }
+    if (!isMountedRef.current) return;
     setUploadedBatch(prev => [...prev, ...newFiles]);
     setIsDecodingBatch(false);
   };
@@ -107,14 +110,22 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
       return;
     }
     audioEngine.stop();
+    if (rawSourceRef.current) {
+      try { rawSourceRef.current.onended = null; rawSourceRef.current.stop(); } catch {}
+      try { rawSourceRef.current.disconnect(); } catch {}
+      rawSourceRef.current = null;
+    }
     const ctx = audioEngine.getContext();
     if (!ctx) return;
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(ctx.destination);
     source.start(0);
+    rawSourceRef.current = source;
     setPlayingRawId(id);
     source.onended = () => {
+      if (rawSourceRef.current === source) rawSourceRef.current = null;
+      try { source.disconnect(); } catch {}
       setPlayingRawId(prev => prev === id ? null : prev);
     };
   };
@@ -136,7 +147,9 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
     } catch (e) {
       console.error('Failed to evolve individual recording:', e);
     } finally {
-      setUploadedBatch(prev => prev.map(item => item.id === rec.id ? { ...item, isEvolving: false } : item));
+      if (isMountedRef.current) {
+        setUploadedBatch(prev => prev.map(item => item.id === rec.id ? { ...item, isEvolving: false } : item));
+      }
     }
   };
 
@@ -154,13 +167,13 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
         }));
         allNewVariations = [...allNewVariations, ...prefixed];
       }
-      if (onSetVariations) {
+      if (isMountedRef.current && onSetVariations) {
         onSetVariations([...allNewVariations, ...variations]);
       }
     } catch (e) {
       console.error('Failed to evolve entire batch:', e);
     } finally {
-      setIsBatchEvolving(false);
+      if (isMountedRef.current) setIsBatchEvolving(false);
     }
   };
 
@@ -170,7 +183,13 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
 
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (rawSourceRef.current) {
+        try { rawSourceRef.current.onended = null; rawSourceRef.current.stop(); } catch {}
+        try { rawSourceRef.current.disconnect(); } catch {}
+        rawSourceRef.current = null;
+      }
     };
   }, []);
 

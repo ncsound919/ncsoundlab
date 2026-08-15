@@ -103,16 +103,24 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  // Guards against stale async responses overwriting newer ones: folder
+  // switches and preview clicks each bump a token so a slow older response
+  // can't clobber the newer request's result.
+  const refreshRequestRef = useRef(0);
+  const previewRequestRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const reqId = ++refreshRequestRef.current;
     try {
       const [f, s] = await Promise.all([
         fetchLibraryFolders(),
         fetchLibrarySamples(activeFolderId === null ? null : activeFolderId),
       ]);
+      if (reqId !== refreshRequestRef.current) return;
       setFolders(f);
       setSamples(s);
     } catch (err) {
+      if (reqId !== refreshRequestRef.current) return;
       console.warn('Sample library refresh failed:', err);
     }
   }, [activeFolderId]);
@@ -134,6 +142,7 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
     return () => {
       if (activeSourceRef.current) {
         try { activeSourceRef.current.onended = null; activeSourceRef.current.stop(); } catch {}
+        try { activeSourceRef.current.disconnect(); } catch {}
         activeSourceRef.current = null;
       }
     };
@@ -152,13 +161,23 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
   };
 
   const handleRenameFolder = async (id: string, name: string) => {
-    await renameLibraryFolder(id, name);
+    try {
+      await renameLibraryFolder(id, name);
+    } catch (err) {
+      console.warn('Failed to rename folder', err);
+      setErrors(['Could not rename folder.']);
+    }
     setRenamingFolderId(null);
     await refresh();
   };
 
   const handleDeleteFolder = async (id: string) => {
-    await deleteLibraryFolder(id);
+    try {
+      await deleteLibraryFolder(id);
+    } catch (err) {
+      console.warn('Failed to delete folder', err);
+      setErrors(['Could not delete folder.']);
+    }
     if (activeFolderId === id) setActiveFolder(null);
     await refresh();
   };
@@ -171,12 +190,22 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
       activeSourceRef.current = null;
       setPlayingId(null);
     }
-    await deleteLibrarySample(id);
+    try {
+      await deleteLibrarySample(id);
+    } catch (err) {
+      console.warn('Failed to delete sample', err);
+      setErrors(['Could not delete sample.']);
+    }
     await refresh();
   };
 
   const handleUpdateSample = async (id: string, patch: Parameters<typeof updateLibrarySample>[1]) => {
-    await updateLibrarySample(id, patch);
+    try {
+      await updateLibrarySample(id, patch);
+    } catch (err) {
+      console.warn('Failed to update sample', err);
+      setErrors(['Could not update sample.']);
+    }
     await refresh();
   };
 
@@ -189,14 +218,19 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
       setPlayingId(null);
       return;
     }
+    const previewRequestId = ++previewRequestRef.current;
     try {
       if (activeSourceRef.current) {
         try { activeSourceRef.current.onended = null; activeSourceRef.current.stop(); } catch {}
+        try { activeSourceRef.current.disconnect(); } catch {}
       }
       const ctx = audioEngine.getContext();
       if (!ctx) return;
       if (ctx.state === 'suspended') await ctx.resume();
       const buffer = await decodeLibrarySample(ctx, sample);
+      // A newer preview click may have superseded this one while we decoded —
+      // don't let a slow older decode stomp on the newer request.
+      if (previewRequestId !== previewRequestRef.current) return;
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(ctx.destination);
@@ -204,7 +238,10 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
       activeSourceRef.current = source;
       setPlayingId(sample.id);
       source.onended = () => {
-        activeSourceRef.current = null;
+        if (activeSourceRef.current === source) {
+          activeSourceRef.current = null;
+        }
+        try { source.disconnect(); } catch {}
         setPlayingId((prev) => (prev === sample.id ? null : prev));
       };
     } catch (err) {

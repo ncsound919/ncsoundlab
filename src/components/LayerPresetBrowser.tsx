@@ -73,11 +73,19 @@ export const LayerPresetBrowser: React.FC<LayerPresetBrowserProps> = ({
   });
 
   useEffect(() => {
-    localStorage.setItem('soundlab_layer_preset_favorites', JSON.stringify(favorites));
+    try {
+      localStorage.setItem('soundlab_layer_preset_favorites', JSON.stringify(favorites));
+    } catch {
+      // quota / private mode — non-fatal
+    }
   }, [favorites]);
 
   useEffect(() => {
-    localStorage.setItem('soundlab_layer_user_presets', JSON.stringify(userPresets));
+    try {
+      localStorage.setItem('soundlab_layer_user_presets', JSON.stringify(userPresets));
+    } catch {
+      // quota / private mode — non-fatal
+    }
   }, [userPresets]);
 
   const toggleFavorite = (id: string, e: React.MouseEvent) => {

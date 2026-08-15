@@ -63,6 +63,9 @@ export const SoundKitCreator: React.FC<SoundKitCreatorProps> = ({
   // Single reusable AudioContext + ref to active source
   const audioCtxRef = useRef<AudioContext | null>(null);
   const activeSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  // In-flight guard so double-clicking "Port to Marketplace" can't publish two
+  // kits / race the stale-closure state update in the parent.
+  const isPublishingRef = useRef(false);
 
   // Clean up AudioContext and publish timer on unmount
   const publishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -253,6 +256,9 @@ export const SoundKitCreator: React.FC<SoundKitCreatorProps> = ({
 
   // Port/Publish to Marketplace
   const handlePublishKit = async () => {
+    if (isPublishingRef.current) return;
+    isPublishingRef.current = true;
+    setIsCloudSynced(true);
     const newKit: SoundKit = {
       id: crypto.randomUUID(),
       title: kitTitle,
@@ -286,6 +292,7 @@ export const SoundKitCreator: React.FC<SoundKitCreatorProps> = ({
     setIsCloudSynced(syncedToCloud);
     onPublishToMarketplace(newKit);
     setPublishSuccess(true);
+    isPublishingRef.current = false;
   };
 
   return (

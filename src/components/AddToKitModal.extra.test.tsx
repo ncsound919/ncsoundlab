@@ -168,7 +168,7 @@ describe('AddToKitModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('resets the form when reopened', () => {
+  it('keeps in-progress edits when the parent re-renders while open', () => {
     const { rerender } = render(
       <AddToKitModal isOpen={true} availableKits={kits} defaultSampleName="kick_01" onConfirmAdd={vi.fn()} onClose={vi.fn()} />,
     );
@@ -176,6 +176,18 @@ describe('AddToKitModal', () => {
     rerender(
       <AddToKitModal isOpen={true} availableKits={kits} defaultSampleName="new_default" onConfirmAdd={vi.fn()} onClose={vi.fn()} />,
     );
-    expect(screen.getByDisplayValue('new_default')).toBeDefined();
+    expect(screen.getByDisplayValue('edited')).toBeDefined();
+  });
+
+  it('resets the form when closed and reopened', () => {
+    const { rerender } = render(
+      <AddToKitModal isOpen={true} availableKits={kits} defaultSampleName="kick_01" onConfirmAdd={vi.fn()} onClose={vi.fn()} />,
+    );
+    fireEvent.change(sampleNameInput(), { target: { value: 'edited' } });
+    rerender(<AddToKitModal isOpen={false} availableKits={kits} defaultSampleName="kick_01" onConfirmAdd={vi.fn()} onClose={vi.fn()} />);
+    rerender(
+      <AddToKitModal isOpen={true} availableKits={kits} defaultSampleName="kick_01" onConfirmAdd={vi.fn()} onClose={vi.fn()} />,
+    );
+    expect(screen.getByDisplayValue('kick_01')).toBeDefined();
   });
 });

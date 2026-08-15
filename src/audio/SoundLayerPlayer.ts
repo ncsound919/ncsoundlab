@@ -215,6 +215,15 @@ export class SoundLayerPlayer {
           active.filter((n) => n !== nodeItem)
         );
       }
+      // Release the per-note subgraph from the audio graph so MIDI notes don't
+      // accumulate connected nodes on the shared module gain over a session.
+      try {
+        noteGainNode.disconnect();
+        panNode.disconnect();
+        filter.disconnect();
+      } catch {
+        // nodes already disconnected — ignore
+      }
     };
   }
 
