@@ -44,7 +44,9 @@ class CompareEngine {
   private initContext() {
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      this.ctx = new AudioCtx();
+      // 'playback' latencyHint: the Compare Engine is sustained A/B reference
+      // listening — favor glitch-free rendering over the tightest latency.
+      this.ctx = new AudioCtx({ latencyHint: 'playback' });
       this.refGainNode = this.ctx.createGain();
       this.mixGainNode = this.ctx.createGain();
 

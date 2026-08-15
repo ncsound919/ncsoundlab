@@ -398,6 +398,45 @@ describe('transport branches', () => {
     await sleep(10);
     audioEngine.playLayerInstance = orig;
   });
+
+  it('triggerLayer schedules on the passed audio-clock time (sample-accurate)', async () => {
+    // When a `when` time is supplied, the source must start at that Web Audio
+    // clock time (used by the sequencer to land notes + swing offsets exactly),
+    // not at the current context time.
+    const eng = audioEngine as any;
+    const origCreate = ctx.createBufferSource;
+    let lastSource: any = null;
+    ctx.createBufferSource = vi.fn(() => {
+      lastSource = makeNode(AudioBufferSourceNode.prototype);
+      return lastSource;
+    });
+    const scheduled = 7.5;
+    audioEngine.triggerLayer(makeLayer(), undefined, undefined, scheduled);
+    await sleep(10);
+    expect(lastSource).toBeTruthy();
+    expect(lastSource.start).toHaveBeenCalled();
+    const startArg = lastSource.start.mock.calls[0][0];
+    expect(startArg).toBe(scheduled);
+    ctx.createBufferSource = origCreate;
+    audioEngine.stop();
+  });
+
+  it('triggerLayer defaults to the current time when no when is passed', async () => {
+    const eng = audioEngine as any;
+    const origCreate = ctx.createBufferSource;
+    let lastSource: any = null;
+    ctx.createBufferSource = vi.fn(() => {
+      lastSource = makeNode(AudioBufferSourceNode.prototype);
+      return lastSource;
+    });
+    ctx.currentTime = 1;
+    audioEngine.triggerLayer(makeLayer());
+    await sleep(10);
+    expect(lastSource.start).toHaveBeenCalled();
+    expect(lastSource.start.mock.calls[0][0]).toBe(1);
+    ctx.createBufferSource = origCreate;
+    audioEngine.stop();
+  });
 });
 
 describe('send buses and sidechains', () => {

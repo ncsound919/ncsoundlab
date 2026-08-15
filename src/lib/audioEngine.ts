@@ -100,7 +100,15 @@ export class AudioEngine {
   private triggerCleanups = new Map<AudioScheduledSourceNode, () => void>();
 
   constructor() {
-    this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
+    // Research-backed (Tone.js Performance wiki / Paul Adenot): 'playback'
+    // latencyHint tells the browser to prioritize sustained, glitch-free
+    // rendering over the tightest possible output latency. This app is a
+    // sequencer/beatmaker — long sessions, many scheduled events — so we
+    // favor stable playback. Real-time pad hits remain responsive via the
+    // audio-clock scheduling elsewhere.
+    this.context = new (window.AudioContext || (window as any).webkitAudioContext)({
+      latencyHint: 'playback',
+    });
     this.masterGain = this.context.createGain();
     this.masterPan = this.context.createStereoPanner();
     this.analyserNode = this.context.createAnalyser();
@@ -1074,10 +1082,13 @@ export class AudioEngine {
    * @param chokeKey when provided, stops any in-flight triggers that share the
    *   same key first (MPC choke/mute groups, e.g. open + closed hi-hat).
    */
-  triggerLayer(layer: SoundLayer, duration?: number, chokeKey?: string): void {
+  triggerLayer(layer: SoundLayer, duration?: number, chokeKey?: string, when?: number): void {
     if (!layer || !layer.enabled || layer.muted === true) return;
     this.resume();
-    const now = this.context.currentTime;
+    // Sample-accurate scheduling: callers may pass the Web Audio clock time
+    // the hit should land at (e.g. a Tone transport step + swing offset).
+    // When omitted we fire immediately, preserving existing behavior.
+    const now = when ?? this.context.currentTime;
     let playDur = duration || 1.5;
     if (layer.type === 'sample' && layer.audioBuffer) {
       const bufferDur = layer.audioBuffer.duration;

@@ -23,7 +23,7 @@ import { Note, Chord } from 'tonal';
 import { Play, Square, Save, FolderOpen } from 'lucide-react';
 import 'react-piano/dist/styles.css';
 import { SoundLayer, PatternCell } from '../types';
-import { applySemitoneShift } from '../lib/sequencerHelpers';
+import { applySemitoneShift, stepOffsetSeconds } from '../lib/sequencerHelpers';
 import { audioEngine } from '../lib/audioEngine';
 import { SoundLayerPlayer } from '../audio/SoundLayerPlayer';
 import { MpcPadBank, PadEntry } from './MpcPadBank';
@@ -256,7 +256,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     return !anySolo || layer.soloed === true;
   }, [layers]);
 
-  const triggerStep = useCallback((layerId: string, cell: StepCell) => {
+  const triggerStep = useCallback((layerId: string, cell: StepCell, when?: number) => {
     const layer = layers.find((l) => l.id === layerId);
     if (!layer || !isLayerAudible(layer)) return;
     if (cell.note !== undefined && playerRef.current) {
@@ -267,7 +267,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       const velocity = typeof cell.velocity === 'number' ? Math.max(0, Math.min(1, cell.velocity / 127)) : 1;
       const durationSteps = typeof cell.duration === 'number' && cell.duration > 0 ? cell.duration : 1;
       const noteDurSeconds = (durationSteps * (60000 / bpm)) / 4 / 1000;
-      playerRef.current.playNote(layer, cell.note, noteDurSeconds, velocity);
+      playerRef.current.playNote(layer, cell.note, noteDurSeconds, velocity, when);
     } else {
       // Step-triggered layers honour MPC choke groups too, so open/closed
       // hi-hat style rows cut each other consistently with the pads. Recorded
@@ -276,7 +276,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       const choke = padChokeRef.current[layerId] || 0;
       const velocity = typeof cell.velocity === 'number' ? Math.max(0, Math.min(1, cell.velocity / 127)) : 1;
       const velLayer = { ...layer, gain: (layer.gain || 1) * velocity };
-      audioEngine.triggerLayer(velLayer, undefined, choke > 0 ? `choke:${choke}` : undefined);
+      audioEngine.triggerLayer(velLayer, undefined, choke > 0 ? `choke:${choke}` : undefined, when);
     }
   }, [layers, isLayerAudible, bpm]);
 
@@ -299,23 +299,29 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         // = pushed). The two combine so per-pad swing and per-pattern groove
         // can be authored independently.
         const swing = padSwingRef.current[layerId] || 0;
-        const offBeat = step % 2 === 1;
-        const swingDelay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
-        const grooveDelay = (cell.offset ?? 0) * stepMs;
-        // PocketLab-style per-piece pocket: a constant early/late bias in ms
-        // applied to every hit of this layer, independent of swing/groove.
         const pocketMs = padPocketRef.current[layerId] || 0;
-        const delay = swingDelay + grooveDelay + pocketMs;
-        if (delay > 0) {
-          const t = setTimeout(() => {
-            swingTimeoutsRef.current.delete(t);
-            triggerStep(layerId, cell);
-          }, delay);
-          swingTimeoutsRef.current.add(t);
-        } else if (delay < 0) {
-          // Negative offsets are not schedulable through setTimeout; clamp to 0
-          // (push to the downbeat). The pattern editor can warn the user.
-          triggerStep(layerId, cell);
+        const offsetSec = stepOffsetSeconds({
+          stepMs,
+          stepIndex: step,
+          swingPercent: swing,
+          cellOffset: cell.offset ?? 0,
+          pocketMs,
+        });
+        // Schedule on the audio clock when possible so the setInterval fallback
+        // still gets sample-accurate swing (the interval only advances the step
+        // counter; the note lands at currentTime + offset). Negative (pushed)
+        // offsets clamp to the step time inside the helper.
+        if (offsetSec > 0) {
+          const ctx = audioEngine.getContext();
+          if (ctx) {
+            triggerStep(layerId, cell, ctx.currentTime + offsetSec);
+          } else {
+            const t = setTimeout(() => {
+              swingTimeoutsRef.current.delete(t);
+              triggerStep(layerId, cell);
+            }, offsetSec * 1000);
+            swingTimeoutsRef.current.add(t);
+          }
         } else {
           triggerStep(layerId, cell);
         }
@@ -324,7 +330,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   }, [triggerStep, bpm]);
 
   useEffect(() => { tickRef.current = tick; }, [tick]);
-  const triggerStepRef = useRef<(layerId: string, cell: StepCell) => void>(() => {});
+  const triggerStepRef = useRef<(layerId: string, cell: StepCell, when?: number) => void>(() => {});
   useEffect(() => { triggerStepRef.current = triggerStep; }, [triggerStep]);
 
   const togglePlay = () => {
@@ -400,12 +406,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         if (cancelled) return;
         stepRef.current = stepIdx;
         Tone.Draw.schedule(() => setCurrentStep(stepIdx), time);
-        // Trigger the same per-step logic the setInterval path uses.
-        // We do this off the audio thread by reading the pattern via the
-        // ref. The transport's `time` is the Web Audio context time, but
-        // since `tick()` is sample-accurate at bpm/4 anyway we just
-        // invoke it immediately — the swing offsets already use setTimeout
-        // for the late beats.
+        // Sample-accurate triggering: `time` is the Web Audio clock time this
+        // step lands on. We schedule every note at `time + offset` on the
+        // audio clock (NOT via setTimeout — a JS-clock offset is jittery and
+        // drifts under main-thread load; see web.dev "A tale of two clocks").
         const p = patternRef.current;
         const stepMs = (60000 / bpm) / 4;
         for (const [layerId, cells] of Object.entries(p)) {
@@ -414,23 +418,20 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
             const probability = cell.probability ?? 1;
             if (probability < 1 && Math.random() > probability) continue;
             const swing = padSwingRef.current[layerId] || 0;
-            const offBeat = stepIdx % 2 === 1;
-            const swingDelay = offBeat && swing > 0 ? (swing / 100) * stepMs : 0;
-            const grooveDelay = (cell.offset ?? 0) * stepMs;
             const pocketMs = padPocketRef.current[layerId] || 0;
-            const delay = swingDelay + grooveDelay + pocketMs;
-            if (delay > 0) {
-              const to = setTimeout(() => {
-                swingTimeoutsRef.current.delete(to);
-                triggerStepRef.current(layerId, cell);
-              }, delay);
-              swingTimeoutsRef.current.add(to);
-            } else {
-              triggerStepRef.current(layerId, cell);
-            }
+            const offsetSec = stepOffsetSeconds({
+              stepMs,
+              stepIndex: stepIdx,
+              swingPercent: swing,
+              cellOffset: cell.offset ?? 0,
+              pocketMs,
+            });
+            // Negative (pushed) offsets clamp to 0 inside the helper, so the
+            // note always lands at or after the step's audio time.
+            const triggerTime = time + offsetSec;
+            triggerStepRef.current(layerId, cell, triggerTime);
           }
         }
-        void time;
       }, [...Array(stepLengthRef.current).keys()], '16n');
       seq.loop = true;
       seq.start(0);

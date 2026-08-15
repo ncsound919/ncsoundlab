@@ -76,7 +76,7 @@ export class SoundLayerPlayer {
    * `velocity` is 0..1 (linearly scaled to 0..127 MIDI velocity when stored
    * on the pattern cell). Defaults to 1.
    */
-  playNote(layer: SoundLayer, noteNumber: number = 60, duration: number = 1.0, velocity: number = 1.0): void {
+  playNote(layer: SoundLayer, noteNumber: number = 60, duration: number = 1.0, velocity: number = 1.0, when?: number): void {
     if (!layer.enabled) return;
 
     const ctx = baseAudioEngine.getContext();
@@ -86,7 +86,10 @@ export class SoundLayerPlayer {
       ctx.resume();
     }
 
-    const startTime = ctx.currentTime;
+    // Sample-accurate scheduling: accept an audio-clock time so sequenced
+    // notes can be scheduled ahead (Tone transport step time + swing offset)
+    // instead of firing immediately on the JS thread. Defaults to now.
+    const startTime = when ?? ctx.currentTime;
 
     // A sample layer with no decoded buffer can't play — don't silently
     // synthesize a tone for it (mirrors audioEngine.triggerLayer).

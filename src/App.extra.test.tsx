@@ -22,6 +22,7 @@ vi.mock('./lib/db', () => ({
   toggleFavorite: vi.fn(async () => undefined),
   deleteSoundKit: vi.fn(async () => undefined),
   fetchProjectDocuments: vi.fn(async () => []),
+  fetchProjectDocument: vi.fn(async () => undefined),
   saveProjectDocument: vi.fn(async () => 'doc-1'),
   readAutosaveDocument: vi.fn(async () => null),
   clearAutosave: vi.fn(async () => undefined),
