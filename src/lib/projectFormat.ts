@@ -411,7 +411,11 @@ function normalizeV1(obj: RawProjectDocument): ProjectDocument {
     arrangement: arrangementRaw && Array.isArray(arrangementRaw.clips) ? {
       totalBeats: Math.max(0, numberOr(arrangementRaw.totalBeats, 0)),
       clips: arrangementRaw.clips.map((c) => ({
-        id: typeof c.id === 'string' ? c.id : `c-${Math.random().toString(36).slice(2)}`,
+        id: typeof c.id === 'string'
+          ? c.id
+          : typeof crypto !== 'undefined' && 'randomUUID' in crypto
+            ? crypto.randomUUID()
+            : `c-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         patternId: ['A', 'B', 'C', 'D'].includes(c.patternId) ? c.patternId : 'A',
         startBeat: Math.max(0, numberOr(c.startBeat, 0)),
         beats: Math.max(0, numberOr(c.beats, 0)),

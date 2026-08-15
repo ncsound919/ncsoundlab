@@ -168,7 +168,9 @@ export const useCompareEngineStore = create<CompareEngineStore>((set, get) => ({
     const { activeTrackId, refGainDb, loopStart, loopEnd, snapshots } = get();
     if (!activeTrackId) return;
     const snap: CompareEngineSnapshot = {
-      id: Math.random().toString(36).substring(2, 9),
+      id: typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `snap-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       name,
       refTrackId: activeTrackId,
       refGainOffset: refGainDb,
