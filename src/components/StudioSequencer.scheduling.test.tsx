@@ -164,6 +164,7 @@ describe('StudioSequencer sample-accurate scheduling', () => {
 
   it('schedules steps at audio-clock time through triggerStep (when param)', async () => {
     const { audioEngine } = await import('../lib/audioEngine');
+    const triggerMock = audioEngine.triggerLayer as unknown as ReturnType<typeof vi.fn>;
     renderSequencer();
     await waitFor(() => expect(toneState.sequenceCallback).toBeTruthy(), { timeout: 3000 });
 
@@ -171,8 +172,8 @@ describe('StudioSequencer sample-accurate scheduling', () => {
       toneState.sequenceCallback!(2.0, 0);
     });
     // Step 0 has no offset → triggerLayer scheduled at the step time (2.0).
-    expect(audioEngine.triggerLayer).toHaveBeenCalled();
-    const call = audioEngine.triggerLayer.mock.calls.find((c: unknown[]) => c[0]?.id === 'l1');
+    expect(triggerMock).toHaveBeenCalled();
+    const call = triggerMock.mock.calls.find((c: unknown[]) => (c[0] as { id?: string })?.id === 'l1');
     expect(call).toBeTruthy();
     // when === step time for a zero-offset step
     expect(call![3]).toBeCloseTo(2.0, 6);
@@ -181,8 +182,8 @@ describe('StudioSequencer sample-accurate scheduling', () => {
       toneState.sequenceCallback!(2.5, 1);
     });
     // Step 1 has cell.offset 0.25 → note lands at 2.5 + 0.03125.
-    const call2 = audioEngine.triggerLayer.mock.calls.find(
-      (c: unknown[]) => c[0]?.id === 'l1' && c[3] > 2.5
+    const call2 = triggerMock.mock.calls.find(
+      (c: unknown[]) => (c[0] as { id?: string })?.id === 'l1' && (c[3] as number) > 2.5
     );
     expect(call2).toBeTruthy();
     expect(call2![3]).toBeCloseTo(2.5 + 0.25 * (60000 / 120) / 4 / 1000, 5);
@@ -191,6 +192,7 @@ describe('StudioSequencer sample-accurate scheduling', () => {
   it('falls back to the setInterval tick when Tone Transport is disabled', async () => {
     vi.useFakeTimers();
     const { audioEngine } = await import('../lib/audioEngine');
+    const triggerMock = audioEngine.triggerLayer as unknown as ReturnType<typeof vi.fn>;
     renderSequencer();
     // Disable Tone Transport → the interval path drives tick().
     fireEvent.click(screen.getByLabelText('Tone Transport'));
@@ -198,7 +200,7 @@ describe('StudioSequencer sample-accurate scheduling', () => {
     await act(async () => {
       vi.advanceTimersByTime(2000); // let several ticks fire
     });
-    expect(audioEngine.triggerLayer).toHaveBeenCalled();
+    expect(triggerMock).toHaveBeenCalled();
     fireEvent.click(screen.getByLabelText('Tone Transport'));
     vi.useRealTimers();
   });
