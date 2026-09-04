@@ -114,8 +114,6 @@ const FACTORY_KITS: SoundKit[] = [
       },
     ],
     createdAt: '2026-07-20T10:00:00Z',
-    downloadsCount: 1840,
-    rating: 4.9,
   },
   {
     id: 'factory-2',
@@ -177,8 +175,6 @@ const FACTORY_KITS: SoundKit[] = [
       },
     ],
     createdAt: '2026-07-22T14:30:00Z',
-    downloadsCount: 3420,
-    rating: 4.8,
   },
   {
     id: 'factory-3',
@@ -221,8 +217,6 @@ const FACTORY_KITS: SoundKit[] = [
       },
     ],
     createdAt: '2026-07-24T09:15:00Z',
-    downloadsCount: 950,
-    rating: 5.0,
   },
 ];
 
@@ -564,7 +558,9 @@ export const SoundKitCatalog: React.FC<SoundKitCatalogProps> = ({
                       <Star className={`w-3.5 h-3.5 ${favoriteIds.includes(kit.id) ? 'fill-amber-400' : ''}`} />
                     </button>
                     <div className="px-2 py-1 bg-black/70 backdrop-blur rounded-lg border border-white/10 text-[10px] font-mono font-bold text-amber-300 flex items-center gap-1">
-                      {kit.rating ? (
+                      {kit.price === 0 ? (
+                        <span className="text-emerald-400 font-extrabold tracking-wider">FREE</span>
+                      ) : kit.rating ? (
                         <>
                           <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                           <span>{kit.rating.toFixed(1)}</span>

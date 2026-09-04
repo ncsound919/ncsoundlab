@@ -79,7 +79,10 @@ export function DemoSessionProvider({ children }: { children: React.ReactNode })
   const unlock = useCallback(() => {
     unlockDemoSession();
     setStatus('purchased');
-    trackEvent('purchased');
+    // Honest label: this is the honor-system unlock click, not a verified
+    // payment. A real `purchased` event must only fire after a Stripe
+    // webhook/redirect confirms payment.
+    trackEvent('unlock_clicked');
   }, []);
 
   const value: DemoSessionValue = {

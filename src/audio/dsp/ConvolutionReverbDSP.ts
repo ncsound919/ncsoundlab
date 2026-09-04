@@ -4,6 +4,10 @@ import { ConvolutionPreset } from '../../types';
 // dragging IR-processing sliders can't grow the module caches without limit.
 const MAX_IR_CACHE = 48;
 function cacheSet(cache: Map<string, AudioBuffer>, key: string, value: AudioBuffer): void {
+  // Map preserves insertion order; re-inserting an existing key refreshes its
+  // recency so a frequently-accessed entry can't sit at the oldest slot and be
+  // evicted by the LRU bound (cache thrashing).
+  if (cache.has(key)) cache.delete(key);
   cache.set(key, value);
   while (cache.size > MAX_IR_CACHE) {
     const oldest = cache.keys().next().value;

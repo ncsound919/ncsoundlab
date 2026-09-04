@@ -26,7 +26,7 @@
  *   COVERAGE_FILE      path to the coverage report (default ./coverage/coverage-final.json).
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -46,27 +46,45 @@ const COVERAGE_FILE =
   process.env.COVERAGE_FILE || path.join(ROOT, 'coverage', 'coverage-final.json');
 const BASE = process.env.COVERAGE_BASE || process.argv[2] || null;
 
-function git(args) {
+/**
+ * Run git with an argument array — no shell interpolation, so a malicious or
+ * malformed ref/arg can never execute commands (or break the diff with spaces).
+ */
+function git(...args) {
+  return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+}
+
+/**
+ * Fail-closed diff helper: a git failure (invalid COVERAGE_BASE, shallow
+ * clone, missing ref) must abort the gate rather than silently pass. Returning
+ * an empty diff here would let untested new code through.
+ */
+function gitOrDie(...args) {
   try {
-    return execSync(`git ${args}`, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    return '';
+    return git(...args);
+  } catch (err) {
+    console.error(
+      `\nGit command failed: git ${args.join(' ')}\n` +
+      `${err.stderr ? err.stderr.trim() : err.message}\n` +
+      'Aborting the coverage gate (fail-closed) — fix the git/ref problem before proceeding.\n',
+    );
+    process.exit(1);
   }
 }
 
 const modified = new Set();
 if (BASE) {
-  git(`diff --name-only ${BASE}...HEAD`)
+  gitOrDie('diff', '--name-only', `${BASE}...HEAD`)
     .split('\n')
     .forEach((f) => f.trim() && modified.add(f.trim().replace(/\\/g, '/')));
 } else {
-  git('diff HEAD --name-only')
+  gitOrDie('diff', 'HEAD', '--name-only')
     .split('\n')
     .forEach((f) => f.trim() && modified.add(f.trim().replace(/\\/g, '/')));
 }
 
 const untracked = new Set();
-git('ls-files --others --exclude-standard')
+gitOrDie('ls-files', '--others', '--exclude-standard')
   .split('\n')
   .forEach((f) => f.trim() && untracked.add(f.trim().replace(/\\/g, '/')));
 
@@ -120,8 +138,8 @@ function stmtMap(relPath) {
 
 /** Absolute line numbers added by the current diff for a tracked file. */
 function addedLines(relPath) {
-  const range = BASE ? `${BASE}...HEAD` : 'HEAD';
-  const diff = git(`diff ${range} --unified=0 -- "${relPath}"`);
+  const range = BASE ? [`${BASE}...HEAD`, '--'] : ['HEAD', '--'];
+  const diff = gitOrDie('diff', ...range, relPath, '--unified=0');
   const added = new Set();
   let cur = -1;
   for (const line of diff.split('\n')) {
