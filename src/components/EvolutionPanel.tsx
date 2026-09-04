@@ -17,9 +17,11 @@ import {
   Upload,
   FileAudio,
   Drum,
-  Loader2
+  Loader2,
+  Vote
 } from 'lucide-react';
 import { EvolutionVariation, SoundLayer } from '../types';
+import { RatingSessionView } from './RatingSessionView';
 import { audioEngine } from '../lib/audioEngine';
 import { generateEvolutionVariations, FXEvolutionOption } from '../lib/evolutionEngine';
 
@@ -57,6 +59,7 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
   const [isBatchEvolving, setIsBatchEvolving] = useState(false);
   const [evolutionMode, setEvolutionMode] = useState<'mutations' | 'melodic' | 'kit'>('mutations');
   const [fxOption, setFxOption] = useState<FXEvolutionOption>('mutate');
+  const [showRating, setShowRating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAddFiles = async (files: File[]) => {
@@ -257,6 +260,21 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {/* Rate Variations (blind A/B) */}
+          <button
+            onClick={() => setShowRating(true)}
+            disabled={variations.length < 2}
+            title={variations.length < 2 ? 'Generate at least 2 variations to rate them' : 'Blind A/B rating session'}
+            data-testid="open-rating-session"
+            className={`px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 transition ${
+              variations.length < 2
+                ? 'bg-[#0F0F11] border border-[#2A2A2E] text-zinc-600 cursor-not-allowed'
+                : 'bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30'
+            }`}
+          >
+            <Vote className="w-4 h-4" /> Rate Variations
+          </button>
+
           {/* Mode Selector */}
           <div className="flex items-center gap-1 bg-[#0F0F11] border border-[#2A2A2E] rounded-lg p-1">
             {(['mutations', 'melodic', 'kit'] as const).map(mode => (
@@ -572,6 +590,52 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
           ))}
         </AnimatePresence>
       </div>
+
+      {/* Blind A/B Rating Session Modal */}
+      {showRating && (() => {
+        const seedItem = uploadedBatch[0];
+        if (!seedItem) return null;
+        const seedDescriptor = {
+          paramHash: `seed-${seedItem.id.slice(0, 8)}`,
+          params: { sourceId: seedItem.id, sourceName: seedItem.name },
+          seedId: seedItem.id,
+          generation: 0,
+          origin: 'seed' as const,
+          renderDurationMs: seedItem.buffer.duration * 1000,
+          createdAt: Date.now(),
+          buffer: seedItem.buffer,
+        };
+        const variationDescriptors = variations.map((v) => ({
+          paramHash: `ev-${v.id.slice(0, 8)}`,
+          params: {
+            chaosLevel: v.chaosLevel,
+            spectralDensity: v.spectralDensity,
+            temporalBehavior: v.temporalBehavior,
+            role: v.role,
+          } as Record<string, number | string | boolean>,
+          seedId: seedItem.id,
+          generation: 1,
+          origin: 'evolve' as const,
+          renderDurationMs: v.buffer.duration * 1000,
+          createdAt: Date.now(),
+          buffer: v.buffer,
+        }));
+        return (
+          <RatingSessionView
+            variations={variationDescriptors}
+            seed={seedDescriptor}
+            source="evolution_panel"
+            onClose={() => setShowRating(false)}
+            onUseParent={(hash) => {
+              // Find the variation that matches this hash; stash it for re-evolve.
+              const found = variationDescriptors.find((d) => d.paramHash === hash);
+              if (found) {
+                setShowRating(false);
+              }
+            }}
+          />
+        );
+      })()}
     </div>
   );
 };
