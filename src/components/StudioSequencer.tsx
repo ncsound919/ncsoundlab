@@ -508,6 +508,21 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     };
   }, [useTransportMode, songModeActive]);
 
+  // Recourse bridge: start playback on request. Enables transport + song mode so
+  // the loaded piece plays through its chain. (Web Audio still needs a prior
+  // user gesture on this page before audio is audible.)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onRecoursePlay = () => {
+      setUseTransportMode(true);
+      setSongModeActive(true);
+      if (!isPlaying) togglePlay();
+    };
+    window.addEventListener('recourse:play', onRecoursePlay);
+    return () => window.removeEventListener('recourse:play', onRecoursePlay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying]);
+
   const toggleCell = (layerId: string, idx: number) => {
     const row = pattern[layerId] || Array.from({ length: stepLengthRef.current }, () => ({ on: false }));
     const next = row.map((c, i) => (i === idx ? { on: !c.on, note: c.note } : c));

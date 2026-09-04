@@ -46,6 +46,7 @@ import {
   FXSettings
 } from './types';
 import { audioEngine } from './lib/audioEngine';
+import { synthLayerFor, patternFor, isRecoursePiece } from './lib/recourseBridge';
 import { audioEngine as sharedAudioEngine } from './audio/AudioEngine';
 import { audioBufferToWav } from './lib/audioUtils';
 const WaveformEditor = lazy(() => import('./components/WaveformEditor').then(m => ({ default: m.WaveformEditor })));
@@ -651,6 +652,45 @@ export default function App() {
   useEffect(() => {
     installAutosaveFlushHandlers();
     return () => uninstallAutosaveFlushHandlers();
+  }, []);
+
+  // Recourse bridge: lets the Recourse composer load a piece into SoundLab's own
+  // synth layers + a playable pattern + song chain, then request playback. Web
+  // Audio requires a user gesture, so `play()` only asks the mounted sequencer;
+  // audible start follows a user click (or an earlier gesture this session).
+  const setLayersLatest = useRef(setLayers);
+  setLayersLatest.current = setLayers;
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    (window as unknown as { __recourse?: unknown }).__recourse = {
+      ready: true,
+      load: (piece: unknown) => {
+        try {
+          if (!isRecoursePiece(piece)) return { ok: false, error: 'not a recourse-soundlab-piece' };
+          const newLayers = piece.layers.map((pl) => synthLayerFor(pl));
+          setLayersLatest.current(newLayers);
+          const pattern = patternFor(piece);
+          const bars = Math.max(1, Math.min(64, piece.chainBars || piece.bars || 1));
+          usePatternStore.setState({
+            patterns: { ...usePatternStore.getState().patterns, A: pattern },
+            activePatternId: 'A',
+            songChain: { order: Array.from({ length: bars }, () => 'A') },
+          });
+          setSelectedLayerId(newLayers[0]?.id ?? null);
+          setActiveTab('produce');
+          return { ok: true, layers: newLayers.length, pattern: 'A', bars };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      play: () => {
+        if (typeof window === 'undefined') return;
+        window.dispatchEvent(new CustomEvent('recourse:play'));
+      },
+      loaded: () => typeof window !== 'undefined',
+    };
+    return () => { (window as unknown as { __recourse?: unknown }).__recourse = undefined; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Initialize with a default synth layer if empty (and no auto-save was
