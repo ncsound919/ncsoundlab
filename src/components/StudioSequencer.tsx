@@ -30,6 +30,7 @@ import { MpcPadBank, PadEntry } from './MpcPadBank';
 import { PianoRoll } from './PianoRoll';
 import { useSequencerStore, BANK_IDS, BankId } from '../store/sequencerStore';
 import { usePatternStore, PATTERN_IDS, type PatternId } from '../store/patternStore';
+import { planFromArrangement } from '../lib/arrangementScheduler';
 import { GROOVE_TEMPLATES, applyGroove, humanizeVelocities, clearGrooveOffsets, findGrooveTemplate } from '../lib/grooveTemplates';
 import { exportV2, importExport } from '../sequencerFormat';
 import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
@@ -522,6 +523,21 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     return () => window.removeEventListener('recourse:play', onRecoursePlay);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying]);
+
+  // Arrangement drives song mode (Phase 2.3): when an Arrangement with clips is
+  // present and song mode is on, flatten it into the song chain so the existing
+  // per-bar engine plays the arrangement (honoring clip order/loops/muted). The
+  // recursion loop stays on the existing chain engine — no new transport code.
+  useEffect(() => {
+    if (!songModeActive) return;
+    const st = usePatternStore.getState();
+    const arrangement = st.arrangement;
+    if (!arrangement || !arrangement.clips || arrangement.clips.length === 0) return;
+    const plan = planFromArrangement(arrangement, st.patterns);
+    if (plan.bars > 0) {
+      usePatternStore.setState({ songChain: { order: plan.order as unknown as string[] } });
+    }
+  }, [songModeActive]);
 
   const toggleCell = (layerId: string, idx: number) => {
     const row = pattern[layerId] || Array.from({ length: stepLengthRef.current }, () => ({ on: false }));

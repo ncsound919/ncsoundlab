@@ -662,8 +662,10 @@ export default function App() {
   setLayersLatest.current = setLayers;
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    (window as unknown as { __recourse?: unknown }).__recourse = {
+    const recWin = window as unknown as { __recourse?: unknown };
+    const bridge: any = {
       ready: true,
+      loaded: true,
       load: (piece: unknown) => {
         try {
           if (!isRecoursePiece(piece)) return { ok: false, error: 'not a recourse-soundlab-piece' };
@@ -687,9 +689,42 @@ export default function App() {
         if (typeof window === 'undefined') return;
         window.dispatchEvent(new CustomEvent('recourse:play'));
       },
-      loaded: () => typeof window !== 'undefined',
+      // Pull a piece from a CORS-enabled Recourse URL, then load (and optionally play).
+      pull: async (url: string, opts?: { play?: boolean }) => {
+        try {
+          const res = await fetch(String(url), { cache: 'no-store' });
+          if (!res.ok) return { ok: false, error: `pull HTTP ${res.status}` };
+          const piece = (await res.json()) as unknown;
+          const loaded = bridge.load(piece);
+          if (opts?.play !== false && (loaded as { ok?: boolean }).ok) window.dispatchEvent(new CustomEvent('recourse:play'));
+          return loaded;
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      // Poll a Recourse URL and auto-load when a NEW piece appears (web-safe push).
+      autoPull: (url: string, intervalMs?: number) => {
+        let lastKey = '';
+        const id = window.setInterval(async () => {
+          try {
+            const res = await fetch(String(url), { cache: 'no-store' });
+            if (!res.ok) return;
+            const piece = (await res.json()) as { style?: string; headChord?: { rootPc?: number; quality?: string } };
+            const key = `${piece?.style ?? ''}:${piece?.headChord?.rootPc ?? ''}:${piece?.headChord?.quality ?? ''}`;
+            if (key && key !== lastKey) {
+              lastKey = key;
+              bridge.load(piece as unknown);
+              window.dispatchEvent(new CustomEvent('recourse:play'));
+            }
+          } catch { /* keep polling */ }
+        }, Math.max(500, intervalMs ?? 2000));
+        return { stop: () => window.clearInterval(id), id };
+      },
     };
-    return () => { (window as unknown as { __recourse?: unknown }).__recourse = undefined; };
+    recWin.__recourse = bridge;
+    return () => {
+      recWin.__recourse = undefined;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
