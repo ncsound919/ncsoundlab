@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import App from './App';
 import React from 'react';
@@ -33,5 +33,11 @@ describe('App', () => {
     render(<App />);
     expect(screen.queryByRole('dialog', { name: /Welcome to NC Sound Lab/i })).toBeNull();
     expect(screen.queryByRole('dialog', { name: /Free demo session ended/i })).toBeNull();
+  });
+
+  it('opens the AI provider settings from the header', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByLabelText('AI Provider Settings'));
+    expect(await screen.findByRole('dialog', { name: 'AI provider settings' })).toBeDefined();
   });
 });

@@ -112,6 +112,42 @@ describe('AiSettingsPanel', () => {
     expect(screen.getByRole('status').textContent).toMatch(/cleared/);
   });
 
+  it('reports a thrown transport error when testing the model', async () => {
+    const throwing: HttpTransport = {
+      id: 'boom',
+      rustBacked: true,
+      request: vi.fn(async () => {
+        throw new Error('socket closed');
+      }),
+    };
+    renderPanel(throwing);
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'm' } });
+    fireEvent.click(screen.getByRole('button', { name: /Test model/ }));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/socket closed/));
+  });
+
+  it('edits and persists the Keywire coordinates', () => {
+    renderPanel();
+    fireEvent.change(screen.getByLabelText('Secret source'), { target: { value: 'keywire' } });
+    fireEvent.change(screen.getByLabelText('Keywire URL'), { target: { value: 'http://127.0.0.1:9999' } });
+    fireEvent.change(screen.getByLabelText('Keywire project'), { target: { value: 'proj' } });
+    fireEvent.change(screen.getByLabelText('Keywire environment'), { target: { value: 'prod' } });
+    fireEvent.change(screen.getByLabelText('Keywire secret name'), { target: { value: 'MY_KEY' } });
+
+    expect(useAiProviderStore.getState().keywire).toEqual({
+      baseUrl: 'http://127.0.0.1:9999',
+      projectId: 'proj',
+      envSlug: 'prod',
+      keyName: 'MY_KEY',
+    });
+  });
+
+  it('edits the model base URL', () => {
+    renderPanel();
+    fireEvent.change(screen.getByLabelText('Model base URL'), { target: { value: 'https://api.example.com/v1' } });
+    expect(useAiProviderStore.getState().llm.baseUrl).toBe('https://api.example.com/v1');
+  });
+
   it('closes when the backdrop is clicked', () => {
     const onClose = vi.fn();
     const { container } = render(<AiSettingsPanel isOpen onClose={onClose} />);
