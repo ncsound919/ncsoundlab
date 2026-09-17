@@ -11,8 +11,15 @@ export default defineConfig({
     // boxes (small pagefile, Defender scanning, Mandatory ASLR). The ceiling is
     // for environment throughput, not for hiding hangs — genuine deadlocks still
     // fail, just at a higher bound.
-    testTimeout: 15000,
-    hookTimeout: 15000,
+    //
+    // 30s rather than 15s because `npm run test:coverage` instruments every
+    // module (roughly 2x slower) and the heaviest suites — App.coverage,
+    // StudioSequencer.coverage, LayerEditor.coverage, audioEngine.extra — were
+    // timing out at 15s under instrumentation on a 4-core box while passing
+    // uninstrumented. The coverage gate reads that run, so a timeout there is a
+    // false failure, not a real one.
+    testTimeout: 30000,
+    hookTimeout: 30000,
     setupFiles: ['./src/tests/setup.ts'],
     exclude: ['e2e/**/*', 'node_modules/**/*', 'dist/**/*'],
     coverage: {
