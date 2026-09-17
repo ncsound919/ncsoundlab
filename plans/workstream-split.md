@@ -130,6 +130,46 @@ baseline, but freeze it), `src/store/historyStore.ts`, `src/lib/workflowStages.t
 - `npm run lint` clean; new files meet the 90% new-code coverage gate;
   `npm test` green.
 
+### Progress (2026-09-17)
+
+Landed and verified:
+
+- `src-tauri/src/net.rs` — the `http_request` command, with `is_allowed_url`
+  enforcing **https anywhere, http on loopback only**. 3 Rust policy tests pass;
+  `cargo check` clean. No new capability entry is needed: this is a custom
+  command, so the `tauri-plugin-http` approach in the original plan was dropped
+  as unnecessary.
+- `Cargo.toml` / `Cargo.lock` — `reqwest 0.13` with the **`rustls`** feature
+  (0.13 renamed the old `rustls-tls`; `default-tls` now resolves to rustls).
+- `src/lib/ai/transport.ts`, `keywire.ts`, `secrets.ts`, `provider.ts`,
+  `openaiCompatible.ts`, `src/store/aiProviderStore.ts` + 49 tests.
+  Coverage: **100% statements / 98% branches** across all new modules.
+
+Remaining in this lane: none — **Phase 3.1 is complete.**
+- `src/components/AiSettingsPanel.tsx` + 11 tests (transport injectable for tests).
+- Mounted in `src/App.tsx` behind `isAiSettingsOpen`, wired into
+  `otherModalOpen`, the Escape chain, and the keyboard dependency array.
+
+**Gotcha found and fixed while mounting (worth knowing for any new modal):** the
+lazy panel was first placed *inside* the shared modal `<Suspense>` boundary,
+which made that boundary suspend and rendered **every other modal** as `null`
+until the chunk resolved — it broke four `App.extra` tests intermittently.
+Fixed by gating the mount (`{isAiSettingsOpen && <Suspense>…}`), the same pattern
+`ChopEditor` already uses. Cost me a false "it's just flaky" conclusion: the
+failing test set *changed* between runs, which looked like load flakiness but was
+actually timing-dependent suspension. **Always distinguish the two by stashing
+your own change and re-running.**
+
+## Known issue — the suite is load-sensitive
+
+Two full runs during this session produced **7 failures**, then **1**, from
+different files; the file that failed the second time passes 51/51 in isolation.
+Suite duration varied 301s / 633s / 467s under the same command. This is
+load-induced flakiness (heavy component tests brushing the 15s timeout when the
+machine is busy — likely while another agent runs its own suite), not a
+regression. CI runs on an isolated runner and is unaffected. Worth addressing
+separately: raise `testTimeout` for the heavy component files or cap workers.
+
 ---
 
 ## 3. Lane B — Phase 7: MIDI controller profile platform
@@ -169,6 +209,24 @@ Everything under `src/lib/ai/**`, `src/store/aiProviderStore.ts`,
 - A profile round-trips: export → import → identical bindings.
 - A registry-driven MPD226 profile reproduces today's default bindings exactly.
 - `ControllerHost.test.tsx` still passes; new profile code meets the coverage gate.
+
+### Progress (2026-09-17) — Lane B started by the primary agent
+
+Ownership note: the primary agent has taken Lane B for now. If a second agent
+joins, hand these files back and coordinate before editing.
+
+- `src/lib/controller/profiles/document.ts` — versioned `soundlab.controller-profile`
+  envelope, strict per-binding validation (`sanitizeBinding`), tolerant parsing
+  that also accepts a **bare** profile so a partner can hand-write one, and
+  explicit reporting of dropped bindings instead of silent coercion.
+- `src/lib/controller/profiles/registry.ts` — register / list / get / unregister,
+  `loadBuiltinProfiles()` (the three MPD226 layouts as `builtin`), and
+  `importProfile` / `exportProfileJson` round-trips. Registration is explicit,
+  not an import side effect.
+- 31 tests. Coverage: **document.ts 98.7%**, **registry.ts 96.4%** statements.
+
+Still to do in this lane: migrate `controllerStore` + the controller UI onto the
+registry, and add the profile picker/import/export panel.
 
 ---
 
