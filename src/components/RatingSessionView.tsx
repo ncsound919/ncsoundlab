@@ -15,6 +15,7 @@ import { useRatingStore } from '../lib/rating/store';
 import { RatingPairPlayer } from './RatingPairPlayer';
 import {
   fetchEloStandings,
+  fetchRatingChoicesBySession,
   fetchRatingSessions,
   saveEloStandings,
   saveRatingChoice,
@@ -129,8 +130,12 @@ function SummaryScreen({ onClose, onUseParent }: SummaryScreenProps) {
   }, [choices]);
 
   const exportRatings = async () => {
-    const sessions = await fetchRatingSessions();
-    const envelope = buildExportEnvelope(sessions, choices, standings, APP_VERSION);
+    // Export a CONSISTENT snapshot: this session plus its stored, hash-bearing
+    // choice rows (`aHash`/`bHash`/`kind`) so a consumer can join choices to
+    // Elo standings. `summaryChoices` alone omits those hashes and mixes scopes.
+    const sessions = session ? [session] : await fetchRatingSessions();
+    const storedChoices = session ? await fetchRatingChoicesBySession(session.sessionId) : [];
+    const envelope = buildExportEnvelope(sessions, storedChoices, standings, APP_VERSION);
     downloadExport(envelope);
     trackEvent('rating_exported', { session_count: sessions.length });
   };

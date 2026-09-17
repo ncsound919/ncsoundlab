@@ -4,9 +4,8 @@
  */
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { DemoSessionProvider } from '../demo/DemoSessionContext';
 import { SoundKitCatalog } from './SoundKitCatalog';
 import type { SoundKit } from '../types';
 
@@ -61,11 +60,7 @@ const userKit: SoundKit = {
 };
 
 function renderCatalog(kits: SoundKit[]) {
-  return render(
-    <DemoSessionProvider>
-      <SoundKitCatalog customKits={kits} />
-    </DemoSessionProvider>,
-  );
+  return render(<SoundKitCatalog customKits={kits} />);
 }
 
 async function selectKit(title: string) {
@@ -77,20 +72,12 @@ async function selectKit(title: string) {
   });
 }
 
-const ORIGINAL_LOCAL_STORAGE = globalThis.localStorage;
-
 describe('SoundKitCatalog community model', () => {
   beforeEach(() => {
     globalThis.localStorage.clear();
-    localStorage.setItem('ncs_demo_status', 'active');
-    localStorage.setItem('ncs_demo_start', String(Date.now()));
   });
 
-  afterEach(() => {
-    globalThis.localStorage = ORIGINAL_LOCAL_STORAGE;
-  });
-
-  it('all bundled factory kits download freely during an active demo', async () => {
+  it('all bundled factory kits download freely', async () => {
     renderCatalog([factoryKit]);
     await selectKit('TEST FACTORY KIT');
     await waitFor(() =>

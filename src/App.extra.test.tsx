@@ -46,7 +46,6 @@ Object.defineProperty(window, 'matchMedia', {
 });
 
 const renderDashboard = () => {
-  localStorage.setItem('ncs_demo_status', 'purchased');
   return render(<App />);
 };
 

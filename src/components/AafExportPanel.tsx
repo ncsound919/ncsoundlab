@@ -16,8 +16,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { FileUp, FileDown, Loader2, Check, FileAudio, AlertTriangle, X } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import type { SoundLayer } from '../types';
+import type { Pattern, SongChain, SoundLayer } from '../types';
 import { audioEngine } from '../lib/audioEngine';
+import { renderLayerStem, calculateSongDurationSec } from '../audio/transport/mixdown';
 import { useReferenceTrackStore } from '../store/referenceTrackStore';
 import { base64FromBytes, bytesFromBase64, deinterleavePcm, interleavePcm, padPcmTo } from '../audio/aafPcm';
 
@@ -25,6 +26,13 @@ interface AafExportPanelProps {
   layers: SoundLayer[];
   songName: string;
   bpm: number;
+  /**
+   * Pattern map + song chain. When present, each stem is rendered
+   * pattern-accurately (the layer's actual cells across the chain) instead of a
+   * single static hit.
+   */
+  patterns?: Record<string, Pattern>;
+  songChain?: SongChain;
   onToast: (msg: string, type?: 'success' | 'info' | 'warn' | 'error') => void;
 }
 
@@ -58,15 +66,21 @@ export function pcmToAudioBuffer(
 }
 
 /**
- * Render one layer through its FX chain and return interleaved LE PCM
- * (24-bit) at 48 kHz, padded to `frames`.
+ * Render one layer to interleaved LE PCM (24-bit) at 48 kHz, padded to
+ * `frames`. With a pattern map + chain, the stem is pattern-accurate (the
+ * layer's real cells); without them it falls back to the full FX-chain static
+ * hit (`exportLayerStem`).
  */
 async function renderStemPcm(
   layer: SoundLayer,
-  durationSec: number,
-  frames: number
+  fallbackDurationSec: number,
+  frames: number,
+  patterns?: Record<string, Pattern>,
+  songChain?: SongChain
 ): Promise<{ pcm: Uint8Array; channels: number; bits: number; frames: number }> {
-  const buffer = await audioEngine.exportLayerStem(layer, durationSec, 48000);
+  const buffer = patterns && songChain
+    ? await renderLayerStem({ patterns, chain: songChain, layer, sampleRate: 48000 })
+    : await audioEngine.exportLayerStem(layer, fallbackDurationSec, 48000);
   const channels = Math.min(2, buffer.numberOfChannels || 2);
   const BITS = 24;
   const chans: Float32Array[] = [];
@@ -79,7 +93,7 @@ async function renderStemPcm(
   };
 }
 
-export function AafExportPanel({ layers, songName, bpm, onToast }: AafExportPanelProps) {
+export function AafExportPanel({ layers, songName, bpm, patterns, songChain, onToast }: AafExportPanelProps) {
   const [openPanel, setOpenPanel] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -89,7 +103,10 @@ export function AafExportPanel({ layers, songName, bpm, onToast }: AafExportPane
   const [importedSong, setImportedSong] = useState('');
 
   const desktop = isTauri();
-  const durationSec = (bars * 4 * 60) / Math.max(30, bpm);
+  const songDurationSec = patterns && songChain ? calculateSongDurationSec(patterns, songChain) : 0;
+  // Pattern-accurate stems render the whole chain (+ a 1s release tail);
+  // without a chain the panel falls back to the fixed-bar static hit.
+  const durationSec = songDurationSec > 0 ? songDurationSec + 1 : (bars * 4 * 60) / Math.max(30, bpm);
 
   const exportAaf = async () => {
     if (!desktop) return;
@@ -112,7 +129,7 @@ export function AafExportPanel({ layers, songName, bpm, onToast }: AafExportPane
       // Render all stems, then pad each to the longest so Pro Tools gets
       // equal-length tracks.
       const rendered = await Promise.all(
-        audible.map((l) => renderStemPcm(l, durationSec, Math.ceil(48000 * durationSec)))
+        audible.map((l) => renderStemPcm(l, durationSec, Math.ceil(48000 * durationSec), patterns, songChain))
       );
       const maxFrames = Math.max(...rendered.map((r) => r.frames));
 
@@ -262,7 +279,8 @@ export function AafExportPanel({ layers, songName, bpm, onToast }: AafExportPane
                         Export AAF
                       </span>
                       <span className="text-[10px] font-mono text-slate-500">
-                        {layers.filter((l) => l.enabled).length} stems · {bars} bars
+                        {layers.filter((l) => l.enabled).length} stems ·{' '}
+                        {songDurationSec > 0 ? `${songDurationSec.toFixed(1)}s (song chain)` : `${bars} bars`}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mb-3">

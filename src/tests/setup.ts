@@ -139,7 +139,9 @@ class MockOfflineAudioContext {
   });
   createBufferSource = vi.fn(() => ({
     connect: vi.fn(),
+    disconnect: vi.fn(),
     start: vi.fn(),
+    stop: vi.fn(),
     buffer: null,
     playbackRate: { value: 1.0 }
   }));

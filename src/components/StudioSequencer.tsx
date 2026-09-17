@@ -30,7 +30,7 @@ import { MpcPadBank, PadEntry, type SixteenLevelsMode, type PadPlayMode } from '
 import { PianoRoll } from './PianoRoll';
 import { useSequencerStore, BANK_IDS, BankId } from '../store/sequencerStore';
 import { usePatternStore, PATTERN_IDS, type PatternId } from '../store/patternStore';
-import { planFromArrangement } from '../lib/arrangementScheduler';
+import { planFromArrangement, cellsAtGlobalStep, totalArrangementSteps } from '../lib/arrangementScheduler';
 import { GROOVE_TEMPLATES, applyGroove, humanizeVelocities, clearGrooveOffsets, findGrooveTemplate, type GrooveTemplate } from '../lib/grooveTemplates';
 import { exportV2, importExport } from '../sequencerFormat';
 import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
@@ -130,6 +130,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const ensureLayerRow = usePatternStore((s) => s.ensureLayerRow);
   const storeSetBpm = usePatternStore((s) => s.setBpm);
   const loadFromExport = usePatternStore((s) => s.loadFromExport);
+  const arrangement = usePatternStore((s) => s.arrangement);
 
   // BPM lives in patternStore; keep the local names the rest of this file
   // already uses (`bpm` / `setBpm`) pointing at the store so call sites
@@ -171,6 +172,13 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   // lets users switch back if Tone audio misbehaves in a given environment.
   const [useTransportMode, setUseTransportMode] = useState(true);
   const [songModeActive, setSongModeActive] = useState(false);
+  /**
+   * Clip-accurate live arrangement mode. When song mode is on and an
+   * arrangement with clips exists, the single-pattern Tone.Sequence is replaced
+   * by a global 16th-step scheduler that honours sub-bar clip starts, loops and
+   * overlapping clips (the same plan the offline renderer uses).
+   */
+  const arrangementLive = songModeActive && (arrangement?.clips?.length ?? 0) > 0;
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [lastRecordedBuffer, setLastRecordedBuffer] = useState<AudioBuffer | null>(null);
   const audioCaptureRef = useRef<ReturnType<typeof createAudioCapture> | null>(null);
@@ -199,6 +207,8 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const importKindRef = useRef<'prgm' | 'seq'>('prgm');
   const metronomeRef = useRef<Metronome | null>(null);
   const countInTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Global 16th-step cursor for the clip-accurate arrangement scheduler. */
+  const arrangementStepRef = useRef(0);
 
   useEffect(() => { patternRef.current = pattern; }, [pattern]);
   useEffect(() => { stepLengthRef.current = patternStepLength; }, [patternStepLength]);
@@ -558,7 +568,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   // function (via tickRef) so all per-step behavior (swing, mute, choke,
   // recording) is preserved.
   useEffect(() => {
-    if (!useTransportMode) return;
+    if (!useTransportMode || arrangementLive) return;
     let seq: Tone.Sequence | null = null;
     let cancelled = false;
     try {
@@ -614,7 +624,56 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     // stale 16 steps while the setInterval path already honours the new
     // length. Transport stop on unmount/mode-off is handled separately below
     // so a length change mid-play doesn't yank the clock.
-  }, [useTransportMode, patternStepLength]);
+  }, [useTransportMode, patternStepLength, arrangementLive]);
+
+  // Clip-accurate live arrangement scheduler. Replaces the single-pattern
+  // Tone.Sequence (gated above via `arrangementLive`) with a global 16th-step
+  // clock: each step resolves EVERY active clip (sub-bar starts, loops and
+  // overlaps included) and triggers those cells through the same
+  // `triggerStep` path, so swing/pocket/probability/velocity all still apply.
+  useEffect(() => {
+    if (!useTransportMode || !arrangementLive) return;
+    let scheduledId: number | null = null;
+    let cancelled = false;
+    try {
+      initTransport();
+      arrangementStepRef.current = 0;
+      scheduledId = Tone.Transport.scheduleRepeat((time) => {
+        if (cancelled) return;
+        const st = usePatternStore.getState();
+        const total = totalArrangementSteps(st.arrangement, st.patterns);
+        if (total <= 0) return;
+        const step = arrangementStepRef.current % total;
+        const beat = step * 0.25;
+        const stepMs = (60000 / (st.getBpmAtBeat(beat) || bpm)) / 4;
+        const entries = cellsAtGlobalStep(st.arrangement, st.patterns, step);
+        for (const entry of entries) {
+          const probability = entry.cell.probability ?? 1;
+          if (probability < 1 && Math.random() > probability) continue;
+          const swing = padSwingRef.current[entry.layerId] || 0;
+          const pocketMs = padPocketRef.current[entry.layerId] || 0;
+          const offsetSec = stepOffsetSeconds({
+            stepMs,
+            stepIndex: entry.stepIdx,
+            swingPercent: swing,
+            cellOffset: entry.cell.offset ?? 0,
+            pocketMs,
+          });
+          triggerStepRef.current(entry.layerId, entry.cell, time + offsetSec);
+        }
+        Tone.Draw.schedule(() => setCurrentStep(step), time);
+        arrangementStepRef.current = (step + 1) % total;
+      }, '16n');
+    } catch (e) {
+      console.warn('Arrangement scheduling failed', e);
+    }
+    return () => {
+      cancelled = true;
+      if (scheduledId !== null) {
+        try { Tone.Transport.clear(scheduledId); } catch { /* ignore */ }
+      }
+    };
+  }, [useTransportMode, arrangementLive, bpm]);
 
   // Stop the Tone transport when Tone mode is turned off or the component
   // unmounts, otherwise a disabled/beta path could leave Tone.Transport

@@ -106,8 +106,8 @@ The optional `CONSTRAINED_ENV=1` env var is only used to skip the OS-sensitive t
 
 NC Sound Lab is a static SPA that ships in two forms:
 
-- **Public web demo** (Vercel) — the full tool, hosted so anyone can try it.
-- **Desktop product** (Tauri) — a native Windows EXE for paid private copies; runs offline, all data stored locally.
+- **Web build** (Vercel) — the full tool, hosted for anyone to use.
+- **Desktop app** (Tauri) — a native Windows EXE; runs offline, all data stored locally.
 
 ### Desktop (Tauri)
 
@@ -152,25 +152,11 @@ vercel --prod
 
 Or connect the repo to Vercel and it auto-detects Vite (build command `npm run build`, output `dist`).
 
-### Demo gate & $5 one-time purchase
+### Free and open source
 
-The web build ships as a **free, timed 20-minute demo**. Flow:
-
-1. A first-time visitor gets a **welcome modal** explaining the free session.
-2. A **countdown pill** ticks in the header while they jam (20 minutes, wall-clock based — refreshing doesn't reset it).
-3. When time's up, a **paywall modal** prompts them to buy the full desktop app for a **one-time $5** — no accounts, no memberships.
-4. Purchasers can unlock the web demo on a browser via the "Already purchased?" link (honor-system; the real product is the offline desktop EXE). After checkout, the Windows installer is published at [GitHub Releases](https://github.com/ncsound919/ncsoundlab/releases).
-
-The desktop (Tauri) build is **not** gated — it's the full product.
-
-**Wire up Stripe** (one-time, no backend required):
-
-1. In your Stripe Dashboard, create a **Product** priced at **$5.00** (one-time).
-2. Create a **Payment Link** for it.
-3. Paste the full `https://buy.stripe.com/...` URL into `PURCHASE_URL` in `src/lib/demoConfig.ts`.
-4. Adjust the session length in `DEMO_SESSION_MS` (same file) if you want a different trial.
-
-> Note: `vibeserve_stripe_create_payment` (Stripe MCP) creates Payment *Intents*, which need a backend + publishable key — not suitable for this static, local-first app. A hosted Payment Link is the right fit.
+NC Sound Lab is free for everyone — no accounts, no paywall, no trial timer. The
+web build and the desktop app are the same full tool; nothing is gated. Source is
+Apache-2.0 (see [License](#license)).
 
 ### Static hosting (alternative)
 

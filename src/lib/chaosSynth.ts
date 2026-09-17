@@ -9,7 +9,7 @@ import {
   ZDFLadderFilter,
   getVoiceAgeParameters,
 } from '../audio/dsp/AnalogEngineDSP';
-import { createFilterFamily } from '../audio/dsp/FilterFamily';
+import { createFilterFamily, type FilterFamilyLike } from '../audio/dsp/FilterFamily';
 
 /**
  * Procedural Chaos Sound FX & Synthesis Engine.
@@ -75,6 +75,39 @@ class SimpleBiquad {
     this.y2 = this.y1;
     this.y1 = y;
     return y;
+  }
+}
+
+/**
+ * RBJ low-pass biquad (direct form II transposed) for `analogFilterMode:
+ * 'biquad'`. Coefficients are static for a render (cutoff/resonance are per-note),
+ * so they are computed once at construction.
+ */
+class BiquadLowpass {
+  private b0 = 1; private b1 = 0; private b2 = 0; private a1 = 0; private a2 = 0;
+  private z1 = 0; private z2 = 0;
+
+  constructor(freq: number, resonance: number, sampleRate: number) {
+    const sr = sampleRate > 0 ? sampleRate : 44100;
+    const f = Math.max(20, Math.min(freq || 3500, sr * 0.45));
+    // `filterResonance` is 0..10; map to a musical Q (0.5..~6).
+    const q = Math.max(0.5, Math.min(6, 0.5 + Math.max(0, resonance) * 0.55));
+    const w0 = 2 * Math.PI * f / sr;
+    const alpha = Math.sin(w0) / (2 * q);
+    const cosw0 = Math.cos(w0);
+    const a0 = 1 + alpha;
+    this.b0 = ((1 - cosw0) / 2) / a0;
+    this.b1 = (1 - cosw0) / a0;
+    this.b2 = this.b0;
+    this.a1 = (-2 * cosw0) / a0;
+    this.a2 = (1 - alpha) / a0;
+  }
+
+  process(x: number): number {
+    const y = this.b0 * x + this.z1;
+    this.z1 = this.b1 * x - this.a1 * y + this.z2;
+    this.z2 = this.b2 * x - this.a2 * y;
+    return Number.isFinite(y) ? y : 0;
   }
 }
 
@@ -166,6 +199,15 @@ export function generateChaosSynthBuffer(
   const familyFilter = family && family !== 'zdf' && family !== 'custom'
     ? createFilterFamily(family)
     : null;
+  // `analogFilterMode` (zdfLadder | zdfSvf | biquad) selects the default model
+  // when no explicit filterFamily is chosen.
+  const analogFilterMode = settings.analogFilterMode ?? 'zdfLadder';
+  const svfFilter: FilterFamilyLike | null =
+    !familyFilter && analogFilterMode === 'zdfSvf' ? createFilterFamily('sem_state_variable') : null;
+  const biquadFilter =
+    !familyFilter && analogFilterMode === 'biquad'
+      ? new BiquadLowpass(settings.filterCutoff ?? 3500, settings.filterResonance ?? 0.3, sampleRate)
+      : null;
 
   // Sound Designer Parameters
   const uniWidth = settings.unisonWidth ?? 0.7;
@@ -200,6 +242,20 @@ export function generateChaosSynthBuffer(
   const pdAmount = settings.pdAmount ?? 0;
   const oversamplingEnabled = settings.oversamplingEnabled ?? true;
   const saturationSymmetry = settings.saturationSymmetry ?? 0.0;
+
+  // Parameters that were exposed in the UI but never read by the synth. Each is
+  // now wired to a concrete DSP stage below.
+  const resonanceBloom = settings.resonanceBloom ?? 0;      // swelling resonance
+  const selfOscillation = settings.selfOscillation ?? 0;    // resonant comb ring
+  const zeroCrossingMutator = settings.zeroCrossingMutator ?? 0;
+  const fmAmount = settings.fmAmount ?? 0;
+  const ringModExtra = settings.ringMod ?? 0;
+  // `oversampling` (1|2|4) supersedes the legacy boolean 2x switch.
+  const oversamplingFactor = settings.oversampling ?? (oversamplingEnabled ? 2 : 1);
+  // FM: `fmDepth` is the legacy modulation index, `fmAmount` adds up to +4 index.
+  const effectiveFmDepth = fmDepth + fmAmount * 4;
+  // Ring mod: `ringModMix` is the legacy blend, `ringMod` adds extra depth.
+  const effectiveRingMix = Math.min(1, ringModMix + ringModExtra);
 
   // Formant Filter Instantiation
   const bp1 = new SimpleBiquad();
@@ -249,6 +305,12 @@ export function generateChaosSynthBuffer(
 
   let lastFilteredSample = 0;
   let holdValue = 0;
+  // selfOscillation comb state (tuned to the note so it rings at pitch).
+  const combLength = Math.max(2, Math.min(Math.floor(sampleRate * 0.05), Math.round(sampleRate / Math.max(20, baseFreq))));
+  const combBuffer = new Float32Array(combLength);
+  let combIdx = 0;
+  // zeroCrossingMutator state.
+  let prevZcSample = 0;
 
   // Synthesis pass
   for (let i = 0; i < numSamples; i++) {
@@ -322,7 +384,7 @@ export function generateChaosSynthBuffer(
     lastModSample = modSignal;
     
     // Add FM modulation directly to phaseStep
-    const fmOffset = modSignal * fmDepth * phaseStep;
+    const fmOffset = modSignal * effectiveFmDepth * phaseStep;
     phaseStep += fmOffset;
 
     // Cycle-Stretch: alters cycle shape dynamically
@@ -510,12 +572,12 @@ export function generateChaosSynthBuffer(
     }
 
     // RING MODULATION
-    if (ringModMix > 0) {
+    if (effectiveRingMix > 0) {
       const ringPhaseStep = (2 * Math.PI * ringModFreq) / sampleRate;
       ringPhase += ringPhaseStep;
       const ringSignal = Math.sin(ringPhase);
       const ringOutput = rawWave * ringSignal;
-      rawWave = rawWave * (1 - ringModMix) + ringOutput * ringModMix;
+      rawWave = rawWave * (1 - effectiveRingMix) + ringOutput * effectiveRingMix;
     }
 
     // WEST-COAST SINE WAVEFOLDER
@@ -581,12 +643,21 @@ export function generateChaosSynthBuffer(
       shapedSample = shapedSample * (1 - vowelMix) + fSample * vowelMix;
     }
 
-    // Analog ZDF Ladder Filter Stage (or modeled filter family)
+    // Analog ZDF Ladder Filter Stage (or modeled filter family / SVF / biquad)
     const cutoffHz = settings.filterCutoff ?? 3500;
-    const filterRes = settings.filterResonance ?? 0.3;
+    // resonanceBloom: a slow swelling resonance (up to +4 Q) that breathes over
+    // the note instead of sitting at a fixed Q.
+    const bloomSwell = resonanceBloom > 0
+      ? resonanceBloom * (0.5 + 0.5 * Math.sin(2 * Math.PI * 0.6 * t))
+      : 0;
+    const filterRes = (settings.filterResonance ?? 0.3) + bloomSwell * 4;
     let filteredSample: number;
     if (familyFilter) {
       filteredSample = familyFilter.process(shapedSample, cutoffHz, filterRes, filterDrive, sampleRate);
+    } else if (svfFilter) {
+      filteredSample = svfFilter.process(shapedSample, cutoffHz, filterRes, filterDrive, sampleRate);
+    } else if (biquadFilter) {
+      filteredSample = biquadFilter.process(shapedSample);
     } else {
       filteredSample = zdfFilter.process(
         shapedSample,
@@ -595,6 +666,17 @@ export function generateChaosSynthBuffer(
         filterDrive,
         sampleRate
       );
+    }
+
+    // selfOscillation: a resonant comb tuned to the note frequency. As the
+    // feedback approaches 1 the comb rings on its own, approximating a
+    // self-oscillating filter without a runaway feedback loop.
+    if (selfOscillation > 0) {
+      const delayed = combBuffer[combIdx];
+      const combOut = filteredSample + delayed * selfOscillation * 0.97;
+      combBuffer[combIdx] = Math.tanh(combOut);
+      combIdx = (combIdx + 1) % combLength;
+      filteredSample = filteredSample * (1 - selfOscillation) + combOut * selfOscillation * 0.6;
     }
 
     // Analog Warmth Engine & Asymmetric Bias Saturation with 2x Oversampling (Upgrade 5)
@@ -607,13 +689,17 @@ export function generateChaosSynthBuffer(
       return saturated - Math.tanh(bias * 0.45); // Safe DC removal
     };
 
-    if (oversamplingEnabled) {
-      // 2x oversampling linear interpolation midpoint
-      const midPoint = (filteredSample + lastFilteredSample) * 0.5;
-      const sample1 = applySaturation(filteredSample);
-      const sample2 = applySaturation(midPoint);
-      // Average (decimate) to reject alias reflections above base sampleRate
-      outputSample = (sample1 + sample2) * 0.5;
+    if (oversamplingFactor > 1) {
+      // Nx oversampled saturation: linearly upsample between the previous and
+      // current filtered samples, saturate each sub-sample, then average
+      // (decimate) to reject alias reflections above the base sample rate.
+      let acc = 0;
+      const sub = Math.max(1, Math.min(4, Math.round(oversamplingFactor)));
+      for (let s = 1; s <= sub; s++) {
+        const interp = lastFilteredSample + (filteredSample - lastFilteredSample) * (s / sub);
+        acc += applySaturation(interp);
+      }
+      outputSample = acc / sub;
     } else {
       outputSample = applySaturation(filteredSample);
     }
@@ -651,6 +737,17 @@ export function generateChaosSynthBuffer(
     // Digital Error/Buffer Corruption Injection
     if (errInject > 0 && Math.random() < errInject) {
       outputSample = Math.random() > 0.5 ? 0 : (Math.random() > 0.5 ? 0.95 : -0.95);
+    }
+
+    // zeroCrossingMutator: at each zero crossing, step the waveform toward the
+    // inverse of the previous sample. Higher amounts produce a harder,
+    // stepped/metallic edge (a deliberate waveform alteration, not noise).
+    if (zeroCrossingMutator > 0) {
+      if (prevZcSample !== 0 && Math.sign(outputSample) !== Math.sign(prevZcSample)) {
+        const stepped = -prevZcSample;
+        outputSample = outputSample * (1 - zeroCrossingMutator) + stepped * zeroCrossingMutator;
+      }
+      prevZcSample = outputSample;
     }
 
     // Prevent extreme DC offsets or blowouts

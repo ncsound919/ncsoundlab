@@ -3,6 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Tests for the generalized undo/redo store (Phase 0.3).
+ *
+ * The store follows the invariant that `past`'s top entry is the LIVE state
+ * (callers commit after each change). See the regression suite at the bottom,
+ * which pins the App.tsx "commit-after-change" usage that was previously
+ * off-by-one.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -44,47 +49,52 @@ describe('historyStore — basic commit/undo/redo', () => {
     expect(useHistoryStore.getState().canRedo()).toBe(false);
   });
 
-  it('commits a snapshot and exposes canUndo', () => {
+  it('a single committed state has nothing to undo (top entry is live)', () => {
     useHistoryStore.getState().commit(empty());
-    expect(useHistoryStore.getState().canUndo()).toBe(true);
-    expect(useHistoryStore.getState().canRedo()).toBe(false);
+    expect(useHistoryStore.getState().canUndo()).toBe(false);
+    expect(useHistoryStore.getState().undo()).toBeNull();
   });
 
-  it('undo applies the snapshot via the registered applier', () => {
+  it('undo applies the PREVIOUS state via the registered applier', () => {
     const applier = vi.fn();
     useHistoryStore.getState().setApplier(applier);
-    const snap = empty({ bpm: 140 });
-    useHistoryStore.getState().commit(snap);
+    const first = empty({ bpm: 120 });
+    const second = empty({ bpm: 140 });
+    useHistoryStore.getState().commit(first);
+    useHistoryStore.getState().commit(second);
+    expect(useHistoryStore.getState().canUndo()).toBe(true);
     const restored = useHistoryStore.getState().undo();
-    expect(restored).toBe(snap);
-    expect(applier).toHaveBeenCalledWith(snap);
+    expect(restored).toBe(first);
+    expect(applier).toHaveBeenCalledWith(first);
     expect(useHistoryStore.getState().canRedo()).toBe(true);
     expect(useHistoryStore.getState().canUndo()).toBe(false);
   });
 
-  it('redo re-applies a previously-undone snapshot', () => {
+  it('redo re-applies the state that was undone', () => {
     const applier = vi.fn();
     useHistoryStore.getState().setApplier(applier);
-    const snap1 = empty({ bpm: 100 });
-    const snap2 = empty({ bpm: 150 });
-    useHistoryStore.getState().commit(snap1);
-    useHistoryStore.getState().commit(snap2);
+    const first = empty({ bpm: 100 });
+    const second = empty({ bpm: 150 });
+    useHistoryStore.getState().commit(first);
+    useHistoryStore.getState().commit(second);
     useHistoryStore.getState().undo();
     expect(useHistoryStore.getState().canRedo()).toBe(true);
     const redone = useHistoryStore.getState().redo();
-    expect(redone).toBe(snap2);
-    expect(applier).toHaveBeenLastCalledWith(snap2);
+    expect(redone).toBe(second);
+    expect(applier).toHaveBeenLastCalledWith(second);
+    expect(useHistoryStore.getState().canUndo()).toBe(true);
+    expect(useHistoryStore.getState().canRedo()).toBe(false);
   });
 
   it('a fresh commit clears the redo stack', () => {
-    const snap1 = empty({ bpm: 100 });
-    const snap2 = empty({ bpm: 150 });
-    const snap3 = empty({ bpm: 200 });
-    useHistoryStore.getState().commit(snap1);
-    useHistoryStore.getState().commit(snap2);
+    const first = empty({ bpm: 100 });
+    const second = empty({ bpm: 150 });
+    const third = empty({ bpm: 200 });
+    useHistoryStore.getState().commit(first);
+    useHistoryStore.getState().commit(second);
     useHistoryStore.getState().undo();
     expect(useHistoryStore.getState().canRedo()).toBe(true);
-    useHistoryStore.getState().commit(snap3);
+    useHistoryStore.getState().commit(third);
     expect(useHistoryStore.getState().canRedo()).toBe(false);
   });
 
@@ -98,38 +108,46 @@ describe('historyStore — basic commit/undo/redo', () => {
 });
 
 describe('historyStore — transactions', () => {
-  it('beginTransaction/endTransaction coalesce commits into a single undo step', () => {
+  it('coalesces in-transaction commits into a single undo step', () => {
     const applier = vi.fn();
     useHistoryStore.getState().setApplier(applier);
+    const base = empty({ bpm: 120 });
+    useHistoryStore.getState().commit(base); // live = 120
     useHistoryStore.getState().beginTransaction();
     useHistoryStore.getState().commit(empty({ bpm: 130 }));
     useHistoryStore.getState().commit(empty({ bpm: 140 }));
     useHistoryStore.getState().commit(empty({ bpm: 150 }));
     useHistoryStore.getState().endTransaction();
-    // Only the LAST in-transaction commit should remain in past.
-    expect(useHistoryStore.getState().past.length).toBe(1);
+    // [base, final] — the three in-flight commits collapsed into one entry.
+    expect(useHistoryStore.getState().past.length).toBe(2);
     const undone = useHistoryStore.getState().undo();
-    expect(undone?.bpm).toBe(150);
+    expect(undone).toBe(base);
+    expect(undone?.bpm).toBe(120);
   });
 
-  it('nested begin/end balances correctly', () => {
+  it('nested begin/end balances and preserves the pre-transaction target', () => {
+    const base = empty({ bpm: 120 });
+    useHistoryStore.getState().commit(base);
     useHistoryStore.getState().beginTransaction();
     useHistoryStore.getState().beginTransaction();
     useHistoryStore.getState().commit(empty({ bpm: 200 }));
-    // Inner commit (still inside the outer transaction) writes the snapshot;
-    // the outer endTransaction finalises it.
-    expect(useHistoryStore.getState().past.length).toBe(1);
     useHistoryStore.getState().endTransaction();
-    // Outer endTransaction leaves the committed snapshot in place.
-    expect(useHistoryStore.getState().past.length).toBe(1);
+    useHistoryStore.getState().endTransaction();
+    expect(useHistoryStore.getState().transactionDepth).toBe(0);
+    expect(useHistoryStore.getState().past.length).toBe(2);
+    expect(useHistoryStore.getState().undo()).toBe(base);
   });
 
-  it('cancelTransaction discards in-flight edits', () => {
+  it('cancelTransaction drops the in-flight edit without a history entry', () => {
+    const base = empty({ bpm: 120 });
+    useHistoryStore.getState().commit(base);
     useHistoryStore.getState().beginTransaction();
     useHistoryStore.getState().commit(empty({ bpm: 175 }));
     useHistoryStore.getState().cancelTransaction();
-    expect(useHistoryStore.getState().past.length).toBe(0);
+    expect(useHistoryStore.getState().past.length).toBe(1);
+    expect(useHistoryStore.getState().past[0]).toBe(base);
     expect(useHistoryStore.getState().transactionDepth).toBe(0);
+    expect(useHistoryStore.getState().canUndo()).toBe(false);
   });
 });
 
@@ -163,5 +181,31 @@ describe('historyStore — helpers', () => {
     expect(snapshotsEqual(shared, twin)).toBe(false);
     const different = empty({ bpm: 110 });
     expect(snapshotsEqual(shared, different)).toBe(false);
+  });
+});
+
+describe('historyStore — App commit-after-change semantics (regression)', () => {
+  it('undo restores the previous state when the caller commits the current one', () => {
+    const applied: number[] = [];
+    useHistoryStore.getState().setApplier((s) => applied.push(s.bpm));
+    // Mirrors App.tsx: the effect commits the CURRENT state after each change.
+    useHistoryStore.getState().commit(empty({ bpm: 120 }));
+    useHistoryStore.getState().commit(empty({ bpm: 140 }));
+    useHistoryStore.getState().undo();
+    expect(applied).toEqual([120]);
+  });
+
+  it('a re-commit of the undone state is a no-op, preserving redo', () => {
+    const first = empty({ bpm: 120 });
+    const second = empty({ bpm: 140 });
+    useHistoryStore.getState().commit(first);
+    useHistoryStore.getState().commit(second);
+    useHistoryStore.getState().undo();
+    // After undo the live state is `first`; the App effect re-commits it.
+    const head = useHistoryStore.getState().past[useHistoryStore.getState().past.length - 1];
+    expect(head).toBe(first);
+    expect(snapshotsEqual(head, first)).toBe(true);
+    // Redo still works because a commit was never issued for the re-applied state.
+    expect(useHistoryStore.getState().redo()).toBe(second);
   });
 });

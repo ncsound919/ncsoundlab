@@ -12,6 +12,10 @@
  * Coalescing: `beginTransaction()` / `endTransaction()` group multiple
  * commits into a single undo entry, so a multi-zone edit (e.g. toggle a cell
  * AND move a fader) collapses into one undo step.
+ *
+ * Invariant: the TOP entry of `past` is always the live state (callers commit
+ * after each change). `undo()` therefore applies `past[len-2]`, and
+ * `canUndo()` is `past.length > 1` — a single state has nothing to go back to.
  */
 
 import { create } from 'zustand';
@@ -46,6 +50,8 @@ interface HistoryStore {
   limit: number;
   /** When > 0, commits are coalesced into a single undo entry. */
   transactionDepth: number;
+  /** Stack length captured at transaction start (the coalescing boundary). */
+  transactionBaseLength: number;
 
   setApplier: (fn: SnapshotApplier | null) => void;
   commit: (snapshot: HistorySnapshot) => void;
@@ -68,21 +74,23 @@ export const useHistoryStore = create<HistoryStore>((set, get) => {
     future: [],
     limit: defaultLimit,
     transactionDepth: 0,
+    transactionBaseLength: 0,
 
     setApplier: (fn) => {
       applier = fn;
     },
 
     commit: (snapshot) => {
-      const { past, limit, transactionDepth } = get();
+      const { past, limit, transactionDepth, transactionBaseLength } = get();
       if (transactionDepth > 0) {
-        // Inside a transaction — overwrite the most recent pending commit so
-        // intermediate states never appear in history.
-        if (past.length === 0) {
-          set({ past: [snapshot] });
-        } else {
-          set({ past: [...past.slice(0, -1), snapshot] });
-        }
+        // Keep the pre-transaction snapshot as the undo target and only
+        // (over)write the single in-flight slot, so a multi-step edit collapses
+        // into one undo step.
+        const inFlight = past.length > transactionBaseLength;
+        set({
+          past: inFlight ? [...past.slice(0, -1), snapshot] : [...past, snapshot],
+          future: [],
+        });
         return;
       }
       const next = [...past, snapshot];
@@ -91,54 +99,60 @@ export const useHistoryStore = create<HistoryStore>((set, get) => {
     },
 
     beginTransaction: () => {
-      set((s) => ({ transactionDepth: s.transactionDepth + 1 }));
+      const s = get();
+      set({
+        transactionDepth: s.transactionDepth + 1,
+        transactionBaseLength:
+          s.transactionDepth === 0 ? s.past.length : s.transactionBaseLength,
+      });
     },
 
     endTransaction: () => {
       const depth = get().transactionDepth;
       if (depth <= 0) return;
-      if (depth === 1) {
-        set({ transactionDepth: 0 });
-      } else {
-        set({ transactionDepth: depth - 1 });
-      }
+      const nextDepth = depth - 1;
+      set(
+        nextDepth === 0
+          ? { transactionDepth: 0, transactionBaseLength: 0 }
+          : { transactionDepth: nextDepth }
+      );
     },
 
     cancelTransaction: () => {
-      // Discards the most recent pending commit (the coalesced result of all
-      // commits made since `beginTransaction`). This makes the transaction
-      // vanish from history WITHOUT pushing onto `future`, so an explicit
-      // `undo()` before cancel would re-apply it. Callers that want the live
-      // state rolled back too must re-apply the pre-transaction snapshot via
-      // the applier themselves — this store only manages the history stack.
-      const { past } = get();
-      if (past.length === 0) return;
-      set({ past: past.slice(0, -1), transactionDepth: 0 });
+      // Drops the in-flight (not-yet-finalised) snapshot so the transaction
+      // leaves no history entry. Live state is not rolled back here — the
+      // applier owns live state; callers that want a rollback re-apply the
+      // pre-transaction snapshot themselves.
+      const { past, transactionBaseLength } = get();
+      set({
+        past: past.slice(0, transactionBaseLength),
+        transactionDepth: 0,
+        transactionBaseLength: 0,
+      });
     },
 
     undo: () => {
+      // Invariant: `past`'s top entry is the live state. Undo applies the entry
+      // BELOW it and moves the live entry onto `future` for redo.
       const { past, future } = get();
-      if (past.length === 0) return null;
-      const last = past[past.length - 1];
-      const newPast = past.slice(0, -1);
-      const newFuture = [...future, last];
-      set({ past: newPast, future: newFuture });
-      applier?.(last);
-      return last;
+      if (past.length < 2) return null;
+      const current = past[past.length - 1];
+      const target = past[past.length - 2];
+      set({ past: past.slice(0, -1), future: [...future, current] });
+      applier?.(target);
+      return target;
     },
 
     redo: () => {
       const { past, future } = get();
       if (future.length === 0) return null;
-      const next = future[future.length - 1];
-      const newPast = [...past, next];
-      const newFuture = future.slice(0, -1);
-      set({ past: newPast, future: newFuture });
-      applier?.(next);
-      return next;
+      const target = future[future.length - 1];
+      set({ past: [...past, target], future: future.slice(0, -1) });
+      applier?.(target);
+      return target;
     },
 
-    canUndo: () => get().past.length > 0,
+    canUndo: () => get().past.length > 1,
     canRedo: () => get().future.length > 0,
 
     clear: () => {

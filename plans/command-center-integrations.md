@@ -7,9 +7,20 @@ layer, a natural-language command surface over the existing action registry,
 grounded auto-name/tagging, and an ops/session hub.
 
 **Status:** Planning · **Ownership:** opencode session · **Last updated:** 2026-09-17
-**Scope note:** Stem separation (Phase 0/1) is **deferred**. Optional Recourse
-integration (music + self-learning) added as **Phase 6 — see §8**. Pre-work
-remediation backlog in **§14**.
+**Scope note:** SoundLab is **free and open source (Apache-2.0), no paid tier**.
+Stem separation (Phase 0/1) is **deferred**. Optional Recourse integration
+(music + self-learning) is **Phase 6 — see §8**. MIDI controller partner
+platform is **Phase 7 — see §15**. Pre-work remediation backlog in **§14**.
+
+**Done so far (2026-09-17):**
+- P0 §14 item 1-4: undo/redo core fixed (off-by-one, phantom `canUndo`,
+  redo-kill, transaction coalescing) with restoration regression tests.
+- §14 item 17: autosave now persists **and restores** the master rack.
+- §14 item 23: rating export envelope is now a consistent, hash-bearing
+  per-session snapshot.
+- §14 item 19: paid tier removed — demo/paywall modules deleted, app ungated.
+- License audit: **all dependencies are permissive** (MIT / Apache-2.0 / BSD-3 /
+  ISC / MPL-2.0). No GPL/AGPL. See §15 licensing policy.
 
 This is a **construction plan**. Every phase is PR-sized with a self-contained
 context brief so a fresh agent can execute it cold. Read `AGENTS.md` first. Two
@@ -1081,7 +1092,7 @@ capability; `[LATENT]` = present but not yet triggered in production.
 |---|---|---|
 | 17 | Autosave drops the master rack. | `[VERIFIED]` `App.tsx:673` |
 | 18 | `addLayer` auto-auditions — surprising for batch/multi-layer ops. | `[VERIFIED]` `App.tsx:978-981` |
-| 19 | Demo gate is a cosmetic overlay; it disables nothing server-side. (Phase 6 can move enforcement server-side.) | `[VERIFIED]` `DemoSessionGate` overlay |
+| 19 | ~~Demo gate is a cosmetic overlay~~ **RESOLVED** — paid tier removed; demo/paywall modules deleted, app is free and ungated. | done 2026-09-17 |
 | 23 | Rating export envelope is inconsistent: sessions = all-time, choices = current session only, choices lack `aHash`/`bHash`/`kind`. | `[VERIFIED]` `RatingSessionView.tsx:131-136` |
 | 24 | Rating store has a duplicated `set({ standings })`. | `[VERIFIED]` `store.ts:210-211` |
 
@@ -1099,3 +1110,81 @@ Fix **P0 first** (undo core #1-5, then network/secrets #6-7), then **P1** regist
 and coverage, then start Phases 3-6. The stems backlog (Gates A-D, `externalBin`
 Linux CI break, dev-tagged `onnx-weekly` dependency, installer size) remains
 parked with Phase 0.
+
+**Progress:** #1-4 (undo core), #17 (autosave rack), #19 (paid tier), #23
+(rating envelope) are done. #5 (snapshot field coverage) is partially done via
+#1-4's transaction work but still needs the new snapshot fields.
+
+---
+
+## 15. Phase 7 — MIDI controller integration platform
+
+**Why:** SoundLab is free and open source (Apache-2.0). The growth path is
+partnering with smaller MIDI controller makers to ship SoundLab bundled with
+their hardware. Today the only device profile is hardcoded
+(`src/lib/controller/defaultMpd226.ts`), so adding a controller requires core
+code changes — that is the blocker to any partner program.
+
+**Existing assets to build on (no rewrite):**
+- Action catalog: `src/lib/controller/actions.ts` (`ACTION_DEFS`, `ActionGroup`,
+  `dispatchAction`, `catalogForContext`, `describeAction`, `isContinuousAction`).
+- Mapping + learn: `mapping.ts` (min/max/invert), `controllerStore` learn mode
+  (`startLearn`/`armLearn`/`learnMode`), `ControllerAssignPanel.tsx`.
+- Ingest/transport: `midiBridge.ts`, `surface.ts`, `useControllerMidi.ts`.
+- Layout template: `Mpd226Layout.tsx`.
+- Test harness: `ControllerHost.test.tsx`, `midiBridge.test.ts`,
+  `surface.test.ts`, `actions.test.ts`, `mapping.test.ts`.
+
+**The shared backbone:** the typed action registry (Phase 2, Step 2.1) is
+required by both the NL layer and vendor profiles — a profile is a mapping from
+physical controls to catalogued actions with declared ranges/enums. Build it once.
+
+**Deliverables:**
+1. `ControllerProfile` schema (versioned JSON): device id/name, control surface
+   (pads/knobs/faders/buttons), default bindings, optional layout id, optional
+   vendor metadata (url, logo).
+2. A **profile registry** replacing the hardcoded import — ship the existing
+   MPD226 as *data*, not code.
+3. Import/export of profiles (file + clipboard) so a vendor or user can author
+   one without a build.
+4. Optional per-device layout component registered by id (template:
+   `Mpd226Layout.tsx`).
+5. Vendor hooks: display name, link, optional brand asset — loaded only when a
+   profile is active, kept out of the core bundle.
+6. `docs/controller-profiles.md` — schema + authoring guide so a partner can
+   self-serve.
+
+**Vendor-fit criteria (be honest about which devices are viable):** the
+architecture assumes a MIDI surface mapped to a fixed action vocabulary. Devices
+sending standard Note/CC messages fit immediately. Devices with proprietary
+sysex/host protocols, or needing bidirectional display feedback, require extra
+work and must be scoped individually.
+
+**Verification:** profile round-trip (export → import → identical bindings); a
+registry-driven profile reproduces today's MPD226 default; `ControllerHost.test.tsx`
+still passes; new profile code meets the 90% new-code gate.
+
+### Licensing policy (applies to all phases)
+
+The app is Apache-2.0 and free. Prefer **MIT / Apache-2.0 / BSD / ISC / MPL-2.0**
+dependencies so hardware partners can embed and redistribute it. Copyleft
+(GPL/AGPL) is *permissible* in an open-source project, but it would effectively
+**relicense the combined work** and impose source disclosure on partners — so
+treat any copyleft dependency as a deliberate project-level decision, never a
+convenience. In particular **Essentia.js (AGPL-3.0)** and **aubio (GPL-3.0)** are
+not drop-in options for the bundled web build; the permissive path for audio
+analysis is **Meyda (MIT) + Tonal (MIT)**, both already installed. Verified: no
+GPL/AGPL dependencies today.
+
+### OSS component picks (permissive)
+
+| Need | Pick | License |
+|---|---|---|
+| Key/BPM/chroma analysis | Meyda + Tonal *(installed)* | MIT |
+| Local LLM | Ollama / llama.cpp / transformers.js | MIT / MIT / Apache-2.0 |
+| In-browser ML | transformers.js + ONNX Runtime Web | Apache-2.0 / MIT |
+| Native ML (Tauri) | `ort` (ONNX Runtime) | Apache-2.0/MIT |
+| Semantic sample search | transformers.js CLAP + LanceDB *(or brute-force IndexedDB)* | Apache-2.0 |
+| MIDI file I/O | `@tonejs/midi` | MIT |
+| Action param validation | `zod` | MIT |
+| Stems *(deferred)* | `audio-separator` / Demucs | MIT wrapper / MIT — **weights licensed separately** |

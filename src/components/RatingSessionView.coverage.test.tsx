@@ -18,6 +18,7 @@ import * as ratingExport from '../lib/rating/export';
 
 vi.mock('../lib/rating/ratingDB', () => ({
   fetchEloStandings: vi.fn(),
+  fetchRatingChoicesBySession: vi.fn(),
   fetchRatingSessions: vi.fn(),
   saveEloStandings: vi.fn(),
   saveRatingChoice: vi.fn(),
@@ -115,6 +116,7 @@ describe('RatingSessionView', () => {
     useRatingStore.getState().reset();
     vi.clearAllMocks();
     db.fetchEloStandings.mockResolvedValue([]);
+    db.fetchRatingChoicesBySession.mockResolvedValue([]);
     db.fetchRatingSessions.mockResolvedValue([]);
     db.rebuildStandingsFromChoices.mockResolvedValue([]);
     db.saveEloStandings.mockResolvedValue(undefined);

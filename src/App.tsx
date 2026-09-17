@@ -91,9 +91,6 @@ import { generateEvolutionVariations } from './lib/evolutionEngine';
 // Hardware & Sound Kit Components
 import { MasterMeter } from './components/MasterMeter';
 import { ToastContainer, ToastMessage } from './components/ToastContainer';
-import { DemoSessionProvider } from './demo/DemoSessionContext';
-import { DemoCountdown } from './components/DemoCountdown';
-import { DemoGateModal } from './components/DemoGateModal';
 import { useSequencerStore, BankId } from './store/sequencerStore';
 import { usePatternStore } from './store/patternStore';
 import { useRackStore } from './store/rackStore';
@@ -541,6 +538,7 @@ export default function App() {
         ...(hydrated.patternPrograms ? { patternPrograms: hydrated.patternPrograms } : {}),
       });
       setMasterLevel(hydrated.document.masterLevel);
+      setRackModules(hydrated.document.masterRack?.modules ?? []);
       if (hydrated.layers.length > 0) {
         setSelectedLayerId(hydrated.layers[0].id);
       }
@@ -670,7 +668,7 @@ export default function App() {
       bpm: patternStore.patterns[patternStore.activePatternId].bpm,
       timeSignature: patternStore.patterns[patternStore.activePatternId].timeSignature,
       masterLevel,
-      masterRack: { modules: [] as import('./types').RackModule[] },
+      masterRack: { modules: rackModules },
       globalSwing: 0,
     };
     if (layers.length > 0 || patternStore.songChain.order.length > 0) {
@@ -682,7 +680,7 @@ export default function App() {
         scheduleAutosave(snapshot, '1.1.0');
       }
     }
-  }, [layers, masterLevel, patternStore, sequencerStore, hasAutoSave]);
+  }, [layers, masterLevel, patternStore, sequencerStore, rackModules, hasAutoSave]);
 
   // Sync snapshots to localStorage
   useEffect(() => {
@@ -1421,7 +1419,6 @@ export default function App() {
   });
 
   return (
-    <DemoSessionProvider>
     <div 
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -1901,9 +1898,6 @@ export default function App() {
             >
               <BookOpen size={14} />
             </button>
-
-            {/* Timed demo countdown (web demo only) */}
-            <DemoCountdown />
 
             {/* Play Working Sound Quick Button */}
             {selectedLayer && (
@@ -2649,6 +2643,8 @@ export default function App() {
                       layers={layers}
                       songName="My Song"
                       bpm={patternStore.patterns[patternStore.activePatternId]?.bpm ?? 120}
+                      patterns={patternStore.patterns}
+                      songChain={patternStore.songChain}
                       onToast={addToast}
                     />
                   </Suspense>
@@ -2766,9 +2762,6 @@ export default function App() {
         onDismiss={handleDismissToast}
       />
 
-      {/* Timed demo gate (web only; disabled in the desktop build) */}
-      <DemoGateModal />
     </div>
-    </DemoSessionProvider>
   );
 }
