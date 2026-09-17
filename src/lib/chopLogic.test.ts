@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it, beforeAll } from 'vitest';
-import { slicesFromMarkers, sliceRegion, autoMarkers } from './chopLogic';
+import { slicesFromMarkers, sliceRegion, autoMarkers, rootKeyOffset, effectiveTune } from './chopLogic';
 
 class MockAudioBuffer {
   sampleRate: number;
@@ -177,5 +177,22 @@ describe('autoMarkers', () => {
     for (let i = 1500; i < 2500; i++) d[i] = 0.9;
     const markers = autoMarkers(buf, 8);
     expect(markers.length).toBeGreaterThanOrEqual(2); // burst start + end
+  });
+});
+
+describe('root key tuning', () => {
+  it('maps root keys to semitone offsets from C', () => {
+    expect(rootKeyOffset('C')).toBe(0);
+    expect(rootKeyOffset('D')).toBe(2);
+    expect(rootKeyOffset('A#')).toBe(10);
+    expect(rootKeyOffset(undefined)).toBe(0);
+    expect(rootKeyOffset('H')).toBe(0);
+  });
+
+  it('transposes the tune to concert pitch', () => {
+    expect(effectiveTune(0, 'C')).toBe(0);
+    expect(effectiveTune(0, 'D')).toBe(-2);
+    expect(effectiveTune(3, 'D')).toBe(1);
+    expect(effectiveTune(-12, 'C')).toBe(-12);
   });
 });

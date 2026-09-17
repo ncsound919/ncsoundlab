@@ -1,26 +1,179 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Microphone capture (getUserMedia + MediaRecorder) with optional input
+ * monitoring and threshold (auto-record) gating.
+ *
+ * Monitoring routes the live input through a monitor gain into the context
+ * destination. It is OFF by default (feedback safety) and enabled explicitly
+ * via `enableMonitor` or per-take `start({ monitor })`.
+ *
+ * Threshold gating holds the MediaRecorder until the measured input level
+ * reaches `thresholdDb` (MPC-style auto-record: the take starts on the hit).
+ * Measurement needs an AudioContext for the analyser — pass one via
+ * `monitor: { context }` (a `level` of 0 keeps the monitor silent while still
+ * measuring). Without a context the take starts immediately.
+ */
+
+import { analyserLevelDb, meetsThreshold } from './inputLevel';
+
 export interface AudioCapture {
   isSupported(): boolean;
-  start(): Promise<MediaStream>;
+  start(opts?: CaptureStartOptions): Promise<MediaStream>;
   stop(_stream?: MediaStream): Promise<Blob>;
   decodeBlobToBuffer(blob: Blob, ctx: BaseAudioContext): Promise<AudioBuffer>;
   dispose(): void;
+  /**
+   * Route live input to the context destination through a monitor gain.
+   * Safe to call before `start()` — the preference applies to the next take.
+   */
+  enableMonitor(context: AudioContext, level?: number): void;
+  setMonitorLevel(level: number): void;
+  disableMonitor(): void;
+  isMonitorEnabled(): boolean;
+  /** Current input level in dBFS, or null when unavailable. */
+  getInputLevelDb(): number | null;
+}
+
+export interface CaptureMonitorOptions {
+  context: AudioContext;
+  /**
+   * Monitor gain 0..1 (default 0.5). Pass 0 for silent measurement (e.g.
+   * threshold gating without hearing the input).
+   */
+  level?: number;
+}
+
+export interface CaptureStartOptions {
+  monitor?: CaptureMonitorOptions;
+  /**
+   * Auto-start the take when the input reaches this level in dBFS (e.g. -30).
+   * Omit (or pass undefined) to start immediately. Requires a monitor context
+   * for measurement; without one the take starts immediately.
+   */
+  thresholdDb?: number;
+  /** Give up waiting for the threshold after this long and start anyway. */
+  thresholdTimeoutMs?: number;
+  /** Test seam: override the measured input level. */
+  sampleLevelDb?: () => number | null;
+  /** Test seam: wait primitive (defaults to setTimeout). */
+  waitMs?: (ms: number) => Promise<void>;
 }
 
 export function isMediaRecorderSupported(): boolean {
   return typeof window !== 'undefined' && typeof window.MediaRecorder !== 'undefined';
 }
 
+const DEFAULT_THRESHOLD_TIMEOUT_MS = 15000;
+const THRESHOLD_POLL_MS = 30;
+
+function clamp01(v: number): number {
+  if (Number.isNaN(v)) return 0;
+  return Math.max(0, Math.min(1, v));
+}
+
+interface MonitorChain {
+  context: AudioContext;
+  source: MediaStreamAudioSourceNode;
+  analyser: AnalyserNode;
+  gain: GainNode;
+}
+
 export function createAudioCapture(): AudioCapture {
   let activeStream: MediaStream | null = null;
   let activeRecorder: MediaRecorder | null = null;
+  let monitorPref: { context: AudioContext; level: number } | null = null;
+  let monitorChain: MonitorChain | null = null;
+
+  const teardownMonitorChain = (): void => {
+    const chain = monitorChain;
+    monitorChain = null;
+    if (!chain) return;
+    try {
+      chain.gain.disconnect();
+    } catch {
+      /* already torn down */
+    }
+    try {
+      chain.analyser.disconnect();
+    } catch {
+      /* already torn down */
+    }
+    try {
+      chain.source.disconnect();
+    } catch {
+      /* already torn down */
+    }
+  };
+
+  /** Build source → analyser → monitorGain → destination (gain may be 0). */
+  const buildMonitorChain = (context: AudioContext, stream: MediaStream, level: number): void => {
+    teardownMonitorChain();
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    const gain = context.createGain();
+    gain.gain.value = clamp01(level);
+    source.connect(analyser);
+    analyser.connect(gain);
+    gain.connect(context.destination);
+    monitorChain = { context, source, analyser, gain };
+  };
+
+  const getInputLevelDb = (): number | null =>
+    monitorChain ? analyserLevelDb(monitorChain.analyser) : null;
+
+  const waitForThreshold = async (
+    thresholdDb: number,
+    timeoutMs: number,
+    sampleLevelDb?: () => number | null,
+    waitMs?: (ms: number) => Promise<void>
+  ): Promise<void> => {
+    const wait = waitMs ?? ((ms: number) => new Promise<void>((res) => setTimeout(res, ms)));
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    for (;;) {
+      const level = sampleLevelDb ? sampleLevelDb() : getInputLevelDb();
+      if (meetsThreshold(level, thresholdDb)) return;
+      if (Date.now() >= deadline) return;
+      await wait(THRESHOLD_POLL_MS);
+    }
+  };
 
   return {
     isSupported: isMediaRecorderSupported,
 
-    async start() {
+    async start(opts: CaptureStartOptions = {}) {
       if (!isMediaRecorderSupported()) throw new Error('MediaRecorder not available');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       activeStream = stream;
+
+      // Monitor preference: explicit per-take options win, otherwise reuse a
+      // previously enabled monitor (e.g. toggled on before recording).
+      if (opts.monitor) {
+        monitorPref = {
+          context: opts.monitor.context,
+          level: clamp01(opts.monitor.level ?? 0.5),
+        };
+      }
+      const measureContext = opts.monitor?.context ?? monitorPref?.context ?? null;
+      const audibleLevel = opts.monitor ? clamp01(opts.monitor.level ?? 0.5) : (monitorPref?.level ?? 0);
+      if (measureContext) {
+        buildMonitorChain(measureContext, stream, monitorPref ? audibleLevel : 0);
+      }
+
+      // Threshold (auto-record) gating: hold the take until the input speaks.
+      // Without a measurement context there is nothing to gate on, so the
+      // take starts immediately (documented fallback, not silent waiting).
+      if (opts.thresholdDb !== undefined && opts.thresholdDb !== null && measureContext) {
+        await waitForThreshold(
+          opts.thresholdDb,
+          opts.thresholdTimeoutMs ?? DEFAULT_THRESHOLD_TIMEOUT_MS,
+          opts.sampleLevelDb,
+          opts.waitMs
+        );
+      }
+
       const rec = new MediaRecorder(stream);
       activeRecorder = rec;
       rec.start();
@@ -61,6 +214,7 @@ export function createAudioCapture(): AudioCapture {
           rej(err as Error);
         }
       }).finally(() => {
+        teardownMonitorChain();
         if (activeStream) {
           for (const t of activeStream.getTracks()) t.stop();
           activeStream = null;
@@ -76,12 +230,49 @@ export function createAudioCapture(): AudioCapture {
     },
 
     dispose() {
+      teardownMonitorChain();
       if (activeStream) {
         for (const t of activeStream.getTracks()) t.stop();
         activeStream = null;
       }
       activeRecorder = null;
     },
+
+    enableMonitor(context: AudioContext, level = 0.5) {
+      monitorPref = { context, level: clamp01(level) };
+      if (activeStream) {
+        buildMonitorChain(context, activeStream, monitorPref.level);
+      }
+    },
+
+    setMonitorLevel(level: number) {
+      const clamped = clamp01(level);
+      if (monitorPref) monitorPref.level = clamped;
+      if (monitorChain) {
+        try {
+          monitorChain.gain.gain.value = clamped;
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+
+    disableMonitor() {
+      monitorPref = null;
+      if (monitorChain) {
+        try {
+          monitorChain.gain.gain.value = 0;
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+
+    isMonitorEnabled() {
+      return monitorPref !== null && monitorPref.level > 0;
+    },
+
+    getInputLevelDb,
   };
 }
 

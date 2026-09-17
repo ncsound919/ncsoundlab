@@ -48,8 +48,7 @@ export function sliceRegion(ctx: BaseAudioContext, buffer: AudioBuffer, startPct
 }
 
 /** Smart silence-based auto slicing. */
-export function autoMarkers(buffer: AudioBuffer, maxChops: number): number[] {
-  const data = buffer.getChannelData(0);
+export function autoMarkers(buffer: AudioBuffer, maxChops: number): number[] {  const data = buffer.getChannelData(0);
   const sr = buffer.sampleRate;
   const win = Math.max(256, Math.floor(sr * 0.01));
   const rms: number[] = [];
@@ -90,4 +89,22 @@ export function autoMarkers(buffer: AudioBuffer, maxChops: number): number[] {
     }
   }
   return markers.slice(0, Math.max(0, maxChops - 1));
+}
+
+/** Chromatic root keys (C = concert pitch reference). */
+export const ROOT_KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
+
+/** Semitone offset of a root key from C (C=0 … B=11). Unknown keys → 0. */
+export function rootKeyOffset(key?: string): number {
+  const idx = ROOT_KEYS.indexOf(String(key ?? 'C').toUpperCase() as (typeof ROOT_KEYS)[number]);
+  return idx >= 0 ? idx : 0;
+}
+
+/**
+ * Tune relative to concert pitch: a slice whose root key is D sounds a D, so
+ * the pad transposes it down 2 semitones unless the user tunes it elsewhere.
+ * A root of C (the default) leaves the tune untouched.
+ */
+export function effectiveTune(tune: number, key?: string): number {
+  return tune - rootKeyOffset(key);
 }

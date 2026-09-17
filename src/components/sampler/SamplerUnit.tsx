@@ -93,14 +93,18 @@ export const SamplerUnit: React.FC<SamplerUnitProps> = ({
 
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
 
-  // Play the buffer, optionally transposed, and remember the source so `stop`
-  // can cut it. Wrapped defensively: no audio context just means silent.
+  // Play the current SELECTION (not the whole buffer), optionally transposed,
+  // and remember the source so `stop` can cut it. Wrapped defensively: no
+  // audio context just means silent.
   const play = (semis: number, velocity01: number) => {
     const live = liveRef.current;
     if (!live.buffer) return;
     try {
       const ctx = audioEngine.getContext();
       if (!ctx) return;
+      const dur = live.buffer.duration || 0;
+      const startSec = clamp01(live.selectionStart) * dur;
+      const playLen = Math.max(0.01, (clamp01(live.selectionEnd) - clamp01(live.selectionStart)) * dur);
       const src = ctx.createBufferSource();
       src.buffer = live.buffer;
       src.playbackRate.value = Math.pow(2, semis / 12);
@@ -113,7 +117,7 @@ export const SamplerUnit: React.FC<SamplerUnitProps> = ({
       const master = audioEngine.getMasterRackInput?.() ?? null;
       g.connect(master ?? ctx.destination);
       try { sourceRef.current?.stop(); } catch { /* ignore */ }
-      src.start();
+      src.start(0, startSec, playLen);
       sourceRef.current = src;
     } catch {
       /* audio unavailable (tests / suspended context) — no-op */

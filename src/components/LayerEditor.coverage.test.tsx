@@ -889,6 +889,38 @@ describe('LayerEditor coverage', () => {
     expect(onUpdate).toHaveBeenCalled();
   });
 
+  it('renders a seamless loop crossfade for sample layers', async () => {
+    const { audioEngine } = await import('../lib/audioEngine');
+    const channelData = [new Float32Array(2048)];
+    const fakeCtx = {
+      createBuffer: vi.fn((_ch: number, len: number, rate: number) => ({
+        numberOfChannels: 1,
+        length: len,
+        sampleRate: rate,
+        getChannelData: () => channelData[0],
+      })),
+    };
+    (audioEngine.getContext as any).mockReturnValue(fakeCtx);
+    try {
+      const onUpdate = vi.fn();
+      const { container } = render(
+        <LayerEditor selectedLayer={sampleLayer()} onUpdate={onUpdate} onPlay={vi.fn()} />,
+      );
+      openDetails(container);
+      fireEvent.change(screen.getByLabelText('Loop crossfade seconds'), { target: { value: '0.05' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Render seamless loop' }));
+      expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        playStartPct: 0,
+        playEndPct: 1,
+        sampleLoop: true,
+      }));
+      const arg = onUpdate.mock.calls[0][0] as { audioBuffer: AudioBuffer };
+      expect(arg.audioBuffer.length).toBe(2048);
+    } finally {
+      (audioEngine.getContext as any).mockReset();
+    }
+  });
+
   it('covers both sides of the randomizer probability branches', () => {
     const onUpdate = vi.fn();
     const styles = [

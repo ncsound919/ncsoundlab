@@ -5,6 +5,7 @@
 
 import Meyda from 'meyda';
 import { AudioAnalysisResult, SampleCategory, BatchProcessOptions } from '../types';
+import { stretchSampleBuffer } from '../audio/dsp/TimeStretch';
 
 /**
  * Meyda requires the input signal length to be a power of two. We take the
@@ -254,24 +255,22 @@ export function processAudioBuffer(
     }
   }
 
-  // 2. Pitch Shifting (Resampling / Semi-tone pitch factor)
+  // 2. Pitch Shifting (duration-preserving, via the phase-vocoder pipeline).
+  // The old varispeed resample changed the sample's length along with its
+  // pitch; `pitchSemitones` now shifts pitch independently (destructive,
+  // MPC-style pitch) so the timeline — and every downstream stage — is stable.
   let pitchShiftedBuffer = outBuffer;
   if (options.pitchSemitones !== 0) {
-    const pitchFactor = Math.pow(2, options.pitchSemitones / 12);
-    const newLen = Math.floor(trimmedLength / pitchFactor);
-    pitchShiftedBuffer = audioCtx.createBuffer(numChannels, newLen, sampleRate);
-
-    for (let c = 0; c < numChannels; c++) {
-      const src = outBuffer.getChannelData(c);
-      const dest = pitchShiftedBuffer.getChannelData(c);
-
-      for (let i = 0; i < newLen; i++) {
-        const srcPos = i * pitchFactor;
-        const i0 = Math.floor(srcPos);
-        const i1 = Math.min(trimmedLength - 1, i0 + 1);
-        const frac = srcPos - i0;
-        dest[i] = src[i0] * (1 - frac) + src[i1] * frac; // Linear interpolation
+    try {
+      const { buffer: shifted } = stretchSampleBuffer(outBuffer, { pitchSemitones: options.pitchSemitones });
+      const fixed = audioCtx.createBuffer(numChannels, trimmedLength, sampleRate);
+      for (let c = 0; c < numChannels; c++) {
+        const src = shifted.getChannelData(Math.min(c, shifted.numberOfChannels - 1));
+        fixed.getChannelData(c).set(src.subarray(0, Math.min(trimmedLength, src.length)));
       }
+      pitchShiftedBuffer = fixed;
+    } catch (e) {
+      console.warn('Independent pitch shift failed, keeping original pitch', e);
     }
   }
 
@@ -282,6 +281,8 @@ export function processAudioBuffer(
 
   // Peak calculation for normalization
   let maxPeak = 0;
+  // One-pole low-pass state per output channel (see below).
+  const lpPrev = new Float32Array(destChannels);
 
   for (let c = 0; c < destChannels; c++) {
     // If original is mono but output is stereo, both channels read from the mono pitchShiftedBuffer channel 0
@@ -330,6 +331,17 @@ export function processAudioBuffer(
         const RC = 1 / (2 * Math.PI * options.highPassFreq);
         const alpha = RC / (RC + dt);
         sample = alpha * (dest[i - 1] + sample - src[i - 1]);
+      }
+
+      // Simple Low Pass Filter (one-pole RC). `lowPassFreq` at/above 20 kHz
+      // (or unset) means "wide open" and skips the filter entirely.
+      if (options.lowPassFreq !== undefined && options.lowPassFreq >= 50 && options.lowPassFreq < 20000) {
+        const dt = 1 / sampleRate;
+        const RC = 1 / (2 * Math.PI * Math.min(20000, options.lowPassFreq));
+        const alpha = dt / (RC + dt);
+        const prev = i > 0 ? lpPrev[c] : sample;
+        sample = prev + alpha * (sample - prev);
+        lpPrev[c] = sample;
       }
 
       dest[i] = sample;

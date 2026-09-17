@@ -27,7 +27,7 @@ import { applySemitoneShift, stepOffsetSeconds } from '../lib/sequencerHelpers';
 import { layerColorFor } from '../lib/layerColors';
 import { audioEngine } from '../lib/audioEngine';
 import { SoundLayerPlayer } from '../audio/SoundLayerPlayer';
-import { MpcPadBank, PadEntry } from './MpcPadBank';
+import { MpcPadBank, PadEntry, type SixteenLevelsMode } from './MpcPadBank';
 import { PianoRoll } from './PianoRoll';
 import { useSequencerStore, BANK_IDS, BankId } from '../store/sequencerStore';
 import { usePatternStore, PATTERN_IDS, type PatternId } from '../store/patternStore';
@@ -35,9 +35,12 @@ import { planFromArrangement } from '../lib/arrangementScheduler';
 import { GROOVE_TEMPLATES, applyGroove, humanizeVelocities, clearGrooveOffsets, findGrooveTemplate, type GrooveTemplate } from '../lib/grooveTemplates';
 import { exportV2, importExport } from '../sequencerFormat';
 import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
+import { buildCountInBeats } from '../audio/transport/countIn';
+import { createMetronome, type Metronome } from '../audio/transport/metronome';
 import { renderMixdown } from '../audio/transport/mixdown';
 import { SampleBrowser } from './SampleBrowser';
 import { TakesRecorder } from './TakesRecorder';
+import { ClipLauncher } from './ClipLauncher';
 import { patternLoopLengthSec } from '../audio/transport/takesRecorder';
 import { PerformanceControls } from './PerformanceControls';
 import { TheoryPanel } from './TheoryPanel';
@@ -47,6 +50,15 @@ import {
   fetchLibrarySample,
   decodeLibrarySample,
 } from '../lib/sampleLibrary';
+import { autoSampleSynthLayer } from '../lib/autoSample';
+import {
+  snapshotProgram,
+  resolveProgram,
+  savePadProgram,
+  fetchPadPrograms,
+  deletePadProgram,
+  type StoredPadProgram,
+} from '../lib/padPrograms';
 import type { TheoryChord } from '../lib/theory/progression';
 
 const PPQ = 96;
@@ -119,14 +131,24 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const [padTune, setPadTune] = useState<Record<string, number>>({});
   const [padChoke, setPadChoke] = useState<Record<string, number>>({});
   const [padMuted, setPadMuted] = useState<Record<string, boolean>>({});
+  const [padLevel, setPadLevel] = useState<Record<string, number>>({}); // per-pad output level multiplier (0..1.5)
   const [selectedPad, setSelectedPad] = useState<number>(0);
   const [sixteenLevels, setSixteenLevels] = useState(false);
+  const [sixteenLevelsMode, setSixteenLevelsMode] = useState<SixteenLevelsMode>('velocity');
   const [globalSwing, setGlobalSwing] = useState(0);
   const [fullLevel, setFullLevel] = useState(false);
   const [velocityCurve, setVelocityCurve] = useState<'linear' | 'exponential' | 'log'>('linear');
   const [noteRepeat, setNoteRepeat] = useState({ active: false, division: 4 });
   const [timeCorrect, setTimeCorrect] = useState(1); // 1=1/16, 2=1/8, 4=1/4 record snap
   const [view, setView] = useState<'grid' | 'piano'>('grid');
+  /** Count-in beats before the transport rolls when step-record is armed. */
+  const [countInBeats, setCountInBeats] = useState(4);
+  const [isCountingIn, setIsCountingIn] = useState(false);
+  // Named program presets (Dexie-persisted, resolved by layer name on load).
+  const [padPresets, setPadPresets] = useState<StoredPadProgram[]>([]);
+  const [presetName, setPresetName] = useState('');
+  const [presetId, setPresetId] = useState('');
+  const [presetStatus, setPresetStatus] = useState('');
 
   // Tone Transport mode (Phase 1). On by default after parity verification.
   // The setInterval path is retained as a fallback — the TransportBar checkbox
@@ -147,6 +169,8 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const stepLengthRef = useRef<16 | 32>(patternStepLength);
   const padSwingRef = useRef(padSwing);
   const padPocketRef = useRef(padPocket);
+  const padTuneRef = useRef(padTune);
+  const padLevelRef = useRef(padLevel);
   const padChokeRef = useRef(padChoke);
   const swingTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const tickRef = useRef<() => void>(() => {});
@@ -154,6 +178,8 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const tapTimesRef = useRef<number[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importKindRef = useRef<'prgm' | 'seq'>('prgm');
+  const metronomeRef = useRef<Metronome | null>(null);
+  const countInTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   if (!playerRef.current) playerRef.current = new SoundLayerPlayer();
 
@@ -161,6 +187,8 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   useEffect(() => { stepLengthRef.current = patternStepLength; }, [patternStepLength]);
   useEffect(() => { padSwingRef.current = padSwing; }, [padSwing]);
   useEffect(() => { padPocketRef.current = padPocket; }, [padPocket]);
+  useEffect(() => { padTuneRef.current = padTune; }, [padTune]);
+  useEffect(() => { padLevelRef.current = padLevel; }, [padLevel]);
   useEffect(() => { padChokeRef.current = padChoke; }, [padChoke]);
   useEffect(() => { timeCorrectRef.current = timeCorrect; }, [timeCorrect]);
   useEffect(() => { activeRowRef.current = activeRowId; }, [activeRowId]);
@@ -210,6 +238,15 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     });
     setPadMuted((prev) => {
       const pruned: Record<string, boolean> = {};
+      let changed = false;
+      for (const id of Object.keys(prev)) {
+        if (ids.has(id)) pruned[id] = prev[id];
+        else changed = true;
+      }
+      return changed ? pruned : prev;
+    });
+    setPadLevel((prev) => {
+      const pruned: Record<string, number> = {};
       let changed = false;
       for (const id of Object.keys(prev)) {
         if (ids.has(id)) pruned[id] = prev[id];
@@ -283,7 +320,12 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       // are actually audible on drum and sample rows.
       const choke = padChokeRef.current[layerId] || 0;
       const velocity = typeof cell.velocity === 'number' ? Math.max(0, Math.min(1, cell.velocity / 127)) : 1;
-      const velLayer = { ...layer, gain: (layer.gain || 1) * velocity };
+      // Per-pad tune must apply to sequenced steps too, not just live pad hits
+      // (`triggerLayerWithSemitone`). Without this, a tuned hi-hat/808 plays at
+      // its original pitch when the pattern runs.
+      const tune = padTuneRef.current[layerId] || 0;
+      const level = padLevelRef.current[layerId] ?? 1;
+      const velLayer = applySemitoneShift({ ...layer, gain: (layer.gain || 1) * velocity * level }, tune);
       audioEngine.triggerLayer(velLayer, undefined, choke > 0 ? `choke:${choke}` : undefined, when);
     }
   }, [layers, isLayerAudible, bpm]);
@@ -341,8 +383,67 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const triggerStepRef = useRef<(layerId: string, cell: StepCell, when?: number) => void>(() => {});
   useEffect(() => { triggerStepRef.current = triggerStep; }, [triggerStep]);
 
+  // Start the pattern clock immediately (Tone Transport with a setInterval
+  // fallback). Split out of togglePlay so the count-in path can defer it.
+  const startTransportNow = () => {
+    if (useTransportMode) {
+      try {
+        initTransport();
+        getTransport().setBpm(bpm);
+        getTransport().setSwing(globalSwing);
+        getTransport().play();
+        return;
+      } catch (e) {
+        console.warn('Transport start failed, falling back to setInterval', e);
+      }
+    }
+    intervalRef.current = setInterval(() => tickRef.current(), (60000 / bpm) / 4);
+  };
+
+  // Play with an MPC-style count-in when step-record is armed: schedule
+  // `countInBeats` metronome clicks on the audio clock, then roll the
+  // transport. Falls back to an immediate start when the metronome or the
+  // audio clock is unavailable.
+  const beginPlay = () => {
+    setIsPlaying(true);
+    stepRef.current = -1;
+    if (isRecording && countInBeats > 0) {
+      try {
+        const ctx = audioEngine.getContext();
+        if (!ctx) throw new Error('AudioContext unavailable for count-in');
+        if (ctx.state === 'suspended') void ctx.resume();
+        if (!metronomeRef.current) metronomeRef.current = createMetronome();
+        const metro = metronomeRef.current;
+        const beatsPerBar = patternTimeSignature[0] ?? 4;
+        const beats = buildCountInBeats(countInBeats, bpm);
+        const t0 = ctx.currentTime + 0.06;
+        beats.forEach((b) => {
+          metro.scheduleAtBeat(b.index % beatsPerBar, Math.floor(b.index / beatsPerBar), beatsPerBar, t0 + b.timeSec);
+        });
+        const delayMs = (beats.length * 60) / bpm * 1000;
+        setIsCountingIn(true);
+        countInTimerRef.current = setTimeout(() => {
+          countInTimerRef.current = null;
+          setIsCountingIn(false);
+          startTransportNow();
+        }, delayMs);
+        return;
+      } catch (e) {
+        console.warn('Count-in failed, starting immediately', e);
+        setIsCountingIn(false);
+      }
+    }
+    startTransportNow();
+  };
+
   const togglePlay = () => {
     if (isPlaying) {
+      // Cancel a pending count-in so a stopped transport never starts late.
+      if (countInTimerRef.current) {
+        clearTimeout(countInTimerRef.current);
+        countInTimerRef.current = null;
+      }
+      setIsCountingIn(false);
       if (useTransportMode) {
         try { getTransport().stop(); } catch { /* not initialized */ }
       }
@@ -353,22 +454,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       swingTimeoutsRef.current.clear();
       setIsPlaying(false);
     } else {
-      if (useTransportMode) {
-        try {
-          initTransport();
-          getTransport().setBpm(bpm);
-          getTransport().setSwing(globalSwing);
-          getTransport().play();
-          setIsPlaying(true);
-          stepRef.current = -1;
-          return;
-        } catch (e) {
-          console.warn('Transport start failed, falling back to setInterval', e);
-        }
-      }
-      setIsPlaying(true);
-      stepRef.current = -1;
-      intervalRef.current = setInterval(() => tickRef.current(), (60000 / bpm) / 4);
+      beginPlay();
     }
   };
 
@@ -389,6 +475,9 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       if (intervalRef.current) clearInterval(intervalRef.current);
       swingTimeoutsRef.current.forEach(clearTimeout);
       swingTimeoutsRef.current.clear();
+      if (countInTimerRef.current) clearTimeout(countInTimerRef.current);
+      metronomeRef.current?.dispose();
+      metronomeRef.current = null;
       // Release an in-progress mic recording when the tab unmounts, otherwise
       // the MediaRecorder / getUserMedia stream stays alive (browser mic
       // indicator on) indefinitely.
@@ -647,8 +736,23 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     }
   }, []);
 
-  const playMidiNote = useCallback((midi: number, velocity?: number) => {
-    const rowId = activeRowRef.current;
+  // MPC pad trigger with per-pad tune / 16-levels semitone offset, velocity
+  // (0..1), and choke group. Does not stop other layers unless they share a
+  // choke group; respects the mixer's mute/solo state. Declared before
+  // `playMidiNote` (keygroup playback reuses it) to avoid a TDZ read.
+  const triggerLayerWithSemitone = useCallback((layerId: string, semitones: number, velocity = 1, chokeKey?: string, when?: number) => {
+    const layer = layers.find((l) => l.id === layerId);
+    if (!layer || !isLayerAudible(layer)) return;
+    const level = padLevel[layerId] ?? 1;
+    const base: SoundLayer = {
+      ...layer,
+      gain: Math.max(0.02, (layer.gain || 1) * velocity * level),
+    };
+    const shifted = applySemitoneShift(base, semitones);
+    audioEngine.triggerLayer(shifted, undefined, chokeKey, when);
+  }, [layers, isLayerAudible, padLevel]);
+
+  const playMidiNote = useCallback((midi: number, velocity?: number) => {    const rowId = activeRowRef.current;
     const layer = layers.find((l) => l.id === rowId);
     if (!layer || !isLayerAudible(layer)) return;
     // All onPlayNote callers (PerformanceControls keyboard pads, the MIDI
@@ -657,6 +761,12 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     const v01 = typeof velocity === 'number' ? Math.max(0, Math.min(1, velocity)) : 1;
     if (layer.type === 'synth' && playerRef.current) {
       playerRef.current.playNote(layer, midi, 0.6, v01);
+    } else if (layer.type === 'sample' && layer.audioBuffer) {
+      // Keygroup-style chromatic playback: the sample is rooted at C4
+      // (MIDI 60) plus the layer's base pitch, so the piano/QWERTY keys play
+      // it across the keyboard instead of retriggering one pitch.
+      const semis = (midi - 60) + (layer.pitch || 0);
+      triggerLayerWithSemitone(layer.id, semis, v01);
     } else {
       audioEngine.triggerLayer({ ...layer, gain: (layer.gain || 1) * v01 });
     }
@@ -664,7 +774,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     if (recordingRef.current && playingRef.current) {
       recordNote(midi, velocity);
     }
-  }, [layers, recordNote, isLayerAudible]);
+  }, [layers, recordNote, isLayerAudible, triggerLayerWithSemitone]);
 
   const stopMidiNote = useCallback((midi: number) => {
     setActiveNotes((prev) => prev.filter((n) => n !== midi));
@@ -694,20 +804,6 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     state.setActivePattern(dst);
   };
 
-  // MPC pad trigger with per-pad tune / 16-levels semitone offset, velocity
-  // (0..1), and choke group. Does not stop other layers unless they share a
-  // choke group; respects the mixer's mute/solo state.
-  const triggerLayerWithSemitone = useCallback((layerId: string, semitones: number, velocity = 1, chokeKey?: string) => {
-    const layer = layers.find((l) => l.id === layerId);
-    if (!layer || !isLayerAudible(layer)) return;
-    const base: SoundLayer = {
-      ...layer,
-      gain: Math.max(0.02, (layer.gain || 1) * velocity),
-    };
-    const shifted = applySemitoneShift(base, semitones);
-    audioEngine.triggerLayer(shifted, undefined, chokeKey);
-  }, [layers, isLayerAudible]);
-
   const setSwing = useCallback((layerId: string, swing: number) => {
     setPadSwing((prev) => ({ ...prev, [layerId]: Math.max(0, Math.min(75, swing)) }));
   }, []);
@@ -725,10 +821,19 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     setPadChoke((prev) => ({ ...prev, [layerId]: Math.max(0, Math.min(4, group)) }));
   }, []);
 
+  const setLevel = useCallback((layerId: string, level: number) => {
+    setPadLevel((prev) => ({ ...prev, [layerId]: Math.max(0, Math.min(1.5, level)) }));
+  }, []);
+
   const togglePadMute = useCallback((layerId: string) => {
-    if (!onUpdateLayer) return;
     const layer = layers.find((l) => l.id === layerId);
-    onUpdateLayer(layerId, { muted: !(layer?.muted === true) });
+    const next = !(layer?.muted === true);
+    // Keep the pad-bank mute state and the layer mute flag in sync: the pads
+    // read `padMuted` (tiles, button label, live-hit gate) while the
+    // sequencer/mixer read `layer.muted`. Updating only one left mute
+    // half-applied (sequence muted, pads still firing, UI stale).
+    setPadMuted((prev) => ({ ...prev, [layerId]: next }));
+    if (onUpdateLayer) onUpdateLayer(layerId, { muted: next });
   }, [layers, onUpdateLayer]);
 
   const handleBankChange = useCallback((bank: BankId) => {
@@ -737,8 +842,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   }, [setActiveBank]);
 
   // Active bank's 16 slots resolved to layer info (null = empty pad)
-  const entries: (PadEntry | null)[] = programs[activeBank].map((layerId) => {
-    if (!layerId) return null;
+  const entries: (PadEntry | null)[] = programs[activeBank].map((layerId) => {    if (!layerId) return null;
     const layer = layers.find((l) => l.id === layerId);
     if (!layer || !layer.enabled) return null;
     return { layerId, name: layer.name, type: layer.type, color: layerColorFor(layer, layers.indexOf(layer)) };
@@ -759,6 +863,137 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     }
   }, [selectedLayerId, layers, setProgramSlot]);
 
+  // Pad copy/paste/swap within the active bank's program. Slots reference
+  // layers, so per-pad params (which are keyed by layer) travel with the copy
+  // automatically.
+  const copyPad = useCallback((from: number, to: number) => {
+    if (from === to) return;
+    const src = programs[activeBank]?.[from] ?? null;
+    setProgramSlot(to, src);
+    setSelectedPad(to);
+  }, [programs, activeBank, setProgramSlot]);
+
+  const swapPads = useCallback((a: number, b: number) => {
+    if (a === b) return;
+    const prog = programs[activeBank] ?? [];
+    const tmp = prog[a] ?? null;
+    setProgramSlot(a, prog[b] ?? null);
+    setProgramSlot(b, tmp);
+    setSelectedPad(b);
+  }, [programs, activeBank, setProgramSlot]);
+
+  // ----- Named program presets (persisted by layer name, resolved on load) -----
+
+  const refreshPadPresets = useCallback(async () => {
+    setPadPresets(await fetchPadPrograms());
+  }, []);
+
+  useEffect(() => {
+    void refreshPadPresets();
+  }, [refreshPadPresets]);
+
+  const saveCurrentAsPreset = useCallback(async () => {
+    const body = snapshotProgram(presetName || `Program ${padPresets.length + 1}`, {
+      banks: programs,
+      swing: padSwing,
+      pocket: padPocket,
+      tune: padTune,
+      choke: padChoke,
+      muted: padMuted,
+      level: padLevel,
+      sixteenLevels,
+      sixteenLevelsMode,
+      globalSwing,
+      fullLevel,
+      velocityCurve,
+      timeCorrect,
+    }, layers);
+    await savePadProgram(body);
+    setPresetName('');
+    setPresetStatus(`Saved "${body.name}"`);
+    await refreshPadPresets();
+  }, [presetName, padPresets.length, programs, padSwing, padPocket, padTune, padChoke, padMuted, padLevel, sixteenLevels, sixteenLevelsMode, globalSwing, fullLevel, velocityCurve, timeCorrect, layers, refreshPadPresets]);
+
+  const loadPreset = useCallback(async (id: string) => {
+    const stored = padPresets.find((p) => p.id === id);
+    if (!stored) return;
+    const resolved = resolveProgram(stored, layers);
+    const store = useSequencerStore.getState();
+    const pid = usePatternStore.getState().activePatternId;
+    for (const bank of BANK_IDS) store.setPatternProgram(pid, bank, resolved.banks[bank]);
+    setPadSwing(resolved.swing);
+    setPadPocket(resolved.pocket);
+    setPadTune(resolved.tune);
+    setPadChoke(resolved.choke);
+    setPadLevel(resolved.level);
+    setGlobalSwing(resolved.globalSwing);
+    setSixteenLevels(resolved.sixteenLevels);
+    setSixteenLevelsMode(resolved.sixteenLevelsMode);
+    setFullLevel(resolved.fullLevel);
+    setVelocityCurve(resolved.velocityCurve);
+    setTimeCorrect(resolved.timeCorrect);
+    // Mutes live on the layers too — sync both, like togglePadMute does.
+    setPadMuted(resolved.muted);
+    if (onUpdateLayer) {
+      for (const [layerId, muted] of Object.entries(resolved.muted)) {
+        onUpdateLayer(layerId, { muted });
+      }
+    }
+    setSelectedPad(0);
+    setPresetStatus(
+      resolved.missing.length > 0
+        ? `"${stored.name}" loaded · missing: ${resolved.missing.join(', ')}`
+        : `"${stored.name}" loaded`
+    );
+  }, [padPresets, layers, onUpdateLayer]);
+
+  const deletePreset = useCallback(async (id: string) => {
+    await deletePadProgram(id);
+    setPresetStatus('');
+    await refreshPadPresets();
+  }, [refreshPadPresets]);
+
+  // ----- Library usage tracking (powers SampleBrowser "purge unused") -----
+
+  const [usedLibraryIds, setUsedLibraryIds] = useState<string[]>([]);
+  const markLibraryUsed = useCallback((id: string) => {
+    setUsedLibraryIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, []);
+
+  // ----- Synth auto-sampler (MPC-style: one patch → 16 pitched one-shots) -----
+
+  const [isAutoSampling, setIsAutoSampling] = useState(false);
+  const autoSampleActiveSynth = useCallback(async () => {
+    const rowId = activeRowRef.current;
+    const layer = layers.find((l) => l.id === rowId);
+    if (!layer || layer.type !== 'synth' || !onAddLayer) return;
+    setIsAutoSampling(true);
+    try {
+      // exportWav renders the full chain, so what you hear is what you sample.
+      const notes = await autoSampleSynthLayer(layer, (pitched, dur) => audioEngine.exportWav([pitched], dur));
+      const ids: string[] = [];
+      for (const n of notes) {
+        const id = onAddLayer(n.buffer, n.name);
+        if (id) ids.push(id);
+      }
+      if (ids.length) {
+        // Write into the active pattern's program (pads follow the pattern).
+        const store = useSequencerStore.getState();
+        const pid = usePatternStore.getState().activePatternId;
+        store.setPatternProgram(pid, 'B', ids);
+        store.setActiveBank('B');
+        setSelectedPad(0);
+        // Keep the bank-follow effect on Program B: it snaps back to whatever
+        // bank holds the selected layer.
+        if (onSelectLayer && ids[0]) onSelectLayer(ids[0]);
+      }
+    } catch (e) {
+      console.warn('Auto-sample failed', e);
+    } finally {
+      setIsAutoSampling(false);
+    }
+  }, [layers, onAddLayer, onSelectLayer]);
+
   // --- MPC program (.prgm) / sequence (.seq) import-export ---
   const downloadFile = (text: string, filename: string) => {
     const blob = new Blob([text], { type: 'application/json' });
@@ -778,11 +1013,13 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       ppq: PPQ,
       globalSwing,
       sixteenLevels,
+      sixteenLevelsMode,
       timeCorrect,
       programs,
       swing: padSwing,
       tune: padTune,
       choke: padChoke,
+      level: padLevel,
     };
     downloadFile(JSON.stringify(data, null, 2), 'mpc-program.prgm');
   };
@@ -812,6 +1049,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           const loadedSwing: Record<string, number> = {};
           const loadedTune: Record<string, number> = {};
           const loadedChoke: Record<string, number> = {};
+          const loadedLevel: Record<string, number> = {};
           // v4: programs are per-bank arrays of layerId (older v3 files had flat `pads`)
           if (data.programs && typeof data.programs === 'object') {
             for (const bank of BANK_IDS) {
@@ -835,12 +1073,17 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           for (const [id, v] of Object.entries(data.choke || {})) {
             if (layers.some((l) => l.id === id) && typeof v === 'number') loadedChoke[id] = v;
           }
+          for (const [id, v] of Object.entries(data.level || {})) {
+            if (layers.some((l) => l.id === id) && typeof v === 'number') loadedLevel[id] = Math.max(0, Math.min(1.5, v));
+          }
           setPadSwing(loadedSwing);
           setPadTune(loadedTune);
           setPadChoke(loadedChoke);
+          setPadLevel(loadedLevel);
           setSelectedPad(0);
           if (typeof data.globalSwing === 'number') setGlobalSwing(data.globalSwing);
           if (typeof data.sixteenLevels === 'boolean') setSixteenLevels(data.sixteenLevels);
+          if (data.sixteenLevelsMode === 'velocity' || data.sixteenLevelsMode === 'tune') setSixteenLevelsMode(data.sixteenLevelsMode);
           if (typeof data.timeCorrect === 'number') setTimeCorrect(data.timeCorrect);
         } else if (importKindRef.current === 'seq') {
           try {
@@ -928,6 +1171,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   }, [activeNotes]);
 
   const trackCount = layers.filter((l) => l.enabled).length;
+  const activeRowLayer = layers.find((l) => l.id === activeRowId) ?? null;
 
   // Voice a generated progression into the active pattern row (one cell per
   // chord, spaced by its duration in 16th steps). Shared by the Theory panel
@@ -1034,16 +1278,49 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
               <span className={`w-2 h-2 rounded-full ${isRecording ? 'bg-white animate-pulse' : 'bg-red-500'}`} />
               {isRecording ? 'Recording' : 'Record'}
             </button>
+            <label className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-300 flex items-center gap-1.5" title="Count-in before the transport rolls when step-record is armed (MPC-style)">
+              Count-in
+              <select
+                value={countInBeats}
+                onChange={(e) => setCountInBeats(parseInt(e.target.value))}
+                className="bg-transparent text-slate-300 focus:outline-none cursor-pointer"
+                aria-label="Count-in beats"
+              >
+                <option value={0}>Off</option>
+                <option value={1}>1 beat</option>
+                <option value={2}>2 beats</option>
+                <option value={4}>1 bar</option>
+              </select>
+            </label>
             <button type="button" onClick={clearPattern} className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all">Clear Pattern</button>
             <button type="button" onClick={() => openImport('prgm')} title="Load an MPC program (.prgm)" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-blue-400 hover:text-white transition-all flex items-center gap-1"><FolderOpen size={11} /> Load Pgm</button>
             <button type="button" onClick={() => openImport('seq')} title="Load an MPC sequence (.seq)" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-blue-400 hover:text-white transition-all flex items-center gap-1"><FolderOpen size={11} /> Load Seq</button>
             <button type="button" onClick={exportProgram} title="Export MPC program (.prgm)" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-emerald-400 hover:text-white transition-all flex items-center gap-1"><Save size={11} /> Save Pgm</button>
             <button type="button" onClick={exportSequence} title="Export MPC sequence (.seq)" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-emerald-400 hover:text-white transition-all flex items-center gap-1"><Save size={11} /> Save Seq</button>
+            <span className="mx-1 h-5 w-px bg-[#1e293b]" />
+            <input
+              value={presetName}
+              onChange={(e) => setPresetName(e.target.value)}
+              placeholder="Preset name"
+              aria-label="Preset name"
+              className="w-24 px-2 py-1.5 rounded-lg text-[9px] font-mono bg-[#121215] border border-[#1e293b] text-white placeholder-slate-600 focus:outline-none focus:border-purple-500"
+            />
+            <button type="button" onClick={() => void saveCurrentAsPreset()} title="Save the current pad program as a named preset" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-purple-400 hover:text-white transition-all">Save Preset</button>
+            <select
+              value={presetId}
+              onChange={(e) => { setPresetId(e.target.value); if (e.target.value) void loadPreset(e.target.value); }}
+              aria-label="Load pad preset"
+              className="px-2 py-1.5 rounded-lg text-[9px] font-mono bg-[#121215] border border-[#1e293b] text-slate-300 focus:outline-none cursor-pointer max-w-[130px]"
+            >
+              <option value="">Presets…</option>
+              {padPresets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <button type="button" onClick={() => { if (presetId) { void deletePreset(presetId); setPresetId(''); } }} disabled={!presetId} title="Delete the selected preset" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-red-400 transition-all disabled:opacity-30">Del</button>
             <input ref={fileInputRef} type="file" accept=".prgm,.seq,.json,application/json" className="hidden" onChange={handleImportFile} />
           </div>
-          <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">
-            {trackCount} tracks · step {String(currentStep + 1).padStart(2, '0')}/16
-          </span>
+            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+              {isCountingIn ? 'Count-in… · ' : ''}{presetStatus ? `${presetStatus} · ` : ''}{trackCount} tracks · step {String(currentStep + 1).padStart(2, '0')}/16
+            </span>
         </div>
       </div>
 
@@ -1064,6 +1341,8 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         onAddLayer={(buffer, name) => onAddLayer ? (onAddLayer(buffer, name) ?? undefined) : undefined}
         onSlice={(buffer, n) => onSlice(buffer, n)}
       />
+      {/* Phase 6.4 — tempo-matched audio clip launcher (offline render, launch quantize) */}
+      <ClipLauncher bpm={bpm} stepLength={patternStepLength} />
       {/* Phase 6.1 + 6.2 — performance controls (QWERTY pads, scale lock, chord mode, splits) */}
       <PerformanceControls
         padSlots={programs[activeBank]}
@@ -1328,9 +1607,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           <SampleBrowser
             onUseSample={(sample, buffer) => {
               if (!onAddLayer) return;
+              markLibraryUsed(sample.id);
               const newId = onAddLayer(buffer, sample.name);
               if (newId && onSelectLayer) onSelectLayer(newId);
             }}
+            usedSampleIds={usedLibraryIds}
           />
         </div>
         <MpcPadBank
@@ -1347,11 +1628,13 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         padSwing={padSwing}
         padPocket={padPocket}
         padTune={padTune}
+        padLevel={padLevel}
           padChoke={padChoke}
           padMuted={padMuted}
           bpm={bpm}
           noteRepeat={noteRepeat}
           sixteenLevels={sixteenLevels}
+          sixteenLevelsMode={sixteenLevelsMode}
           globalSwing={globalSwing}
           fullLevel={fullLevel}
           velocityCurve={velocityCurve}
@@ -1359,18 +1642,26 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           onSetSwing={setSwing}
           onSetPocket={setPocket}
           onSetTune={setTune}
+          onSetLevel={setLevel}
           onSetChoke={setChoke}
           onTogglePadMute={togglePadMute}
           onClearPad={clearPad}
           onAssignActiveLayer={assignActiveLayerToPad}
+          onCopyPad={copyPad}
+          onSwapPads={swapPads}
           onSetGlobalSwing={setGlobalSwing}
-          onTriggerPad={(layerId, semitones, velocity) => {
+          onTriggerPad={(layerId, semitones, velocity, when) => {
             const choke = padChoke[layerId] || 0;
-            triggerLayerWithSemitone(layerId, semitones, velocity ?? 1, choke > 0 ? `choke:${choke}` : undefined);
+            triggerLayerWithSemitone(layerId, semitones, velocity ?? 1, choke > 0 ? `choke:${choke}` : undefined, when);
+          }}
+          getAudioTime={() => {
+            const ctx = audioEngine.getContext();
+            return ctx ? ctx.currentTime : performance.now() / 1000;
           }}
           onPadInput={(layerId, velocity) => recordPadHit(layerId, velocity)}
           onNoteRepeatChange={setNoteRepeat}
           onSixteenLevelsChange={setSixteenLevels}
+          onSixteenLevelsModeChange={setSixteenLevelsMode}
           onFullLevelChange={setFullLevel}
           onVelocityCurveChange={setVelocityCurve}
           onSetTimeCorrect={setTimeCorrect}
@@ -1385,6 +1676,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
               const buffer = await decodeLibrarySample(ctx, row);
               const newId = onAddLayer(buffer, row.name);
               if (newId) {
+                markLibraryUsed(sampleId);
                 setProgramSlot(padIndex, newId);
                 if (onSelectLayer) onSelectLayer(newId);
               }
@@ -1407,6 +1699,17 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           <span className="text-[10px] font-mono font-bold text-yellow-400">
             {chordLabel() || 'No notes held'}
           </span>
+          {activeRowLayer?.type === 'synth' && (
+            <button
+              type="button"
+              onClick={() => void autoSampleActiveSynth()}
+              disabled={isAutoSampling}
+              title="Render this synth at 16 pitches (C2–D#3) into one-shot layers on Program B"
+              className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-fuchsia-400 hover:text-white transition-all disabled:opacity-40"
+            >
+              {isAutoSampling ? 'Sampling…' : 'Auto-sample → Pads'}
+            </button>
+          )}
         </div>
         <div className="p-4 bg-black/40">
           <Piano

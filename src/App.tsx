@@ -1218,9 +1218,19 @@ export default function App() {
     }
   };
 
-  // Chop editor "Send to Pads" → creates the chop layers and routes to Program D
-  const handleChopEditorSend = (sounds: { name: string; buffer?: AudioBuffer; start?: number; end?: number; gain?: number; tune?: number }[]) => {
+  // Chop editor "Send to Pads" → creates the chop layers and routes to Program D.
+  // The persisted chop map (if any) is stamped as a Program D program so the
+  // chop → program → sequence loop is recoverable from the saved-chops list.
+  const handleChopEditorSend = async (sounds: { name: string; buffer?: AudioBuffer; start?: number; end?: number; gain?: number; tune?: number }[], ctx?: { chopMapId: string | null }) => {
     handleSendToPads(sounds, 'D');
+    if (ctx?.chopMapId) {
+      try {
+        const { stampChopMapSent } = await import('./lib/chopMaps');
+        await stampChopMapSent(ctx.chopMapId, 'D');
+      } catch (err) {
+        console.warn('Chop program stamp failed:', err);
+      }
+    }
     setChopBuffer(null);
   };
 
@@ -2700,6 +2710,10 @@ export default function App() {
             defaultCount={chopCount}
             onSendToPads={handleChopEditorSend}
             onClose={() => setChopBuffer(null)}
+            onLoadSource={(buffer, fileName) => {
+              setChopBuffer(buffer);
+              setChopFileName(fileName);
+            }}
           />
         )}
       </Suspense>

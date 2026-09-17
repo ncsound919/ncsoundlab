@@ -279,6 +279,24 @@ describe('ChopEditor coverage', () => {
     expect(sounds[3].end).toBeCloseTo(1);
   });
 
+  it('persists the chop session on send and passes the map id', () => {
+    const { onSendToPads } = renderEditor();
+    fireEvent.click(screen.getByRole('button', { name: /Equal/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Send Slices/ }));
+
+    expect(onSendToPads).toHaveBeenCalledTimes(1);
+    const ctx = onSendToPads.mock.calls[0][1] as { chopMapId: string | null };
+    expect(typeof ctx.chopMapId).toBe('string');
+  });
+
+  it('saves the chop session explicitly', async () => {
+    renderEditor();
+    fireEvent.click(screen.getByRole('button', { name: /Save Chops/ }));
+    // The save round-trips through the (mocked-absent) IndexedDB layer and
+    // still flips the button to its saved state.
+    await waitFor(() => expect(screen.getByRole('button', { name: /Saved/ })).toBeDefined());
+  });
+
   it('routes stretched slices through the DSP path before sending', () => {
     const { onSendToPads } = renderEditor();
     fireEvent.click(screen.getByRole('button', { name: /Equal/ }));

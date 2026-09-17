@@ -252,4 +252,44 @@ describe('batchAudioProcessor', () => {
     const variants = await generateVariants(makeCtx(), createMockBuffer(), 0, {});
     expect(variants).toEqual([]);
   });
+
+  it('shifts pitch independently: duration is preserved', () => {
+    const out = processAudioBuffer(makeCtx(), createMockBuffer(), {
+      ...baseOptions,
+      trimSilence: false,
+      normalizePeak: false,
+      pitchSemitones: 7,
+    }) as unknown as AudioBuffer;
+    // Varispeed would have shortened a +7st shift to ~0.67x; independent
+    // pitch keeps the timeline intact.
+    expect(out.length).toBe(4410);
+  });
+
+  it('applies the low-pass filter to high-frequency content', () => {
+    const sr = 44100;
+    const data = new Float32Array(4410);
+    for (let i = 0; i < data.length; i++) data[i] = Math.sin((2 * Math.PI * 8000 * i) / sr) * 0.5;
+    const hi = {
+      numberOfChannels: 1,
+      length: 4410,
+      sampleRate: sr,
+      getChannelData: () => data,
+    } as unknown as AudioBuffer;
+    const rms = (buf: AudioBuffer) => {
+      const d = buf.getChannelData(0);
+      let sum = 0;
+      for (let i = 1000; i < d.length; i++) sum += d[i] * d[i];
+      return Math.sqrt(sum / (d.length - 1000));
+    };
+    const open = processAudioBuffer(makeCtx(), hi, {
+      ...baseOptions, trimSilence: false, normalizePeak: false, lowPassFreq: 20000,
+    }) as unknown as AudioBuffer;
+    const filtered = processAudioBuffer(makeCtx(), hi, {
+      ...baseOptions, trimSilence: false, normalizePeak: false, lowPassFreq: 1000,
+    }) as unknown as AudioBuffer;
+    // 8 kHz through a 1 kHz one-pole low-pass loses the bulk of its energy.
+    expect(rms(filtered)).toBeLessThan(rms(open) * 0.5);
+    // Wide open leaves the tone (nearly) intact.
+    expect(rms(open)).toBeCloseTo(rms(hi), 1);
+  });
 });

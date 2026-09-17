@@ -237,6 +237,24 @@ describe('TakesRecorder record/stop flow', () => {
     }
   });
 
+  it('passes threshold and monitor options through to the capture', async () => {
+    renderRecorder();
+    setCountIn('0');
+    const selects = document.querySelectorAll('select');
+    fireEvent.change(selects[2], { target: { value: '-24' } }); // Threshold select
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Monitor' }));
+    await act(async () => {
+      clickRecord();
+    });
+    expect(capture.start).toHaveBeenCalledTimes(1);
+    const opts = vi.mocked(capture.start).mock.calls[0][0] as {
+      thresholdDb?: number;
+      monitor?: { level?: number };
+    };
+    expect(opts.thresholdDb).toBe(-24);
+    expect(opts.monitor?.level).toBe(0.5);
+  });
+
   it('skips metronome creation when the metronome is off', async () => {
     renderRecorder();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Metronome' }));

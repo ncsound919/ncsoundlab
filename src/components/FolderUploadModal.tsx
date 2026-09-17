@@ -153,7 +153,8 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
     return item.rawBuffer;
   };
 
-  // Automated Semantic Studio-Naming Assistant
+  // Pattern-based batch auto-naming (vibe + category + key template — no model
+  // involved, the subtitle in the panel says exactly this).
   const handleSmartRebrandNames = (vibe: string) => {
     if (!vibe.trim()) return;
     const cleanVibe = vibe.trim().toUpperCase().replace(/[^A-Z0-9_\s-]/g, '').replace(/\s+/g, '_');
@@ -642,12 +643,12 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
           {stagedItems.length > 0 && (
             <div className="space-y-4">
               
-              {/* AI Semantic Naming Panel */}
+              {/* Batch auto-naming panel (template-based, not a model) */}
               <div className="flex flex-wrap items-center justify-between gap-3 bg-[#131316] border border-[#2A2A2E] p-3 rounded-xl shadow-md">
                 <div className="flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-amber-400" />
                   <div>
-                    <span className="text-xs font-bold text-white uppercase tracking-wider block">Aesthetic Studio-Naming Assistant</span>
+                    <span className="text-xs font-bold text-white uppercase tracking-wider block">Batch Auto-Naming</span>
                     <span className="text-[10px] text-gray-400 font-mono">Standardizes names with vibe codes, category initials, and key tags</span>
                   </div>
                 </div>

@@ -17,13 +17,22 @@ import WaveSurfer from 'wavesurfer.js';
 import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline';
 import SpectrogramPlugin from 'wavesurfer.js/dist/plugins/spectrogram';
 import Minimap from 'wavesurfer.js/dist/plugins/minimap';
-import { Play, Square, X, Wand2, Scissors, ZoomIn, ZoomOut, Drum, MapPin } from 'lucide-react';
-import { audioBufferToWav } from '../lib/audioUtils';
+import { Play, Square, X, Wand2, Scissors, ZoomIn, ZoomOut, Drum, MapPin, Save, History, Trash2, Send } from 'lucide-react';
+import { audioBufferToWav, audioBufferToBase64, base64ToAudioBuffer } from '../lib/audioUtils';
 import { audioEngine } from '../lib/audioEngine';
 import { SoundLayer, DEFAULT_ENVELOPE, DEFAULT_FX } from '../types';
 import { detectOnsets } from '../audio/onsetDetection';
 import { stretchSampleBuffer } from '../audio/dsp/TimeStretch';
-import { slicesFromMarkers, sliceRegion, autoMarkers } from '../lib/chopLogic';
+import { slicesFromMarkers, sliceRegion, autoMarkers, ROOT_KEYS, effectiveTune } from '../lib/chopLogic';
+import {
+  chopSourceKey,
+  saveChopMap,
+  fetchChopMaps,
+  fetchChopMap,
+  fetchChopMapForSource,
+  deleteChopMap,
+  type StoredChopMap,
+} from '../lib/chopMaps';
 
 export interface ChopSound {
   name: string;
@@ -38,11 +47,15 @@ interface ChopEditorProps {
   buffer: AudioBuffer;
   fileName: string;
   defaultCount: number;
-  onSendToPads: (sounds: ChopSound[]) => void;
+  /**
+   * Sends rendered slices to pads. The optional context carries the persisted
+   * chop-map id so the caller can stamp the map as a pad program.
+   */
+  onSendToPads: (sounds: ChopSound[], ctx?: { chopMapId: string | null }) => void;
   onClose: () => void;
+  /** Load a different source buffer into the editor (used by saved maps). */
+  onLoadSource?: (buffer: AudioBuffer, fileName: string) => void;
 }
-
-const ROOT_KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 interface SliceMeta {
   gain: number; // 0..1.5
@@ -56,7 +69,7 @@ interface SliceMeta {
 
 const defaultMeta = (): SliceMeta => ({ gain: 1, tune: 0, key: 'C', stretch: 1 });
 
-export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClose }: ChopEditorProps) {
+export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClose, onLoadSource }: ChopEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WaveSurfer | null>(null);
   const dragMarkerRef = useRef<number | null>(null);
@@ -72,9 +85,36 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
   const [currentTime, setCurrentTime] = useState(0);
   const [baseName] = useState(() => fileName.replace(/\.[^.]+$/, '').toUpperCase());
   const [isSending, setIsSending] = useState(false);
+  // Phase 6.2 — persisted chop sessions.
+  const [savedMaps, setSavedMaps] = useState<StoredChopMap[]>([]);
+  const [loadedMapId, setLoadedMapId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const sourceKey = React.useMemo(() => chopSourceKey(fileName), [fileName]);
 
   const slicesList = slicesFromMarkers(markers);
   const duration = buffer.duration;
+
+  const refreshSavedMaps = React.useCallback(async () => {
+    setSavedMaps(await fetchChopMaps());
+  }, []);
+
+  // Auto-load the most recent saved chop session for this source.
+  useEffect(() => {
+    let cancelled = false;
+    refreshSavedMaps();
+    (async () => {
+      const latest = await fetchChopMapForSource(sourceKey);
+      if (!cancelled && latest) {
+        setMarkers(latest.markers);
+        setMeta(latest.meta);
+        setSelectedMarker(null);
+        setSelectedSlice(null);
+        setLoadedMapId(latest.id);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceKey]);
 
   // wavesurfer lifecycle
   useEffect(() => {
@@ -172,38 +212,136 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
     setMeta((prev) => ({ ...prev, [key]: { ...(prev[key] || defaultMeta()), ...patch } }));
   };
 
+  // Render slice regions (with per-slice stretch, gain, tune) into pad sounds.
+  // Shared by "Send Slices → Pads" and by saved-map replay.
+  const renderSliceSounds = (
+    buf: AudioBuffer,
+    marks: number[],
+    sliceMeta: Record<string, SliceMeta>,
+    nameBase: string
+  ): ChopSound[] =>
+    slicesFromMarkers(marks).map((s, i) => {
+      const m = sliceMeta[s.start.toFixed(4)] || defaultMeta();
+      // Phase 5.2 — per-slice time-stretch: render the region, then (optionally)
+      // stretch it. Falls back to the original buffer + crop bounds.
+      let outBuf = buf;
+      let start = s.start;
+      let end = s.end;
+      const stretch = m.stretch ?? 1;
+      if (stretch !== 1) {
+        const ctx = audioEngine.getContext();
+        if (ctx) {
+          const region = sliceRegion(ctx, buf, s.start, s.end);
+          const stretched = stretchSampleBuffer(region, { timeFactor: stretch });
+          outBuf = stretched.buffer;
+          start = 0;
+          end = 1;
+        }
+      }
+      return {
+        name: m.name || `${nameBase}_CHOP_${String(i + 1).padStart(2, '0')}`,
+        buffer: outBuf,
+        start,
+        end,
+        gain: m.gain,
+        // The slice's root key transposes the tune to concert pitch (C = no-op).
+        tune: effectiveTune(m.tune, m.key),
+      };
+    });
+
+  // Upsert the current chop work (markers + meta + source audio) so closing
+  // the editor never loses it. Returns the map id (or null on failure).
+  const persistCurrentMap = async (explicitId?: string): Promise<string | null> => {
+    try {
+      const sourceData = await audioBufferToBase64(buffer, 16);
+      const id = await saveChopMap({
+        ...(explicitId || loadedMapId ? { id: (explicitId ?? loadedMapId) as string } : {}),
+        name: fileName.replace(/\.[^.]+$/, '') || 'Chops',
+        sourceName: fileName,
+        sourceKey,
+        markers,
+        meta,
+        defaultCount,
+        sourceData,
+        sourceMeta: { sampleRate: buffer.sampleRate, channels: buffer.numberOfChannels, length: buffer.length },
+      });
+      setLoadedMapId(id);
+      await refreshSavedMaps();
+      return id;
+    } catch (err) {
+      console.warn('Chop map persist failed:', err);
+      return null;
+    }
+  };
+
+  const saveCurrentMap = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      await persistCurrentMap();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  /**
+   * Send stays synchronous (tests + callers assert immediate delivery): the
+   * map id is minted up front and the IndexedDB write runs in the background.
+   */
+  const ensureMapSavedInBackground = (): string | null => {
+    try {
+      const id = loadedMapId ?? crypto.randomUUID();
+      setLoadedMapId(id);
+      void persistCurrentMap(id).catch(() => { /* already guarded */ });
+      return id;
+    } catch {
+      return null;
+    }
+  };
+
+  const loadSavedMap = async (mapId: string) => {
+    const map = await fetchChopMap(mapId);
+    if (!map) return;
+    if (map.sourceKey === sourceKey) {
+      // Same source: just restore markers + meta into the open editor.
+      setMarkers(map.markers);
+      setMeta(map.meta);
+      setSelectedMarker(null);
+      setSelectedSlice(null);
+      setLoadedMapId(map.id);
+      return;
+    }
+    // Different source: decode the stored audio and reopen the editor on it.
+    if (map.sourceData && onLoadSource) {
+      const ctx = audioEngine.getContext();
+      if (ctx) {
+        const decoded = await base64ToAudioBuffer(ctx, map.sourceData);
+        onLoadSource(decoded, map.sourceName);
+      }
+    }
+  };
+
+  const sendSavedMapToPads = async (mapId: string) => {
+    const map = await fetchChopMap(mapId);
+    if (!map?.sourceData) return;
+    const ctx = audioEngine.getContext();
+    if (!ctx) return;
+    const decoded = await base64ToAudioBuffer(ctx, map.sourceData);
+    const nameBase = (map.sourceName || 'sample').replace(/\.[^.]+$/, '').toUpperCase();
+    onSendToPads(renderSliceSounds(decoded, map.markers, map.meta, nameBase), { chopMapId: map.id });
+  };
+
+  const removeSavedMap = async (mapId: string) => {
+    await deleteChopMap(mapId);
+    if (loadedMapId === mapId) setLoadedMapId(null);
+    await refreshSavedMaps();
+  };
+
   const send = () => {
     if (isSending) return;
     setIsSending(true);
     try {
-      const named: ChopSound[] = slicesList.map((s, i) => {
-        const m = meta[s.start.toFixed(4)] || defaultMeta();
-        // Phase 5.2 — per-slice time-stretch: render the region, then (optionally)
-        // stretch it. Falls back to the original buffer + crop bounds.
-        let buf = buffer;
-        let start = s.start;
-        let end = s.end;
-        const stretch = m.stretch ?? 1;
-        if (stretch !== 1) {
-          const ctx = audioEngine.getContext();
-          if (ctx) {
-            const region = sliceRegion(ctx, buffer, s.start, s.end);
-            const stretched = stretchSampleBuffer(region, { timeFactor: stretch });
-            buf = stretched.buffer;
-            start = 0;
-            end = 1;
-          }
-        }
-        return {
-          name: m.name || `${baseName}_CHOP_${String(i + 1).padStart(2, '0')}`,
-          buffer: buf,
-          start,
-          end,
-          gain: m.gain,
-          tune: m.tune,
-        };
-      });
-      onSendToPads(named);
+      onSendToPads(renderSliceSounds(buffer, markers, meta, baseName), { chopMapId: ensureMapSavedInBackground() });
     } finally {
       setIsSending(false);
     }
@@ -262,8 +400,29 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
           ))}
           <button onClick={() => setZoom((z) => Math.min(8, Math.round((z + 1) * 10) / 10))} className="p-1.5 rounded-lg bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all" title="Zoom in"><ZoomIn size={13} /></button>
           <button onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 1) * 10) / 10))} className="p-1.5 rounded-lg bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all" title="Zoom out"><ZoomOut size={13} /></button>
+          <button onClick={() => void saveCurrentMap()} disabled={isSaving} className="px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider bg-sky-600/20 border border-sky-500/50 hover:bg-sky-600/30 text-sky-300 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:pointer-events-none" title="Persist markers + per-slice settings so reopening this sample restores your chop work"><Save size={13} /> {isSaving ? 'Saving…' : loadedMapId ? 'Saved' : 'Save Chops'}</button>
           <button onClick={send} disabled={isSending} className="ml-auto px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider bg-fuchsia-600/20 border border-fuchsia-500/50 hover:bg-fuchsia-600/30 text-fuchsia-300 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:pointer-events-none"><Drum size={13} /> {isSending ? 'Sending…' : 'Send Slices → Pads'}</button>
         </div>
+
+        {/* Saved chop sessions (persisted slice maps) */}
+        {savedMaps.length > 0 && (
+          <div className="px-5 py-2 border-b border-[#1d1d26] bg-[#0a0a0c] flex flex-wrap items-center gap-2">
+            <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest flex items-center gap-1"><History size={11} /> Saved chops</span>
+            {savedMaps.map((m) => (
+              <span key={m.id} className={`flex items-center gap-1 rounded-lg pl-2 pr-1 py-0.5 border ${m.id === loadedMapId ? 'bg-sky-950/40 border-sky-500/40' : 'bg-[#121215] border-[#1e293b]'}`}>
+                <button
+                  onClick={() => void loadSavedMap(m.id)}
+                  title={`Load "${m.name}" (${slicesFromMarkers(m.markers).length} slices${m.programBank ? `, sent to Program ${m.programBank}` : ''})`}
+                  className="text-[9px] font-mono text-slate-300 hover:text-white max-w-[160px] truncate"
+                >
+                  {m.name}{m.programBank ? ` → ${m.programBank}` : ''}
+                </button>
+                <button onClick={() => void sendSavedMapToPads(m.id)} title={`Send "${m.name}" to pads`} className="p-1 rounded text-fuchsia-400 hover:text-white transition-colors"><Send size={10} /></button>
+                <button onClick={() => void removeSavedMap(m.id)} title={`Delete "${m.name}"`} className="p-1 rounded text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={10} /></button>
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Waveform with markers */}
         <div className="px-5 pt-3">
@@ -344,7 +503,7 @@ export function ChopEditor({ buffer, fileName, defaultCount, onSendToPads, onClo
                   <button
                     onClick={() => {
                       setSelectedSlice(i);
-                      const layer: SoundLayer = { id: `aud-${i}`, name: `${baseName}_${i + 1}`, type: 'sample', enabled: true, gain: m.gain, pan: 0, pitch: m.tune, envelope: { ...DEFAULT_ENVELOPE }, fx: { ...DEFAULT_FX }, audioBuffer: buffer, playStartPct: s.start, playEndPct: s.end };
+                      const layer: SoundLayer = { id: `aud-${i}`, name: `${baseName}_${i + 1}`, type: 'sample', enabled: true, gain: m.gain, pan: 0, pitch: effectiveTune(m.tune, m.key), envelope: { ...DEFAULT_ENVELOPE }, fx: { ...DEFAULT_FX }, audioBuffer: buffer, playStartPct: s.start, playEndPct: s.end };
                       audioEngine.triggerLayer(layer);
                     }}
                     className="p-1.5 rounded-lg bg-[#121215] border border-[#1e293b] text-slate-300 hover:text-white transition-all"

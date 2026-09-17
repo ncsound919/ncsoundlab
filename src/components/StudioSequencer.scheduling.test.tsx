@@ -190,8 +190,34 @@ describe('StudioSequencer sample-accurate scheduling', () => {
     expect(call2![3]).toBeCloseTo(2.5 + 0.25 * (60000 / 120) / 4 / 1000, 5);
   });
 
-  it('falls back to the setInterval tick when Tone Transport is disabled', async () => {
-    vi.useFakeTimers();
+  it('applies per-pad tune to sequenced drum steps (not just live hits)', async () => {
+    const { audioEngine } = await import('../lib/audioEngine');
+    const triggerMock = audioEngine.triggerLayer as unknown as ReturnType<typeof vi.fn>;
+    usePatternStore.getState().reset();
+    usePatternStore.getState().ensureLayerRow('A', 'l1');
+    usePatternStore.getState().setCell('A', 'l1', 0, { on: true, velocity: 100 });
+    const sampleLayer: SoundLayer = { ...makeLayer(), type: 'sample', audioBuffer: undefined, pitch: 0 };
+    render(
+      <StudioSequencer
+        layers={[sampleLayer]}
+        selectedLayerId="l1"
+        onSelectLayer={() => undefined}
+        onUpdateLayer={() => undefined}
+      />,
+    );
+    await waitFor(() => expect(toneState.sequenceCallback).toBeTruthy(), { timeout: 3000 });
+
+    // Tune the pad +7 via the MPC control strip, then run step 0 (a drum cell).
+    fireEvent.change(screen.getByLabelText('Per-pad tune (semitones)'), { target: { value: '7' } });
+    await act(async () => {
+      toneState.sequenceCallback!(2.0, 0);
+    });
+    const call = triggerMock.mock.calls.find((c: unknown[]) => (c[0] as { id?: string })?.id === 'l1');
+    expect(call).toBeTruthy();
+    expect((call![0] as SoundLayer).pitch).toBe(7);
+  });
+
+  it('falls back to the setInterval tick when Tone Transport is disabled', async () => {    vi.useFakeTimers();
     const { audioEngine } = await import('../lib/audioEngine');
     const triggerMock = audioEngine.triggerLayer as unknown as ReturnType<typeof vi.fn>;
     renderSequencer();

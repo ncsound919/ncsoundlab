@@ -45,6 +45,8 @@ import {
   Music,
   HardDrive,
   RefreshCw,
+  Tag,
+  ListX,
 } from 'lucide-react';
 
 /** Custom MIME carried by dragstart so other components can detect a library
@@ -81,6 +83,25 @@ interface SampleBrowserProps {
   onImportExternal?: (samples: SampleLibrarySample[]) => void;
   /** Compact mode hides the header to fit the panel inside a tight slot. */
   compact?: boolean;
+  /**
+   * Library sample ids currently referenced by layers/pads (tracked by the
+   * parent). Powers "purge unused" — anything not in this set is deletable.
+   */
+  usedSampleIds?: string[];
+}
+
+/** Parse a free-text tag field into a deduped (case-insensitive), capped list. */
+export function parseTagsInput(input: string): string[] {
+  const out: string[] = [];
+  const lowered = new Set<string>();
+  for (const raw of String(input || '').split(',')) {
+    const t = raw.trim();
+    if (t && !lowered.has(t.toLowerCase()) && out.length < 12) {
+      lowered.add(t.toLowerCase());
+      out.push(t);
+    }
+  }
+  return out;
 }
 
 export const SampleBrowser: React.FC<SampleBrowserProps> = ({
@@ -89,6 +110,7 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
   onUseSample,
   onImportExternal,
   compact = false,
+  usedSampleIds = [],
 }) => {
   const [folders, setFolders] = useState<SampleLibraryFolder[]>([]);
   const [samples, setSamples] = useState<SampleLibrarySample[]>([]);
@@ -101,6 +123,10 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [renamingSampleId, setRenamingSampleId] = useState<string | null>(null);
+  const [sampleRenameValue, setSampleRenameValue] = useState('');
+  const [editingTagsId, setEditingTagsId] = useState<string | null>(null);
+  const [tagsValue, setTagsValue] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   // Separate from `errors` so a failed library load can't be silently hidden
@@ -218,6 +244,41 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
     } catch (err) {
       console.warn('Failed to update sample', err);
       setErrors(['Could not update sample.']);
+    }
+    await refresh();
+  };
+
+  const submitSampleRename = async (id: string) => {
+    const name = (sampleRenameValue || '').trim();
+    setRenamingSampleId(null);
+    if (name) await handleUpdateSample(id, { name });
+    else await refresh();
+  };
+
+  const submitTags = async (id: string) => {
+    const tags = parseTagsInput(tagsValue);
+    setEditingTagsId(null);
+    await handleUpdateSample(id, { tags });
+  };
+
+  // Delete every listed sample that no layer/pad currently references. The
+  // usage set is tracked by the parent (layers + pad drops); when it is empty
+  // there is nothing provably unused, so the button stays disabled instead of
+  // nuking the library.
+  const purgeableSamples = samples.filter((s) => !usedSampleIds.includes(s.id));
+  const handlePurgeUnused = async () => {
+    if (purgeableSamples.length === 0) return;
+    const proceed = typeof window !== 'undefined' && window.confirm(
+      `Delete ${purgeableSamples.length} unused sample${purgeableSamples.length === 1 ? '' : 's'} from the library? This cannot be undone.`
+    );
+    if (!proceed) return;
+    try {
+      for (const s of purgeableSamples) {
+        await deleteLibrarySample(s.id);
+      }
+    } catch (err) {
+      console.warn('Failed to purge unused samples', err);
+      setErrors(['Could not purge unused samples.']);
     }
     await refresh();
   };
@@ -537,6 +598,14 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
             >
               {isLinking ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <HardDrive className="w-3.5 h-3.5" />}
             </button>
+            <button
+              onClick={() => void handlePurgeUnused()}
+              disabled={purgeableSamples.length === 0}
+              title={purgeableSamples.length === 0 ? 'No unused samples to purge' : `Delete ${purgeableSamples.length} unused sample(s)`}
+              className="p-1.5 rounded-md bg-[#16161a] border border-[#2A2A2E] hover:border-red-500 text-slate-400 hover:text-red-400 disabled:opacity-30"
+            >
+              <ListX className="w-3.5 h-3.5" />
+            </button>
           </div>
           <input
             ref={fileInputRef}
@@ -712,11 +781,55 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
               {playingId === sample.id ? <Square className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
             </button>
             <div className="flex-1 min-w-0">
-              <div className="text-[11px] font-bold text-white truncate" title={sample.name}>{sample.name}</div>
+              {renamingSampleId === sample.id ? (
+                <input
+                  value={sampleRenameValue}
+                  onChange={(e) => setSampleRenameValue(e.target.value)}
+                  onBlur={() => void submitSampleRename(sample.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void submitSampleRename(sample.id);
+                    if (e.key === 'Escape') setRenamingSampleId(null);
+                  }}
+                  autoFocus
+                  aria-label="Sample name"
+                  className="w-full bg-[#1a1a22] border border-blue-500 rounded px-1 py-px text-[11px] text-white focus:outline-none"
+                />
+              ) : (
+                <div className="text-[11px] font-bold text-white truncate" title={sample.name}>{sample.name}</div>
+              )}
               <div className="flex items-center gap-1.5 text-[9px] text-slate-400">
                 <span className={`px-1 py-px rounded border ${categoryClass(sample.category)}`}>{sample.category}</span>
                 <span>{sample.analysis?.durationSeconds?.toFixed(2) ?? '—'}s</span>
+                {(sample.tags ?? []).slice(0, 3).map((t) => (
+                  <span key={t} className="px-1 py-px rounded bg-[#1a1a22] border border-[#2A2A2E] text-slate-400 truncate max-w-[72px]" title={t}>{t}</span>
+                ))}
+                {(sample.tags ?? []).length > 3 && (
+                  <span className="text-slate-600">+{(sample.tags ?? []).length - 3}</span>
+                )}
               </div>
+              {editingTagsId === sample.id && (
+                <div className="flex items-center gap-1 mt-1">
+                  <input
+                    value={tagsValue}
+                    onChange={(e) => setTagsValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void submitTags(sample.id);
+                      if (e.key === 'Escape') setEditingTagsId(null);
+                    }}
+                    placeholder="Tags, comma separated"
+                    aria-label="Sample tags"
+                    autoFocus
+                    className="flex-1 min-w-0 bg-[#1a1a22] border border-blue-500 rounded px-1 py-px text-[10px] text-white focus:outline-none"
+                  />
+                  <button
+                    onClick={() => void submitTags(sample.id)}
+                    title="Save tags"
+                    className="px-1.5 py-px rounded bg-blue-600/30 border border-blue-500/50 text-blue-200 text-[9px] font-black uppercase"
+                  >
+                    Save
+                  </button>
+                </div>
+              )}
             </div>
             {onUseSample && (
               <button
@@ -728,7 +841,14 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
               </button>
             )}
             <button
-              onClick={() => handleUpdateSample(sample.id, { name: prompt('Rename sample', sample.name) || sample.name })}
+              onClick={() => { setEditingTagsId(sample.id); setTagsValue((sample.tags ?? []).join(', ')); }}
+              title="Edit tags"
+              className="p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <Tag className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => { setRenamingSampleId(sample.id); setSampleRenameValue(sample.name); }}
               title="Rename"
               className="p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
             >

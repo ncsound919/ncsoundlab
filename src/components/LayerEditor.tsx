@@ -13,6 +13,8 @@ import { SoundLayer, SynthSettings, FXSettings, Envelope, FXPreset, DEFAULT_ENVE
 import { Knob } from './Knob';
 import { SmartRandomizerModal } from './SmartRandomizerModal';
 import { SynthVisualizer } from './SynthVisualizer';
+import { audioEngine } from '../lib/audioEngine';
+import { renderXfadeLoop } from '../lib/loopXfade';
 
 interface LayerEditorProps {
   selectedLayer: SoundLayer;
@@ -563,6 +565,26 @@ export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounc
   const [randomStyle, setRandomStyle] = useState<'lead' | 'bass' | 'pad' | 'glitch'>('lead');
   const [chaosEnabled, setChaosEnabled] = useState(false);
   const [isRandomizerOpen, setIsRandomizerOpen] = useState(false);
+  const [xfadeSec, setXfadeSec] = useState(0.02);
+
+  // Render the loop region with an equal-power crossfade so `sampleLoop`
+  // wraps without clicking. The rendered region becomes the whole buffer.
+  const renderLoopCrossfade = () => {
+    const buf = selectedLayer.audioBuffer;
+    if (!buf) return;
+    const ctx = audioEngine.getContext();
+    if (!ctx) return;
+    try {
+      const rendered = renderXfadeLoop(ctx, buf, {
+        startPct: selectedLayer.playStartPct ?? 0,
+        endPct: selectedLayer.playEndPct ?? 1,
+        xfadeSec,
+      });
+      onUpdate({ audioBuffer: rendered, playStartPct: 0, playEndPct: 1, sampleLoop: true });
+    } catch (e) {
+      console.warn('Loop crossfade render failed', e);
+    }
+  };
 
   // Load custom presets on mount
   useEffect(() => {
@@ -1711,6 +1733,29 @@ export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounc
                     </span>
                   </button>
                 </div>
+                {selectedLayer.type === 'sample' && selectedLayer.audioBuffer && (
+                  <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-[#1e1e22] bg-[#121215] p-3">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-gray-300">Loop crossfade</span>
+                    <input
+                      type="range"
+                      min="0.005"
+                      max="0.5"
+                      step="0.005"
+                      value={xfadeSec}
+                      onChange={(e) => setXfadeSec(parseFloat(e.target.value))}
+                      className="flex-1 min-w-[100px] accent-blue-400 h-1.5 rounded-lg cursor-pointer"
+                      aria-label="Loop crossfade seconds"
+                    />
+                    <span className="text-[11px] font-mono text-gray-400">{xfadeSec.toFixed(3)}s</span>
+                    <button
+                      onClick={renderLoopCrossfade}
+                      className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-blue-600/20 border border-blue-500/50 text-blue-300 hover:bg-blue-600/30 transition-all"
+                      title="Render the loop region with an equal-power crossfade so it wraps seamlessly"
+                    >
+                      Render seamless loop
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

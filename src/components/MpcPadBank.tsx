@@ -9,9 +9,10 @@
  * step sequencer.
  */
 
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { BankId, BANK_IDS } from '../store/sequencerStore';
 import { SAMPLE_DRAG_MIME } from './SampleBrowser';
+import { createNoteRepeatScheduler, type NoteRepeatScheduler } from '../audio/transport/noteRepeat';
 
 export interface PadEntry {
   layerId: string;
@@ -22,6 +23,14 @@ export interface PadEntry {
 }
 
 export type VelocityCurve = 'linear' | 'exponential' | 'log';
+
+/**
+ * What the 16 pads map to in 16-Levels mode. `velocity` (MPC default "Level")
+ * maps pad N to a fixed hit velocity; `tune` maps pad N to N semitones of the
+ * selected pad's sample. Both the pad grid and the QWERTY Shift+level path use
+ * this mode so "16 Levels" means one thing across the app.
+ */
+export type SixteenLevelsMode = 'velocity' | 'tune';
 
 interface MpcPadBankProps {
   entries: (PadEntry | null)[]; // active bank's 16 slots
@@ -34,11 +43,14 @@ interface MpcPadBankProps {
   /** Per-piece early/late bias in ms (PocketLab-style). */
   padPocket: Record<string, number>;
   padTune: Record<string, number>;
+  /** Per-pad output level multiplier (0..1.5, default 1). */
+  padLevel: Record<string, number>;
   padChoke: Record<string, number>;
   padMuted: Record<string, boolean>;
   bpm: number;
   noteRepeat: { active: boolean; division: number };
   sixteenLevels: boolean;
+  sixteenLevelsMode: SixteenLevelsMode;
   globalSwing: number;
   fullLevel: boolean;
   velocityCurve: VelocityCurve;
@@ -47,15 +59,26 @@ interface MpcPadBankProps {
   /** Per-piece pocket setter (ms, -40..+40). */
   onSetPocket: (layerId: string, pocketMs: number) => void;
   onSetTune: (layerId: string, tune: number) => void;
+  onSetLevel: (layerId: string, level: number) => void;
   onSetChoke: (layerId: string, group: number) => void;
   onTogglePadMute: (layerId: string) => void;
   onClearPad: (index: number) => void;
   onAssignActiveLayer: (index: number) => void;
+  /** Copy the program slot (and its layer) from one pad index to another. */
+  onCopyPad: (from: number, to: number) => void;
+  /** Exchange two program slots. */
+  onSwapPads: (a: number, b: number) => void;
   onSetGlobalSwing: (swing: number) => void;
-  onTriggerPad: (layerId: string, semitones: number, velocity?: number) => void;
+  onTriggerPad: (layerId: string, semitones: number, velocity?: number, when?: number) => void;
   onPadInput?: (layerId: string, velocity?: number) => void;
+  /**
+   * Current audio-clock time (seconds) for sample-accurate note repeat. When
+   * omitted, a `performance.now()`-based clock is used as a fallback.
+   */
+  getAudioTime?: () => number;
   onNoteRepeatChange: (nr: { active: boolean; division: number }) => void;
   onSixteenLevelsChange: (enabled: boolean) => void;
+  onSixteenLevelsModeChange: (mode: SixteenLevelsMode) => void;
   onFullLevelChange: (enabled: boolean) => void;
   onVelocityCurveChange: (curve: VelocityCurve) => void;
   onSetTimeCorrect: (res: number) => void;
@@ -115,6 +138,16 @@ export function padVelocityFor(y01: number, curve: VelocityCurve, fullLevel: boo
   return Math.max(0.1, t);
 }
 
+/**
+ * Fixed hit velocity for a 16-Levels *velocity* pad: pad 0 is hardest (1.0),
+ * pad 15 is softest (0.1). Mirrors `padKeyMap.resolvePadKey`'s Shift+level
+ * velocity so the grid and keyboard agree.
+ */
+export function levelVelocityFor(index: number): number {
+  const clamped = Math.max(0, Math.min(15, index));
+  return Math.max(0.1, 1 - clamped / 15);
+}
+
 /** Note-repeat interval in ms for a BPM and a per-quarter-note division. */
 export function noteRepeatIntervalMs(bpm: number, divisionsPerQuarter: number): number {
   return (60000 / bpm) / divisionsPerQuarter;
@@ -130,11 +163,13 @@ export function MpcPadBank({
   padSwing,
   padPocket,
   padTune,
+  padLevel,
   padChoke,
   padMuted,
   bpm,
   noteRepeat,
   sixteenLevels,
+  sixteenLevelsMode,
   globalSwing,
   fullLevel,
   velocityCurve,
@@ -142,70 +177,96 @@ export function MpcPadBank({
   onSetSwing,
   onSetPocket,
   onSetTune,
+  onSetLevel,
   onSetChoke,
   onTogglePadMute,
   onClearPad,
   onAssignActiveLayer,
+  onCopyPad,
+  onSwapPads,
   onSetGlobalSwing,
   onTriggerPad,
   onPadInput,
+  getAudioTime,
   onNoteRepeatChange,
   onSixteenLevelsChange,
+  onSixteenLevelsModeChange,
   onFullLevelChange,
   onVelocityCurveChange,
   onSetTimeCorrect,
   onQuantize,
   onPadDrop,
 }: MpcPadBankProps) {
-  const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const repeatTargetRef = useRef<{ layerId: string; semitones: number } | null>(null);
+  const repeatRef = useRef<NoteRepeatScheduler | null>(null);
+  const repeatTargetRef = useRef<{ layerId: string; semitones: number; velocity: number } | null>(null);
+  /** Copy/paste source pad index (local UI state; the parent owns the program). */
+  const [copyIdx, setCopyIdx] = useState<number | null>(null);
 
   const stopRepeat = useCallback(() => {
-    if (repeatRef.current) {
-      clearInterval(repeatRef.current);
-      repeatRef.current = null;
-    }
+    repeatRef.current?.stop();
+    repeatRef.current = null;
   }, []);
 
   useEffect(() => stopRepeat, [stopRepeat]);
 
-  const startRepeat = useCallback((layerId: string, semitones: number) => {
+  const startRepeat = useCallback((layerId: string, semitones: number, velocity: number) => {
     stopRepeat();
     if (!noteRepeat.active) return;
-    repeatTargetRef.current = { layerId, semitones };
-    const divisionsPerQuarter = noteRepeat.division;
-    const intervalMs = noteRepeatIntervalMs(bpm, divisionsPerQuarter);
-    repeatRef.current = setInterval(() => onTriggerPad(layerId, semitones, 1), intervalMs);
-  }, [bpm, noteRepeat.active, noteRepeat.division, onTriggerPad, stopRepeat]);
+    repeatTargetRef.current = { layerId, semitones, velocity };
+    const clock = getAudioTime
+      ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000);
+    const scheduler = createNoteRepeatScheduler({
+      bpm,
+      divisionsPerQuarter: noteRepeat.division,
+      // MPC swing applies to the repeat stream too (odd repeats delayed).
+      swingPercent: padSwing[layerId] ?? globalSwing,
+      velocity,
+      getAudioTime: clock,
+      onTrigger: (when, vel) => onTriggerPad(layerId, semitones, vel, when),
+    });
+    repeatRef.current = scheduler;
+    scheduler.start();
+  }, [bpm, noteRepeat.active, noteRepeat.division, onTriggerPad, stopRepeat, getAudioTime, padSwing, globalSwing]);
 
-  // Re-tempo an active repeat when the BPM or division changes — otherwise the
-  // running setInterval keeps the rate captured at press time (stale groove).
+  // Re-tempo / re-swing an active repeat when the rate or BPM changes — otherwise
+  // the running scheduler keeps the rate captured at press time (stale groove).
   useEffect(() => {
     if (noteRepeat.active && repeatTargetRef.current) {
-      const { layerId, semitones } = repeatTargetRef.current;
-      startRepeat(layerId, semitones);
+      const { layerId, semitones, velocity } = repeatTargetRef.current;
+      startRepeat(layerId, semitones, velocity);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bpm, noteRepeat.division]);
+  }, [bpm, noteRepeat.division, globalSwing, padSwing]);
 
   const activeEntry = entries[selectedPad] || undefined;
   const selectedSwing = activeEntry ? Math.round(padSwing[activeEntry.layerId] ?? globalSwing) : 0;
   const selectedPocket = activeEntry ? Math.round(padPocket[activeEntry.layerId] || 0) : 0;
   const selectedTune = activeEntry ? Math.round(padTune[activeEntry.layerId] || 0) : 0;
+  const selectedLevel = activeEntry ? Math.round((padLevel[activeEntry.layerId] ?? 1) * 100) / 100 : 1;
   const selectedChoke = activeEntry ? (padChoke[activeEntry.layerId] || 0) : 0;
   const selectedMuted = activeEntry ? !!padMuted[activeEntry.layerId] : false;
 
   const velocityFor = (y: number) => padVelocityFor(y, velocityCurve, fullLevel);
+  const velocityLevels = sixteenLevels && sixteenLevelsMode === 'velocity';
 
-  const handlePadDown = (entry: PadEntry | undefined, level: number, gridIdx: number, e: React.PointerEvent<HTMLButtonElement>) => {
+  const handlePadDown = (
+    entry: PadEntry | undefined,
+    level: number,
+    gridIdx: number,
+    e: React.PointerEvent<HTMLButtonElement>,
+    velocityOverride?: number
+  ) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     onSelectPad(gridIdx);
     if (!entry || padMuted[entry.layerId]) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const y = (e.clientY - rect.top) / rect.height;
-    onTriggerPad(entry.layerId, level, velocityFor(y));
-    onPadInput?.(entry.layerId, velocityFor(y));
-    startRepeat(entry.layerId, level);
+    // 16-Levels velocity mode uses a fixed per-pad velocity; otherwise the
+    // pointer height on the pad sets velocity.
+    const velocity = velocityOverride ?? velocityFor(y);
+    onTriggerPad(entry.layerId, level, velocity);
+    onPadInput?.(entry.layerId, velocity);
+    startRepeat(entry.layerId, level, velocity);
   };
 
   const handlePadUp = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -242,9 +303,15 @@ export function MpcPadBank({
           <div className="grid grid-cols-4 gap-1.5">
             {entries.map((entry, gridIdx) => {
               const isSelected = selectedPad === gridIdx;
-              const level = sixteenLevels ? gridIdx : entry ? (padTune[entry.layerId] || 0) : 0;
               const shown = sixteenLevels ? activeEntry : entry;
-              const muted = entry ? !!padMuted[entry.layerId] : false;
+              const activeId = shown?.layerId;
+              // In Tune 16-Levels the pad index is the semitone offset; in
+              // Velocity 16-Levels (and normal mode) the pad's own tune applies.
+              const semitoneLevel = sixteenLevels && sixteenLevelsMode === 'tune'
+                ? gridIdx
+                : activeId ? (padTune[activeId] || 0) : 0;
+              const velocityOverride = velocityLevels ? levelVelocityFor(gridIdx) : undefined;
+              const muted = shown ? !!padMuted[shown.layerId] : false;
               if (!shown) {
                 return (
                   <button
@@ -278,7 +345,7 @@ export function MpcPadBank({
               return (
                 <button
                   key={gridIdx}
-                  onPointerDown={(e) => { e.preventDefault(); handlePadDown(shown, level, gridIdx, e); }}
+                  onPointerDown={(e) => { e.preventDefault(); handlePadDown(shown, semitoneLevel, gridIdx, e, velocityOverride); }}
                   onPointerUp={handlePadUp}
                   onPointerLeave={stopRepeat}
                   onPointerCancel={handlePadUp}
@@ -301,7 +368,7 @@ export function MpcPadBank({
                       ? `${PAD_COLORS[gridIdx % 16]} ring-2 ${BANK_ACCENT[activeBank].ring}`
                       : `${PAD_COLORS[gridIdx % 16]} hover:brightness-125 active:scale-95`
                   } ${muted ? 'opacity-45' : ''} ${isFocused ? 'outline outline-2 outline-offset-1 outline-white/60' : ''}`}
-                  title={`${shown.name}${muted ? ' (muted)' : ''}${isFocused ? ' — active layer' : ''}${sixteenLevels ? ` · level +${gridIdx}` : level !== 0 ? ` · ${level >= 0 ? '+' : ''}${level} st` : ''}`}
+                  title={`${shown.name}${muted ? ' (muted)' : ''}${isFocused ? ' — active layer' : ''}${sixteenLevels ? (velocityLevels ? ` · L${gridIdx} velocity` : ` · +${gridIdx} st`) : semitoneLevel !== 0 ? ` · ${semitoneLevel >= 0 ? '+' : ''}${semitoneLevel} st` : ''}`}
                 >
                   <span className="flex items-center justify-between">
                     <span className="text-[8px] font-mono font-bold text-white/70">{String(gridIdx + 1).padStart(2, '0')}</span>
@@ -315,7 +382,7 @@ export function MpcPadBank({
                   <div className="min-w-0">
                     <span className="block text-[9px] font-black uppercase tracking-wider text-white truncate">{shown.name}</span>
                     <span className="block text-[8px] font-mono text-white/60 uppercase">
-                      {muted ? 'MUTED' : sixteenLevels ? `+${gridIdx} LVL` : `${shown.type} · S ${swing}%`}
+                      {muted ? 'MUTED' : sixteenLevels ? (velocityLevels ? `${Math.round(levelVelocityFor(gridIdx) * 100)}% VEL` : `+${gridIdx} ST`) : `${shown.type} · S ${swing}%`}
                     </span>
                   </div>
                 </button>
@@ -359,19 +426,68 @@ export function MpcPadBank({
             </button>
           </div>
 
-          {/* 16 Levels */}
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest">16 Levels</span>
+          {/* Pad copy / paste / swap */}
+          <div className="grid grid-cols-3 gap-1.5">
             <button
-              onClick={() => onSixteenLevelsChange(!sixteenLevels)}
-              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border transition-all ${
-                sixteenLevels
-                  ? 'bg-purple-500/20 border-purple-500/50 text-purple-400'
-                  : 'bg-[#121215] border-[#1e293b] text-slate-400 hover:text-white'
-              }`}
+              onClick={() => setCopyIdx(selectedPad)}
+              className="py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all"
+              title="Copy the selected pad as paste source"
             >
-              {sixteenLevels ? 'On' : 'Off'}
+              Copy
             </button>
+            <button
+              onClick={() => { if (copyIdx !== null) onCopyPad(copyIdx, selectedPad); }}
+              disabled={copyIdx === null}
+              className="py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all disabled:opacity-30"
+              title={copyIdx === null ? 'Copy a pad first' : `Paste pad ${copyIdx + 1} onto pad ${selectedPad + 1}`}
+            >
+              Paste
+            </button>
+            <button
+              onClick={() => { if (copyIdx !== null) { onSwapPads(copyIdx, selectedPad); setCopyIdx(null); } }}
+              disabled={copyIdx === null || copyIdx === selectedPad}
+              className="py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all disabled:opacity-30"
+              title={copyIdx === null ? 'Copy a pad first' : `Swap pad ${copyIdx + 1} with pad ${selectedPad + 1}`}
+            >
+              Swap
+            </button>
+          </div>
+          {copyIdx !== null && (
+            <p className="text-[8px] font-mono text-slate-500">Copied pad {String(copyIdx + 1).padStart(2, '0')} — select a target, then Paste or Swap.</p>
+          )}
+
+          {/* 16 Levels */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest">16 Levels</span>
+              <button
+                onClick={() => onSixteenLevelsChange(!sixteenLevels)}
+                className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border transition-all ${
+                  sixteenLevels
+                    ? 'bg-purple-500/20 border-purple-500/50 text-purple-400'
+                    : 'bg-[#121215] border-[#1e293b] text-slate-400 hover:text-white'
+                }`}
+              >
+                {sixteenLevels ? 'On' : 'Off'}
+              </button>
+            </div>
+            {sixteenLevels && (
+              <div className="grid grid-cols-2 gap-1">
+                {(['velocity', 'tune'] as SixteenLevelsMode[]).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => onSixteenLevelsModeChange(m)}
+                    className={`py-1 rounded text-[9px] font-mono font-bold uppercase transition-all ${
+                      sixteenLevelsMode === m
+                        ? 'bg-purple-500/20 border border-purple-500/50 text-purple-300'
+                        : 'bg-[#121215] border border-[#1e293b] text-slate-500 hover:text-white'
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Full level + velocity curve */}
@@ -459,6 +575,25 @@ export function MpcPadBank({
               onChange={(e) => activeEntry && onSetTune(activeEntry.layerId, parseInt(e.target.value))}
               className="w-full accent-sky-400 h-1.5 rounded-lg cursor-pointer disabled:opacity-30"
               aria-label="Per-pad tune (semitones)"
+            />
+          </div>
+
+          {/* Per-pad level */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest">Pad Level</span>
+              <span className="text-[11px] font-mono font-black text-amber-400">{Math.round(selectedLevel * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="1.5"
+              step="0.05"
+              value={selectedLevel}
+              disabled={!activeEntry}
+              onChange={(e) => activeEntry && onSetLevel(activeEntry.layerId, parseFloat(e.target.value))}
+              className="w-full accent-amber-400 h-1.5 rounded-lg cursor-pointer disabled:opacity-30"
+              aria-label="Per-pad level"
             />
           </div>
 

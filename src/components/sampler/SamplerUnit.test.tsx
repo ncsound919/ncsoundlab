@@ -11,6 +11,7 @@ import { render, screen, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SamplerUnit } from './SamplerUnit';
 import { useSamplerStore } from '../../store/samplerStore';
+import { audioEngine } from '../../lib/audioEngine';
 
 vi.mock('wavesurfer.js', () => ({
   default: {
@@ -119,5 +120,31 @@ describe('SamplerUnit', () => {
     expect(useSamplerStore.getState().bridge).toBeTruthy();
     unmount();
     expect(useSamplerStore.getState().bridge).toBeNull();
+  });
+
+  it('previews the selection region, not the whole buffer', () => {
+    const fakeSrc = {
+      buffer: null,
+      playbackRate: { value: 1 },
+      connect: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const fakeCtx = {
+      createBufferSource: vi.fn(() => fakeSrc),
+      createGain: vi.fn(() => ({ gain: { value: 0 }, connect: vi.fn() })),
+      destination: {},
+    };
+    const spy = vi.spyOn(audioEngine, 'getContext').mockReturnValue(fakeCtx as never);
+    try {
+      render(<SamplerUnit buffer={makeBuffer()} selectionStart={0.25} selectionEnd={0.5} onSelectionChange={vi.fn()} />);
+      act(() => {
+        useSamplerStore.getState().bridge!.preview();
+      });
+      // Buffer duration is 10s: selection 0.25..0.5 → start at 2.5s for 2.5s.
+      expect(fakeSrc.start).toHaveBeenCalledWith(0, 2.5, 2.5);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -198,29 +198,32 @@ describe('SampleBrowser coverage', () => {
     warn.mockRestore();
   });
 
-  it('keeps the sample name when the rename prompt is cancelled', async () => {
+  it('keeps the sample name when the inline rename is blank', async () => {
     h.lib.fetchLibrarySamples.mockResolvedValue([makeSample()]);
-    vi.stubGlobal('prompt', vi.fn(() => null));
     renderBrowser();
     await screen.findByText('Kick Fat');
-    fireEvent.click(within(sampleRow()).getByTitle('Rename'));
-    await waitFor(() =>
-      expect(h.lib.updateLibrarySample).toHaveBeenCalledWith('s1', { name: 'Kick Fat' }),
-    );
-    vi.unstubAllGlobals();
+    const row = sampleRow();
+    fireEvent.click(within(row).getByTitle('Rename'));
+    const input = within(row).getByLabelText('Sample name');
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(h.lib.fetchLibrarySamples).toHaveBeenCalled());
+    expect(h.lib.updateLibrarySample).not.toHaveBeenCalledWith('s1', expect.objectContaining({ name: expect.anything() }));
   });
 
   it('reports a sample-update failure', async () => {
     h.lib.fetchLibrarySamples.mockResolvedValue([makeSample()]);
     h.lib.updateLibrarySample.mockRejectedValue(new Error('locked'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.stubGlobal('prompt', vi.fn(() => 'Kick 2'));
     renderBrowser();
     await screen.findByText('Kick Fat');
-    fireEvent.click(within(sampleRow()).getByTitle('Rename'));
+    const row = sampleRow();
+    fireEvent.click(within(row).getByTitle('Rename'));
+    const input = within(row).getByLabelText('Sample name');
+    fireEvent.change(input, { target: { value: 'Kick 2' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(screen.getByText('Could not update sample.')).toBeDefined());
     warn.mockRestore();
-    vi.unstubAllGlobals();
   });
 
   it('does nothing in use-sample when the audio context is missing', async () => {

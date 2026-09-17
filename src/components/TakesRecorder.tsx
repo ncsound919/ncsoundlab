@@ -48,11 +48,15 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
   const [countInBeats, setCountInBeats] = useState(1);
   const [metronomeOn, setMetronomeOn] = useState(true);
   const [punch, setPunch] = useState<PunchRegion>(DEFAULT_PUNCH);
+  /** Threshold (auto-record) gate in dBFS, or null for immediate start. */
+  const [thresholdDb, setThresholdDb] = useState<number | null>(null);
+  /** Route the live input to the speakers while recording. */
+  const [monitorOn, setMonitorOn] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [cycle, setCycle] = useState(0);
   const [takes, setTakes] = useState<Take[]>([]);
   const [auditioningId, setAuditioningId] = useState<string | null>(null);
-  const [phase, setPhase] = useState<'idle' | 'countin' | 'recording'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'countin' | 'waiting' | 'recording'>('idle');
 
   const captureRef = useRef<ReturnType<typeof createAudioCapture> | null>(null);
   const metronomeRef = useRef<ReturnType<typeof createMetronome> | null>(null);
@@ -134,12 +138,27 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
 
     setPhase('recording');
     if (!captureRef.current) captureRef.current = createAudioCapture();
+    // Threshold (auto-record) gating + input monitoring ride on the capture's
+    // monitor chain: a silent level-0 monitor still measures the input.
+    if (thresholdDb !== null || monitorOn) setPhase('waiting');
     try {
-      await captureRef.current.start();
+      await captureRef.current.start({
+        ...(monitorOn || thresholdDb !== null
+          ? { monitor: { context: ctx, level: monitorOn ? 0.5 : 0 } }
+          : {}),
+        ...(thresholdDb !== null ? { thresholdDb } : {}),
+      });
     } catch (e) {
       recordingRef.current = false;
       onToast?.('Mic permission denied or unavailable', 'error');
       setIsRecording(false);
+      setPhase('idle');
+      return;
+    }
+    setPhase('recording');
+    // The user may have pressed Stop during the threshold wait — don't roll
+    // the take for a recording nobody wants.
+    if (!recordingRef.current) {
       setPhase('idle');
       return;
     }
@@ -253,7 +272,7 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
         <span className="text-[10px] font-black uppercase tracking-widest text-rose-400 flex items-center gap-1.5">
           <CircleDot size={12} /> Takes Recorder
         </span>
-        <span className="text-[9px] font-mono text-slate-500">{phase === 'countin' ? 'Count-in…' : phase === 'recording' ? `Recording cycle ${cycle + 1}/${loops}` : 'Idle'}</span>
+        <span className="text-[9px] font-mono text-slate-500">{phase === 'countin' ? 'Count-in…' : phase === 'waiting' ? 'Waiting for signal…' : phase === 'recording' ? `Recording cycle ${cycle + 1}/${loops}` : 'Idle'}</span>
       </div>
 
       {/* Controls */}
@@ -290,6 +309,17 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
             </label>
           </>
         )}
+        <label className="flex items-center gap-1 text-slate-400" title="Auto-start the take when the input reaches this level (MPC-style threshold recording)">
+          Threshold
+          <select value={thresholdDb === null ? 'off' : String(thresholdDb)} onChange={(e) => setThresholdDb(e.target.value === 'off' ? null : parseInt(e.target.value))} className="bg-[#0a0a0c] border border-[#1e293b] rounded px-1 py-0.5 text-white">
+            <option value="off">Off</option>
+            {[-48, -36, -24, -12].map((db) => <option key={db} value={db}>{db} dB</option>)}
+          </select>
+        </label>
+        <label className="flex items-center gap-1 text-slate-400" title="Hear the live input while recording">
+          <input type="checkbox" checked={monitorOn} onChange={(e) => setMonitorOn(e.target.checked)} className="accent-sky-500" />
+          Monitor
+        </label>
         <button
           type="button"
           onClick={isRecording ? stopRecording : startRecording}

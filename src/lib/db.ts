@@ -11,6 +11,7 @@
 
 import Dexie, { type Table } from 'dexie';
 import { SoundKit, SoundKitSample } from '../types';
+import type { BankId } from '../store/sequencerStore';
 import type { ProjectDocument } from './projectFormat';
 export type { ProjectDocument } from './projectFormat';
 
@@ -81,6 +82,68 @@ export interface StoredFolderLink {
   updatedAt: string;
 }
 
+/** Per-slice chop settings (mirrors the ChopEditor `SliceMeta` shape). */
+export interface StoredSliceMeta {
+  gain: number;
+  tune: number;
+  key: string;
+  stretch?: number;
+  name?: string;
+}
+
+/**
+ * Phase 6.2 — a persisted chop session: slice markers + per-slice gain/tune/
+ * key/stretch/name, plus the source audio (base64 WAV) so the map reloads
+ * standalone into the sample editor or straight onto pads. `programBank`
+ * records the pad program this map was last sent to (null = never sent), so a
+ * saved chop doubles as a restorable pad program.
+ */
+export interface StoredChopMap {
+  id: string;
+  name: string;
+  sourceName: string;
+  /** Normalized match key (`chopSourceKey`) for auto-loading on reopen. */
+  sourceKey: string;
+  markers: number[];
+  meta: Record<string, StoredSliceMeta>;
+  defaultCount: number;
+  /**
+   * Base64-encoded 16-bit PCM WAV of the chopped source. Optional so LIST
+   * queries can omit the payload; `fetchChopMap` re-fetches the full row.
+   */
+  sourceData?: string;
+  sourceMeta?: { sampleRate: number; channels: number; length: number };
+  programBank?: string | null;
+  sentAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Phase 6.3 — a named pad-program preset. Bank slots reference layers by NAME
+ * (stable across reloads) instead of by ephemeral layer id; per-pad params
+ * are keyed by layer name for the same reason.
+ */
+export interface StoredPadProgram {
+  id: string;
+  name: string;
+  banks: Record<BankId, (string | null)[]>;
+  swing: Record<string, number>;
+  pocket: Record<string, number>;
+  tune: Record<string, number>;
+  choke: Record<string, number>;
+  muted: Record<string, boolean>;
+  level: Record<string, number>;
+  sixteenLevels: boolean;
+  sixteenLevelsMode: 'velocity' | 'tune';
+  globalSwing: number;
+  fullLevel: boolean;
+  velocityCurve: 'linear' | 'exponential' | 'log';
+  timeCorrect: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** SoundKit without non-serializable sample buffers. */
 export type StoredSoundKit = Omit<SoundKit, 'samples'> & {
   ownerId: string;
@@ -116,6 +179,16 @@ class SoundLabDB extends Dexie {
   sampleLibraryFolders!: Table<StoredSampleLibraryFolder, string>;
   sampleLibrarySamples!: Table<StoredSampleLibrarySample, string>;
   folderLinks!: Table<StoredFolderLink, string>;
+  /**
+   * Phase 6.2 — persisted chop sessions (slice maps). Indexed by sourceKey so
+   * reopening the same sample restores its chop work with one query.
+   */
+  chopMaps!: Table<StoredChopMap, string>;
+  /**
+   * Phase 6.3 — named pad-program presets. Slots reference layers by NAME
+   * (stable across sessions) rather than by ephemeral layer id.
+   */
+  padPrograms!: Table<StoredPadProgram, string>;
 
   constructor() {
     super('soundlab-db');
@@ -141,6 +214,15 @@ class SoundLabDB extends Dexie {
     // library folders and remember the handle so the bank can be re-scanned.
     this.version(4).stores({
       folderLinks: 'id, name, createdAt',
+    });
+    // Phase 6.2: persisted chop sessions. Additive — does not affect any
+    // existing table.
+    this.version(5).stores({
+      chopMaps: 'id, sourceKey, name, updatedAt, createdAt',
+    });
+    // Phase 6.3: named pad-program presets. Additive.
+    this.version(6).stores({
+      padPrograms: 'id, name, updatedAt, createdAt',
     });
   }
 }

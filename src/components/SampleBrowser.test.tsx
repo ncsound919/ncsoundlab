@@ -11,7 +11,7 @@
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { SampleBrowser, SAMPLE_DRAG_MIME } from './SampleBrowser';
+import { SampleBrowser, SAMPLE_DRAG_MIME, parseTagsInput } from './SampleBrowser';
 import { audioEngine } from '../audio/AudioEngine';
 
 const { libMock } = vi.hoisted(() => ({
@@ -325,16 +325,66 @@ describe('SampleBrowser', () => {
     expect(screen.queryByTitle('Use sample in active layer')).toBeNull();
   });
 
-  it('renames a sample via prompt', async () => {
+  it('renames a sample via the inline input (Enter, Escape and blur)', async () => {
     libMock.fetchLibrarySamples.mockResolvedValue([makeSample()]);
-    vi.stubGlobal('prompt', vi.fn(() => 'Kick 2'));
     renderBrowser();
     await screen.findByText('Kick Fat');
+    const row = sampleRow();
 
-    fireEvent.click(within(sampleRow()).getByTitle('Rename'));
+    fireEvent.click(within(row).getByTitle('Rename'));
+    const input = within(row).getByLabelText('Sample name');
+    fireEvent.change(input, { target: { value: 'Kick 2' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() =>
       expect(libMock.updateLibrarySample).toHaveBeenCalledWith('s1', { name: 'Kick 2' })
     );
+
+    // Escape cancels without saving.
+    libMock.updateLibrarySample.mockClear();
+    fireEvent.click(within(row).getByTitle('Rename'));
+    const input2 = within(row).getByLabelText('Sample name');
+    fireEvent.keyDown(input2, { key: 'Escape' });
+    expect(within(row).queryByLabelText('Sample name')).toBeNull();
+    expect(libMock.updateLibrarySample).not.toHaveBeenCalled();
+  });
+
+  it('edits sample tags via the inline tag editor', async () => {
+    expect(parseTagsInput('Kick, fat ,KICK,, ,boom')).toEqual(['Kick', 'fat', 'boom']);
+    expect(parseTagsInput('')).toEqual([]);
+
+    libMock.fetchLibrarySamples.mockResolvedValue([makeSample()]);
+    renderBrowser();
+    await screen.findByText('Kick Fat');
+    const row = sampleRow();
+
+    fireEvent.click(within(row).getByTitle('Edit tags'));
+    const input = within(row).getByLabelText('Sample tags');
+    fireEvent.change(input, { target: { value: 'kick, fat' } });
+    fireEvent.click(within(row).getByTitle('Save tags'));
+    await waitFor(() =>
+      expect(libMock.updateLibrarySample).toHaveBeenCalledWith('s1', { tags: ['kick', 'fat'] })
+    );
+  });
+
+  it('purges unused samples with confirmation', async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    libMock.fetchLibrarySamples.mockResolvedValue([makeSample(), { ...makeSample(), id: 's2', name: 'Snare' }]);
+    renderBrowser({ usedSampleIds: ['s1'] });
+    await screen.findByText('Kick Fat');
+
+    const purge = screen.getByTitle('Delete 1 unused sample(s)');
+    fireEvent.click(purge);
+    expect(confirm).toHaveBeenCalled();
+    await waitFor(() => expect(libMock.deleteLibrarySample).toHaveBeenCalledWith('s2'));
+    expect(libMock.deleteLibrarySample).not.toHaveBeenCalledWith('s1');
+  });
+
+  it('disables purge when everything is used', async () => {
+    libMock.fetchLibrarySamples.mockResolvedValue([makeSample()]);
+    renderBrowser({ usedSampleIds: ['s1'] });
+    await screen.findByText('Kick Fat');
+    expect(screen.getByTitle('No unused samples to purge')).toHaveProperty('disabled', true);
   });
 
   it('deletes a sample after previewing it', async () => {

@@ -10,7 +10,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import React from 'react';
-import { MpcPadBank, PadEntry, VelocityCurve } from './MpcPadBank';
+import { MpcPadBank, PadEntry, VelocityCurve, levelVelocityFor } from './MpcPadBank';
 import type { BankId } from '../store/sequencerStore';
 
 const rect = {
@@ -42,15 +42,19 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     onSetSwing: vi.fn(),
     onSetPocket: vi.fn(),
     onSetTune: vi.fn(),
+    onSetLevel: vi.fn(),
     onSetChoke: vi.fn(),
     onTogglePadMute: vi.fn(),
     onClearPad: vi.fn(),
     onAssignActiveLayer: vi.fn(),
+    onCopyPad: vi.fn(),
+    onSwapPads: vi.fn(),
     onSetGlobalSwing: vi.fn(),
     onTriggerPad: vi.fn(),
     onPadInput: vi.fn(),
     onNoteRepeatChange: vi.fn(),
     onSixteenLevelsChange: vi.fn(),
+    onSixteenLevelsModeChange: vi.fn(),
     onFullLevelChange: vi.fn(),
     onVelocityCurveChange: vi.fn(),
     onSetTimeCorrect: vi.fn(),
@@ -65,11 +69,13 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     padSwing: { 'layer-1': 10 },
     padPocket: { 'layer-1': -5 },
     padTune: { 'layer-1': 3 },
+    padLevel: { 'layer-1': 0.8 },
     padChoke: { 'layer-1': 2 },
     padMuted: { 'layer-1': false },
     bpm: 120,
     noteRepeat: { active: false, division: 4 },
     sixteenLevels: false,
+    sixteenLevelsMode: 'velocity',
     globalSwing: 50,
     fullLevel: false,
     velocityCurve: 'linear',
@@ -243,7 +249,7 @@ describe('MpcPadBank interactions', () => {
     expect(props.onVelocityCurveChange).toHaveBeenCalledWith('log');
   });
 
-  it('edits per-pad swing, pocket, tune, choke, and global swing', () => {
+  it('edits per-pad swing, pocket, tune, level, choke, and global swing', () => {
     const props = makeProps();
     render(<MpcPadBank {...props} />);
 
@@ -255,6 +261,9 @@ describe('MpcPadBank interactions', () => {
 
     fireEvent.change(screen.getByLabelText('Per-pad tune (semitones)'), { target: { value: '-7' } });
     expect(props.onSetTune).toHaveBeenCalledWith('layer-1', -7);
+
+    fireEvent.change(screen.getByLabelText('Per-pad level'), { target: { value: '0.5' } });
+    expect(props.onSetLevel).toHaveBeenCalledWith('layer-1', 0.5);
 
     const chokeSection = findSection('Choke Group', document.body);
     fireEvent.click(within(chokeSection).getByRole('button', { name: '3' }));
@@ -291,22 +300,61 @@ describe('MpcPadBank interactions', () => {
     expect(screen.getByLabelText('Per-pad swing')).toHaveProperty('disabled', true);
     expect(screen.getByLabelText('Per-pad pocket')).toHaveProperty('disabled', true);
     expect(screen.getByLabelText('Per-pad tune (semitones)')).toHaveProperty('disabled', true);
+    expect(screen.getByLabelText('Per-pad level')).toHaveProperty('disabled', true);
 
     // Global swing stays enabled regardless.
     fireEvent.change(screen.getByLabelText('Global swing'), { target: { value: '25' } });
     expect(props.onSetGlobalSwing).toHaveBeenCalledWith(25);
   });
 
-  it('renders 16-level mode with per-pad level labels and triggers by level', () => {
-    const props = makeProps({ sixteenLevels: true });
+  it('renders 16-level velocity mode and triggers each pad at a fixed velocity', () => {
+    const props = makeProps({ sixteenLevels: true, sixteenLevelsMode: 'velocity' });
     const { container } = render(<MpcPadBank {...props} />);
     const pads = getPads(container);
     expect(pads).toHaveLength(16);
 
     setRect(pads[5]);
     fireEvent.pointerDown(pads[5], { pointerId: 1, clientY: 50 });
+    // Pad tune still applies as the semitone offset; velocity is the pad level.
+    expect((props.onTriggerPad as any)).toHaveBeenCalledWith(
+      'layer-1',
+      3,
+      expect.closeTo(levelVelocityFor(5), 3)
+    );
+    expect(pads[5].textContent).toContain('VEL');
+  });
+
+  it('renders 16-level tune mode and triggers each pad at its semitone offset', () => {
+    const props = makeProps({ sixteenLevels: true, sixteenLevelsMode: 'tune' });
+    const { container } = render(<MpcPadBank {...props} />);
+    const pads = getPads(container);
+
+    setRect(pads[5]);
+    fireEvent.pointerDown(pads[5], { pointerId: 1, clientY: 50 });
     expect((props.onTriggerPad as any)).toHaveBeenCalledWith('layer-1', 5, expect.closeTo(0.5, 3));
-    expect(pads[5].textContent).toContain('LVL');
+    expect(pads[5].textContent).toContain('ST');
+  });
+
+  it('copies, pastes and swaps pads', () => {
+    const props = makeProps();
+    const { rerender } = render(<MpcPadBank {...props} />);
+    const copyBtn = screen.getByRole('button', { name: 'Copy' });
+    const pasteBtn = screen.getByRole('button', { name: 'Paste' });
+    const swapBtn = screen.getByRole('button', { name: 'Swap' });
+    // Nothing to paste/swap before a copy source exists.
+    expect(pasteBtn).toHaveProperty('disabled', true);
+    expect(swapBtn).toHaveProperty('disabled', true);
+
+    // Copy pad 0, select pad 5, paste onto it.
+    fireEvent.click(copyBtn);
+    rerender(<MpcPadBank {...props} selectedPad={5} />);
+    expect(screen.getByRole('button', { name: 'Paste' })).toHaveProperty('disabled', false);
+    fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
+    expect(props.onCopyPad).toHaveBeenCalledWith(0, 5);
+
+    // Swap is enabled once source and target differ.
+    fireEvent.click(screen.getByRole('button', { name: 'Swap' }));
+    expect(props.onSwapPads).toHaveBeenCalledWith(0, 5);
   });
 
   it('falls back to the global swing/tune values and shows focus indicator', () => {
@@ -324,60 +372,88 @@ describe('MpcPadBank interactions', () => {
     expect(pads[0].className).toContain('outline');
   });
 
-  it('repeats notes at the note-repeat interval while held', () => {
+  it('repeats notes on the audio clock while held (with pad velocity)', () => {
     vi.useFakeTimers();
-    const props = makeProps({ noteRepeat: { active: true, division: 4 }, bpm: 120 });
+    let clock = 0;
+    const props = makeProps({
+      noteRepeat: { active: true, division: 4 },
+      bpm: 120,
+      getAudioTime: () => clock,
+    });
     const { container } = render(<MpcPadBank {...props} />);
     const pads = getPads(container);
     setRect(pads[0]);
 
     fireEvent.pointerDown(pads[0], { pointerId: 1, clientY: 25 });
-    // Initial trigger from the pointer-down.
+    // Initial trigger from the pointer-down (immediate; no `when`).
     expect((props.onTriggerPad as any)).toHaveBeenCalledWith('layer-1', 3, expect.closeTo(0.75, 3));
+    const initialCalls = (props.onTriggerPad as any).mock.calls.length;
 
-    vi.advanceTimersByTime(500); // 125ms interval -> ~4 repeat triggers
-    const repeatCalls = (props.onTriggerPad as any).mock.calls.filter((c) => c[2] === 1).length;
-    expect(repeatCalls).toBeGreaterThanOrEqual(3);
+    // Step time forward the way a held pad would experience it: the
+    // look-ahead pump schedules each repeat once its audio time enters the
+    // horizon, and repeats already in the past are skipped, not burst-fired.
+    for (let i = 0; i < 10; i++) {
+      clock += 0.05;
+      vi.advanceTimersByTime(50);
+    }
+    const repeats = (props.onTriggerPad as any).mock.calls
+      .slice(initialCalls)
+      .filter((c: unknown[]) => typeof c[3] === 'number');
+    expect(repeats.length).toBeGreaterThanOrEqual(3);
+    // Repeats carry the pad's velocity, not a hardcoded 1.
+    expect(repeats[0][2]).toBeCloseTo(0.75, 3);
+    // And they are scheduled on the audio clock ahead of now.
+    expect(repeats[0][3] as number).toBeGreaterThan(0);
 
     fireEvent.pointerUp(pads[0], { pointerId: 1 });
     const callsAfterUp = (props.onTriggerPad as any).mock.calls.length;
-    vi.advanceTimersByTime(500);
+    for (let i = 0; i < 10; i++) {
+      clock += 0.05;
+      vi.advanceTimersByTime(50);
+    }
     expect((props.onTriggerPad as any).mock.calls.length).toBe(callsAfterUp);
   });
 
   it('does not start note repeat when the feature is off', () => {
     vi.useFakeTimers();
-    const props = makeProps({ noteRepeat: { active: false, division: 4 } });
+    let clock = 0;
+    const props = makeProps({ noteRepeat: { active: false, division: 4 }, getAudioTime: () => clock });
     const { container } = render(<MpcPadBank {...props} />);
     const pads = getPads(container);
     setRect(pads[0]);
 
     fireEvent.pointerDown(pads[0], { pointerId: 1, clientY: 25 });
+    clock += 0.5;
     vi.advanceTimersByTime(500);
-    const repeatCalls = (props.onTriggerPad as any).mock.calls.filter((c) => c[2] === 1).length;
-    expect(repeatCalls).toBe(0);
+    const repeats = (props.onTriggerPad as any).mock.calls.filter((c: unknown[]) => typeof c[3] === 'number');
+    expect(repeats.length).toBe(0);
   });
 
   it('re-tempos an active repeat when the BPM changes', () => {
     vi.useFakeTimers();
-    const props = makeProps({ noteRepeat: { active: true, division: 4 }, bpm: 120 });
+    let clock = 0;
+    const props = makeProps({ noteRepeat: { active: true, division: 4 }, bpm: 120, getAudioTime: () => clock });
     const { container, rerender } = render(<MpcPadBank {...props} />);
     const pads = getPads(container);
     setRect(pads[0]);
 
     fireEvent.pointerDown(pads[0], { pointerId: 1, clientY: 25 });
-    (props.onTriggerPad as any).mockClear();
-
-    const next = makeProps({ noteRepeat: { active: true, division: 4 }, bpm: 60 });
+    const next = makeProps({ noteRepeat: { active: true, division: 4 }, bpm: 60, getAudioTime: () => clock });
     rerender(<MpcPadBank {...next} />);
-    // 60000/60/4 = 250ms interval.
-    vi.advanceTimersByTime(750);
-    expect((next.onTriggerPad as any).mock.calls.filter((c) => c[2] === 1).length).toBeGreaterThanOrEqual(2);
+    (next.onTriggerPad as any).mockClear();
+    // 60000/60/4 = 250ms interval: step time forward incrementally.
+    for (let i = 0; i < 8; i++) {
+      clock += 0.1;
+      vi.advanceTimersByTime(100);
+    }
+    const repeats = (next.onTriggerPad as any).mock.calls.filter((c: unknown[]) => typeof c[3] === 'number');
+    expect(repeats.length).toBeGreaterThanOrEqual(2);
   });
 
   it('clears any running repeat on unmount', () => {
     vi.useFakeTimers();
-    const props = makeProps({ noteRepeat: { active: true, division: 4 } });
+    let clock = 0;
+    const props = makeProps({ noteRepeat: { active: true, division: 4 }, getAudioTime: () => clock });
     const { container, unmount } = render(<MpcPadBank {...props} />);
     const pads = getPads(container);
     setRect(pads[0]);
@@ -385,6 +461,7 @@ describe('MpcPadBank interactions', () => {
     fireEvent.pointerDown(pads[0], { pointerId: 1, clientY: 25 });
     (props.onTriggerPad as any).mockClear();
     unmount();
+    clock += 1;
     vi.advanceTimersByTime(1000);
     expect((props.onTriggerPad as any)).not.toHaveBeenCalled();
   });
