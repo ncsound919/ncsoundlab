@@ -28,3 +28,4 @@ uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 base64 = "0.22"
 tauri-plugin-dialog = "2"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }

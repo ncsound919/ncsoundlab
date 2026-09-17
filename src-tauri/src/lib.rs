@@ -1,4 +1,5 @@
 pub mod aaf;
+pub mod net;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,7 +17,8 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .invoke_handler(tauri::generate_handler![
       aaf::commands::export_aaf_session,
-      aaf::commands::import_aaf_session
+      aaf::commands::import_aaf_session,
+      net::http_request
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

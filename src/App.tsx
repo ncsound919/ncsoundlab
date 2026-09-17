@@ -59,6 +59,7 @@ const ProjectManagerModal = lazy(() => import('./components/ProjectManagerModal'
 const AddToKitModal = lazy(() => import('./components/AddToKitModal').then(m => ({ default: m.AddToKitModal })));
 const KeyboardShortcutsModal = lazy(() => import('./components/KeyboardShortcutsModal').then(m => ({ default: m.KeyboardShortcutsModal })));
 const UserManualModal = lazy(() => import('./components/UserManualModal').then(m => ({ default: m.UserManualModal })));
+const AiSettingsPanel = lazy(() => import('./components/AiSettingsPanel').then(m => ({ default: m.AiSettingsPanel })));
 const CompareEnginePanel = lazy(() => import('./components/CompareEnginePanel').then(m => ({ default: m.CompareEnginePanel })));
 const SoundKitCreator = lazy(() => import('./components/SoundKitCreator').then(m => ({ default: m.SoundKitCreator })));
 const StudioSequencer = lazy(() => import('./components/StudioSequencer').then(m => ({ default: m.StudioSequencer })));
@@ -289,6 +290,7 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const [isUserManualOpen, setIsUserManualOpen] = useState(false);
+  const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
   const [isProjectManagerOpen, setIsProjectManagerOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [hasAutoSave, setHasAutoSave] = useState(false);
@@ -752,7 +754,7 @@ export default function App() {
 
   // Global Interactive Keyboard Shortcuts
   useEffect(() => {
-    const otherModalOpen = isShortcutsOpen || isUserManualOpen || isProjectManagerOpen || isAddToKitOpen || !!chopBuffer;
+    const otherModalOpen = isShortcutsOpen || isUserManualOpen || isAiSettingsOpen || isProjectManagerOpen || isAddToKitOpen || !!chopBuffer;
     const isAnyModalOpen = otherModalOpen || isCommandPaletteOpen;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -771,6 +773,7 @@ export default function App() {
         if (isCommandPaletteOpen) { setIsCommandPaletteOpen(false); return; }
         if (isShortcutsOpen) { setIsShortcutsOpen(false); return; }
         if (isUserManualOpen) { setIsUserManualOpen(false); return; }
+        if (isAiSettingsOpen) { setIsAiSettingsOpen(false); return; }
         if (isProjectManagerOpen) { setIsProjectManagerOpen(false); return; }
         if (isAddToKitOpen) { setIsAddToKitOpen(false); return; }
         if (chopBuffer) { setChopBuffer(null); return; }
@@ -857,7 +860,8 @@ export default function App() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [layers, selectedLayerId, activeTab, currentStageIndex, isShortcutsOpen, isUserManualOpen, isProjectManagerOpen, isAddToKitOpen, isCommandPaletteOpen, chopBuffer]);
+  }, [layers, selectedLayerId, activeTab, currentStageIndex, isShortcutsOpen, isUserManualOpen,
+    isAiSettingsOpen, isProjectManagerOpen, isAddToKitOpen, isCommandPaletteOpen, chopBuffer]);
 
   // Synchronize A/B state and handle automatic project-wide waveform preview updates with debouncing
   useEffect(() => {
@@ -1919,6 +1923,16 @@ export default function App() {
               <BookOpen size={14} />
             </button>
 
+            {/* AI Provider Settings Trigger */}
+            <button
+              onClick={() => setIsAiSettingsOpen(true)}
+              className="p-2 bg-[#000000] hover:bg-[#1e3a8a] border border-[#1e293b] text-fuchsia-400 rounded-xl transition-all flex items-center justify-center"
+              title="AI Provider Settings"
+              aria-label="AI Provider Settings"
+            >
+              <Sparkles size={14} />
+            </button>
+
             {/* Play Working Sound Quick Button */}
             {selectedLayer && (
               <button 
@@ -2758,6 +2772,19 @@ export default function App() {
           onStoreSnapshot={handleStoreSnapshot}
         />
       </Suspense>
+
+      {/* AI Provider Settings (Phase 3.1). Loaded only when opened: mounting a
+          lazy component inside the shared modal boundary would suspend that
+          boundary and blank every other modal until the chunk resolved. */}
+      {isAiSettingsOpen && (
+        <Suspense fallback={null}>
+          <AiSettingsPanel
+            isOpen
+            onClose={() => setIsAiSettingsOpen(false)}
+            onToast={addToast}
+          />
+        </Suspense>
+      )}
 
       {/* Chop Editor (opens when a sample is uploaded in Chop mode) */}
       <Suspense fallback={null}>
