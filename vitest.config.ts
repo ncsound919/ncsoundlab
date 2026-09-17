@@ -20,6 +20,13 @@ export default defineConfig({
     // false failure, not a real one.
     testTimeout: 30000,
     hookTimeout: 30000,
+    // Run at most two suites at once. Several suites (App shell, StudioSequencer,
+    // LayerEditor) each build a large jsdom tree and peak well over a gigabyte;
+    // letting the default worker pool run four of them concurrently on a 4-core
+    // box starves them into timeouts that don't reproduce in isolation. Two
+    // workers trades wall-clock for reproducibility — a flaky gate is worse than
+    // a slower one.
+    maxWorkers: 2,
     setupFiles: ['./src/tests/setup.ts'],
     exclude: ['e2e/**/*', 'node_modules/**/*', 'dist/**/*'],
     coverage: {

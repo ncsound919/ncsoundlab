@@ -59,7 +59,6 @@ const ProjectManagerModal = lazy(() => import('./components/ProjectManagerModal'
 const AddToKitModal = lazy(() => import('./components/AddToKitModal').then(m => ({ default: m.AddToKitModal })));
 const KeyboardShortcutsModal = lazy(() => import('./components/KeyboardShortcutsModal').then(m => ({ default: m.KeyboardShortcutsModal })));
 const UserManualModal = lazy(() => import('./components/UserManualModal').then(m => ({ default: m.UserManualModal })));
-const AiSettingsPanel = lazy(() => import('./components/AiSettingsPanel').then(m => ({ default: m.AiSettingsPanel })));
 const CompareEnginePanel = lazy(() => import('./components/CompareEnginePanel').then(m => ({ default: m.CompareEnginePanel })));
 const SoundKitCreator = lazy(() => import('./components/SoundKitCreator').then(m => ({ default: m.SoundKitCreator })));
 const StudioSequencer = lazy(() => import('./components/StudioSequencer').then(m => ({ default: m.StudioSequencer })));
@@ -114,6 +113,7 @@ import {
 } from './lib/audioTelemetry';
 import { nextLayerColor } from './lib/layerColors';
 import { LayerRow } from './components/LayerRow';
+import { AiSettingsPanel } from './components/AiSettingsPanel';
 import { useLayerLevels } from './audio/useLayerLevels';
 import { CommandPalette } from './components/CommandPalette';
 import { HeaderTransport } from './components/HeaderTransport';
@@ -2773,17 +2773,15 @@ export default function App() {
         />
       </Suspense>
 
-      {/* AI Provider Settings (Phase 3.1). Loaded only when opened: mounting a
-          lazy component inside the shared modal boundary would suspend that
-          boundary and blank every other modal until the chunk resolved. */}
+      {/* AI Provider Settings (Phase 3.1). Eagerly imported: it is small, and a
+          lazy mount here would suspend the shared modal boundary and blank the
+          other modals until its chunk resolved. Rendered only while open. */}
       {isAiSettingsOpen && (
-        <Suspense fallback={null}>
-          <AiSettingsPanel
-            isOpen
-            onClose={() => setIsAiSettingsOpen(false)}
-            onToast={addToast}
-          />
-        </Suspense>
+        <AiSettingsPanel
+          isOpen
+          onClose={() => setIsAiSettingsOpen(false)}
+          onToast={addToast}
+        />
       )}
 
       {/* Chop Editor (opens when a sample is uploaded in Chop mode) */}
