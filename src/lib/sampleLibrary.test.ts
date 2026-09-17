@@ -84,6 +84,24 @@ describe('analyzeLibrarySample', () => {
     expect(Number.isFinite(analysis.peakDb)).toBe(true);
     expect(Number.isFinite(analysis.rmsDb)).toBe(true);
   });
+
+  it('classifies a long sustained buffer as an Atmosphere', () => {
+    const sampleRate = 44100;
+    const channel = new Float32Array(sampleRate); // 1.0s, > 0.6s
+    channel.fill(0.5);
+    const analysis = analyzeLibrarySample(createMockBuffer([channel], sampleRate));
+    expect(analysis.durationSeconds).toBe(1);
+    expect(analysis.suggestedCategory).toBe('Atmospheres');
+  });
+
+  it('averages channels when analyzing a stereo buffer', () => {
+    const left = new Float32Array(1024).fill(0.5);
+    const right = new Float32Array(1024).fill(-0.5); // averages to silence
+    const analysis = analyzeLibrarySample(createMockBuffer([left, right], 44100));
+    expect(analysis.channels).toBe(2);
+    expect(Number.isFinite(analysis.peakDb)).toBe(true);
+    expect(analysis.peakDb).toBeLessThanOrEqual(-13); // ~1e-7 floor → very low
+  });
 });
 
 describe('filterLibrarySamples', () => {

@@ -13,9 +13,16 @@ import {
   chordFromRoot,
   resolveSplit,
   resolveScaleType,
+  voiceChords,
+  voicingSmoothness,
+  makeProgression,
+  progressionChords,
+  sophisticateProgression,
+  snapProgressionToScale,
   DEFAULT_SCALE_LOCK,
   DEFAULT_SPLIT,
   type KeyboardSplitSettings,
+  type ScaleLockSettings,
 } from './musicTheory';
 
 describe('scalePitchClasses', () => {
@@ -105,5 +112,84 @@ describe('resolveSplit', () => {
   it('returns null when disabled or no layers assigned', () => {
     expect(resolveSplit(72, { ...split, enabled: false })).toBe(null);
     expect(resolveSplit(72, { ...split, lowerLayerId: null, upperLayerId: null })).toBe(null);
+  });
+});
+
+describe('resolveScaleType fallback', () => {
+  it('falls back to major for an unknown scale name', () => {
+    expect(resolveScaleType('not-a-scale')).toBe('major');
+  });
+});
+
+describe('voiceChords', () => {
+  it('returns one voice set per chord with finite MIDI notes', () => {
+    const voiced = voiceChords(
+      [
+        { root: 'C', type: 'maj7' },
+        { root: 'A', type: 'm7' },
+        { root: 'F', type: 'maj7' },
+      ],
+      4,
+    );
+    expect(voiced).toHaveLength(3);
+    for (const v of voiced) {
+      expect(Array.isArray(v.notes)).toBe(true);
+      expect(v.notes.length).toBeGreaterThan(1);
+      for (const n of v.notes) expect(Number.isFinite(n)).toBe(true);
+    }
+  });
+
+  it('rewards common tones and penalizes distant voicings', () => {
+    // Identical voicings keep all common tones → cost is negative (bonus).
+    expect(voicingSmoothness([60, 64, 67], [60, 64, 67])).toBeLessThan(0);
+    // A full octave displacement costs more than staying put.
+    expect(voicingSmoothness([60, 64, 67], [72, 76, 79])).toBeGreaterThan(0);
+  });
+});
+
+describe('makeProgression', () => {
+  it('is deterministic for a given seed and produces the requested bar count', () => {
+    const a = makeProgression('C', { scaleType: 'major', bars: 4, seed: 42 });
+    const b = makeProgression('C', { scaleType: 'major', bars: 4, seed: 42 });
+    expect(a).toHaveLength(4);
+    expect(a.map((c) => `${c.root}${c.type}`)).toEqual(b.map((c) => `${c.root}${c.type}`));
+  });
+
+  it('supports Monte Carlo trials (>1) and still returns the requested bars', () => {
+    const prog = makeProgression('F', { scaleType: 'minor', bars: 8, seed: 7, trials: 4 });
+    expect(prog).toHaveLength(8);
+  });
+
+  it('progressionChords returns defensive copies', () => {
+    const prog = makeProgression('G', { bars: 2, seed: 1 });
+    const copy = progressionChords(prog);
+    expect(copy).toHaveLength(prog.length);
+    expect(copy[0]).not.toBe(prog[0]);
+  });
+});
+
+describe('sophisticateProgression', () => {
+  it('returns a chord list of the same length at every level', () => {
+    const prog = makeProgression('C', { bars: 4, seed: 3 });
+    for (const level of [0, 1, 2, 3] as const) {
+      const out = sophisticateProgression(prog, level);
+      expect(out).toHaveLength(prog.length);
+    }
+  });
+});
+
+describe('snapProgressionToScale', () => {
+  const lock: ScaleLockSettings = { root: 'C', scaleName: 'major', enabled: true };
+
+  it('is identity when the lock is off', () => {
+    const prog = makeProgression('C', { bars: 2, seed: 5 });
+    expect(snapProgressionToScale(prog, { ...lock, enabled: false })).toBe(prog);
+  });
+
+  it('rewrites out-of-scale roots into the locked scale', () => {
+    const prog = [{ root: 'C#', type: 'maj7', duration: 4 }];
+    const snapped = snapProgressionToScale(prog, lock);
+    expect(snapped[0].root).not.toBe('C#');
+    expect(snapped[0].type).toBe('maj7');
   });
 });

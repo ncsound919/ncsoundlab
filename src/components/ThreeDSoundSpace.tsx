@@ -5,6 +5,7 @@
 
 import React, { useRef, useEffect, useState } from 'react';
 import { SoundLayer, DEFAULT_FX } from '../types';
+import { layerColorFor } from '../lib/layerColors';
 import { Layers, Mic, Speaker, Waves, Maximize2, X } from 'lucide-react';
 
 interface ThreeDSoundSpaceProps {
@@ -270,7 +271,8 @@ export const ThreeDSoundSpace: React.FC<ThreeDSoundSpaceProps> = ({
         <div ref={containerRef} className="absolute inset-0 z-20">
           {layers.filter(l => l.enabled).map(layer => {
             const isSelected = selectedLayerId === layer.id;
-            
+            const color = layerColorFor(layer, layers.indexOf(layer));
+
             const left = ((layer.pan + 1) / 2) * 88 + 6;
             const top = (1 - (layer.gain / 1.5)) * 75 + 12;
 
@@ -289,10 +291,12 @@ export const ThreeDSoundSpace: React.FC<ThreeDSoundSpaceProps> = ({
                 aria-label={`Spatial position for layer ${layer.name}`}
                 aria-valuenow={Math.round(layer.pan * 100)}
                 onKeyDown={(e) => handleKeyDownNode(layer, e)}
+                data-layer-color={color}
                 style={{
                   left: `${left}%`,
                   top: `${top}%`,
                   willChange: isDragging === layer.id ? 'left, top' : 'auto',
+                  ...(isSelected ? {} : { backgroundColor: color, borderColor: color }),
                 }}
                 onMouseDown={(e) => handleMouseDown(layer, e)}
                 className={`absolute -translate-x-1/2 -translate-y-1/2 w-10 h-10 rounded-full cursor-grab active:cursor-grabbing flex items-center justify-center transition-all focus:outline-none focus:ring-2 focus:ring-yellow-400 ${
@@ -303,7 +307,7 @@ export const ThreeDSoundSpace: React.FC<ThreeDSoundSpaceProps> = ({
               >
                 {/* Layer Title Card Tag */}
                 <div className="absolute -top-7 whitespace-nowrap bg-black/90 px-2 py-0.5 rounded border border-blue-500/80 text-[10px] font-black uppercase tracking-wider text-white pointer-events-none shadow-md flex items-center gap-1">
-                  <span className={isSelected ? 'text-yellow-400' : 'text-blue-400'}>●</span>
+                  <span className={isSelected ? 'text-yellow-400' : ''} style={isSelected ? undefined : { color }}>●</span>
                   {layer.name}
                 </div>
                 

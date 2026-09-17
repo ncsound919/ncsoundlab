@@ -14,6 +14,8 @@
     "test:coverage": "vitest run --coverage",
     "coverage:check": "node scripts/check-new-code-coverage.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:controller": "playwright test e2e/controller.spec.ts",
+    "test:e2e:controller:hw": "node scripts/e2e-controller-hw.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

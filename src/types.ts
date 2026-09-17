@@ -370,6 +370,11 @@ export interface SoundLayer {
   // is 0..1. Inserted into the layer's chain at the send tap point. A layer
   // with no `sends` field sends nothing (back-compat).
   sends?: LayerSends;
+
+  // Stable identity colour. Auto-assigned from `layerColorFor` on create so a
+  // layer is recognisable at a glance on rows, mixer strips, pads and the 3D
+  // space. Optional for back-compat (derived from position when absent).
+  color?: string;
 }
 
 export const DEFAULT_ENVELOPE: Envelope = {

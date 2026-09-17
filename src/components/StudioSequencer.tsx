@@ -20,10 +20,11 @@ import { SongModePanel } from './SongModePanel';
 import { ArrangementPanel } from './ArrangementPanel';
 import { Piano, KeyboardShortcuts, MidiNumbers } from 'react-piano';
 import { Note, Chord } from 'tonal';
-import { Play, Square, Save, FolderOpen } from 'lucide-react';
+import { Save, FolderOpen } from 'lucide-react';
 import 'react-piano/dist/styles.css';
 import { SoundLayer, PatternCell } from '../types';
 import { applySemitoneShift, stepOffsetSeconds } from '../lib/sequencerHelpers';
+import { layerColorFor } from '../lib/layerColors';
 import { audioEngine } from '../lib/audioEngine';
 import { SoundLayerPlayer } from '../audio/SoundLayerPlayer';
 import { MpcPadBank, PadEntry } from './MpcPadBank';
@@ -31,7 +32,7 @@ import { PianoRoll } from './PianoRoll';
 import { useSequencerStore, BANK_IDS, BankId } from '../store/sequencerStore';
 import { usePatternStore, PATTERN_IDS, type PatternId } from '../store/patternStore';
 import { planFromArrangement } from '../lib/arrangementScheduler';
-import { GROOVE_TEMPLATES, applyGroove, humanizeVelocities, clearGrooveOffsets, findGrooveTemplate } from '../lib/grooveTemplates';
+import { GROOVE_TEMPLATES, applyGroove, humanizeVelocities, clearGrooveOffsets, findGrooveTemplate, type GrooveTemplate } from '../lib/grooveTemplates';
 import { exportV2, importExport } from '../sequencerFormat';
 import { createAudioCapture, sliceBufferIntoPads } from '../audio/transport/audioCapture';
 import { renderMixdown } from '../audio/transport/mixdown';
@@ -39,12 +40,14 @@ import { SampleBrowser } from './SampleBrowser';
 import { TakesRecorder } from './TakesRecorder';
 import { patternLoopLengthSec } from '../audio/transport/takesRecorder';
 import { PerformanceControls } from './PerformanceControls';
-import { MidiPanel } from './MidiPanel';
 import { TheoryPanel } from './TheoryPanel';
+import { RecourseComposerPanel } from './RecourseComposerPanel';
+import { setSequencerBridge, clearSequencerBridge } from '../lib/controller/sequencerBridge';
 import {
   fetchLibrarySample,
   decodeLibrarySample,
 } from '../lib/sampleLibrary';
+import type { TheoryChord } from '../lib/theory/progression';
 
 const PPQ = 96;
 
@@ -224,10 +227,14 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
 
   // On first open (all programs empty), auto-fill bank A from the enabled layers.
   useEffect(() => {
-    const isEmpty = BANK_IDS.every((b) => programs[b].every((slot) => slot === null));
+    const store = useSequencerStore.getState();
+    const isEmpty = BANK_IDS.every((b) => store.programs[b].every((slot) => slot === null));
     if (isEmpty) {
       const first16 = layers.filter((l) => l.enabled).slice(0, 16).map((l) => l.id);
-      if (first16.length) setBankProgram('A', first16);
+      // Write into the active pattern's program (not just the flat view):
+      // `activatePatternPrograms` runs right after and would otherwise reload
+      // the empty per-pattern map over the top of this fill.
+      if (first16.length) store.setPatternProgram(usePatternStore.getState().activePatternId, 'A', first16);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -644,9 +651,9 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     const rowId = activeRowRef.current;
     const layer = layers.find((l) => l.id === rowId);
     if (!layer || !isLayerAudible(layer)) return;
-    // All onPlayNote callers (PerformanceControls keyboard pads, MidiPanel,
-    // react-piano) pass velocity in 0..1. Normalize here ONCE — the old
-    // `velocity / 127` double-normalized a 0..1 value to ~0.008 (-42 dB).
+    // All onPlayNote callers (PerformanceControls keyboard pads, the MIDI
+    // controller panel, react-piano) pass velocity in 0..1. Normalize here ONCE
+    // — the old `velocity / 127` double-normalized a 0..1 value to ~0.008.
     const v01 = typeof velocity === 'number' ? Math.max(0, Math.min(1, velocity)) : 1;
     if (layer.type === 'synth' && playerRef.current) {
       playerRef.current.playNote(layer, midi, 0.6, v01);
@@ -734,7 +741,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     if (!layerId) return null;
     const layer = layers.find((l) => l.id === layerId);
     if (!layer || !layer.enabled) return null;
-    return { layerId, name: layer.name, type: layer.type };
+    return { layerId, name: layer.name, type: layer.type, color: layerColorFor(layer, layers.indexOf(layer)) };
   });
 
   const setProgramSlot = useCallback((index: number, layerId: string | null) => {
@@ -922,29 +929,130 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
 
   const trackCount = layers.filter((l) => l.enabled).length;
 
+  // Voice a generated progression into the active pattern row (one cell per
+  // chord, spaced by its duration in 16th steps). Shared by the Theory panel
+  // and the controller's `chord:toPattern` action.
+  const applyProgressionToPattern = useCallback((chords: TheoryChord[]) => {
+    const rowId = activeRowRef.current;
+    if (!rowId) return;
+    const store = usePatternStore.getState();
+    const pid = store.activePatternId;
+    const p = store.patterns[pid];
+    const stepLength = p.stepLength;
+    const row = (p.layerRows[rowId] ?? Array.from({ length: stepLength }, () => ({ on: false }))).slice();
+    const pcOf: Record<string, number> = {
+      C: 0, 'C#': 1, Db: 1, D: 2, 'D#': 3, Eb: 3, E: 4, F: 5, 'F#': 6, Gb: 6, G: 7, 'G#': 8, Ab: 8, A: 9, 'A#': 10, Bb: 10, B: 11,
+    };
+    let step = 0;
+    for (const ch of chords) {
+      if (step >= stepLength) break;
+      const pc = pcOf[ch.root] ?? 0;
+      const dur = Math.max(1, Math.round(ch.duration / 4) || 1);
+      row[step] = { on: true, note: 60 + pc, velocity: 100, duration: dur };
+      step += dur;
+    }
+    store.setRow(pid, rowId, row);
+  }, []);
+
+  const humanizePattern = useCallback(() => {
+    const state = usePatternStore.getState();
+    const p = state.patterns[state.activePatternId];
+    usePatternStore.setState({ patterns: { ...state.patterns, [state.activePatternId]: humanizeVelocities(p, 0.2) } });
+  }, []);
+
+  const applyGrooveTemplate = useCallback((tpl: GrooveTemplate) => {
+    const state = usePatternStore.getState();
+    const p = state.patterns[state.activePatternId];
+    usePatternStore.setState({ patterns: { ...state.patterns, [state.activePatternId]: applyGroove(p, tpl) } });
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Phase 8 — sequencer bridge. The controller engine lives at App level
+  // (ControllerHost) so MIDI survives tab switches; it drives Beat Studio
+  // through this bridge while mounted. Re-registered every render so the
+  // closures stay fresh; cleared on unmount.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    setSequencerBridge({
+      getPadTune: () => padTune,
+      getPadChoke: () => padChoke,
+      triggerLayer: triggerLayerWithSemitone,
+      playNote: (midi, v) => playMidiNote(midi, v),
+      stopNote: (midi) => stopMidiNote(midi),
+      getIsPlaying: () => isPlaying,
+      togglePlay,
+      toggleRecord: () => setIsRecording((r) => !r),
+      tapTempo,
+      setSwing: (v) => setGlobalSwing(Math.max(0, Math.min(75, Math.round(v)))),
+      getSelectedPad: () => selectedPad,
+      clearPad,
+      assignPad: assignActiveLayerToPad,
+      clearPattern,
+      quantizePattern,
+      humanizePattern,
+      applyGroove: applyGrooveTemplate,
+      applyProgressionToPattern,
+    });
+    return () => {
+      clearSequencerBridge();
+    };
+  });
+
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar p-3 sm:p-4 space-y-3">
-      {/* Tone Transport bar (Phase 1, feature-flagged) */}
-      <TransportBar
-        bpm={bpm}
-        isPlaying={isPlaying}
-        useTransportMode={useTransportMode}
-        timeSignature={patternTimeSignature}
-        stepLength={patternStepLength}
-        songModeActive={songModeActive}
-        isRecordingAudio={isRecordingAudio}
-        isMixingDown={isMixingDown}
-        onBpmChange={setBpm}
-        onPlayStop={togglePlay}
-        onUseTransportModeChange={setUseTransportMode}
-        onTimeSignatureChange={setTimeSignature}
-        onStepLengthChange={setStepLength}
-        onSongModeToggle={() => setSongModeActive((v) => !v)}
-        onRecordAudio={onRecordAudio}
-        onMixdown={onMixdown}
-      />
-      {songModeActive && <SongModePanel onPlayFromSlot={() => { /* song starts from slot via transport */ }} />}
-      <ArrangementPanel />
+    <div className="h-full overflow-y-auto custom-scrollbar" data-beat-studio>
+      {/* ── DAW TRANSPORT (single, sticky) ── */}
+      <div className="sticky top-0 z-30 bg-[#0b0b0d]/95 backdrop-blur border-b border-[#1e293b] px-3 pt-3 pb-2 space-y-2">
+        <TransportBar
+          bpm={bpm}
+          isPlaying={isPlaying}
+          useTransportMode={useTransportMode}
+          timeSignature={patternTimeSignature}
+          stepLength={patternStepLength}
+          songModeActive={songModeActive}
+          isRecordingAudio={isRecordingAudio}
+          isMixingDown={isMixingDown}
+          onBpmChange={setBpm}
+          onPlayStop={togglePlay}
+          onUseTransportModeChange={setUseTransportMode}
+          onTimeSignatureChange={setTimeSignature}
+          onStepLengthChange={setStepLength}
+          onSongModeToggle={() => setSongModeActive((v) => !v)}
+          onRecordAudio={onRecordAudio}
+          onMixdown={onMixdown}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <button type="button" onClick={tapTempo} title="Tap to set tempo" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-blue-400 hover:text-white transition-all">Tap Tempo</button>
+            <button
+              type="button"
+              onClick={() => setIsRecording((r) => !r)}
+              title="Step-record pad/piano hits into the active pattern"
+              className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider border transition-all flex items-center gap-1.5 ${
+                isRecording ? 'bg-red-600 text-white border-red-400' : 'bg-[#121215] border-[#1e293b] text-slate-300 hover:text-red-400'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${isRecording ? 'bg-white animate-pulse' : 'bg-red-500'}`} />
+              {isRecording ? 'Recording' : 'Record'}
+            </button>
+            <button type="button" onClick={clearPattern} className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all">Clear Pattern</button>
+            <button type="button" onClick={() => openImport('prgm')} title="Load an MPC program (.prgm)" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-blue-400 hover:text-white transition-all flex items-center gap-1"><FolderOpen size={11} /> Load Pgm</button>
+            <button type="button" onClick={() => openImport('seq')} title="Load an MPC sequence (.seq)" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-blue-400 hover:text-white transition-all flex items-center gap-1"><FolderOpen size={11} /> Load Seq</button>
+            <button type="button" onClick={exportProgram} title="Export MPC program (.prgm)" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-emerald-400 hover:text-white transition-all flex items-center gap-1"><Save size={11} /> Save Pgm</button>
+            <button type="button" onClick={exportSequence} title="Export MPC sequence (.seq)" className="px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-emerald-400 hover:text-white transition-all flex items-center gap-1"><Save size={11} /> Save Seq</button>
+            <input ref={fileInputRef} type="file" accept=".prgm,.seq,.json,application/json" className="hidden" onChange={handleImportFile} />
+          </div>
+          <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+            {trackCount} tracks · step {String(currentStep + 1).padStart(2, '0')}/16
+          </span>
+        </div>
+      </div>
+
+      {/* ── WORKSPACE: arrangement/pattern + controller rail ── */}
+      <div className="p-3 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_440px] gap-3 items-start">
+        {/* Arrangement + pattern (main pane) */}
+        <div className="space-y-3 min-w-0">
+          {songModeActive && <SongModePanel onPlayFromSlot={() => { /* song starts from slot via transport */ }} />}
+          <ArrangementPanel />
       {/* Phase 5.4 — loop recording + takes browser (count-in, metronome, punch-in/out) */}
       <TakesRecorder
         bpm={bpm}
@@ -960,19 +1068,6 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       <PerformanceControls
         padSlots={programs[activeBank]}
         layers={layers}
-        onTriggerPad={(index, velocity) => {
-          const layerId = programs[activeBank][index];
-          if (!layerId) return;
-          const semitones = padTune[layerId] || 0;
-          const choke = padChoke[layerId] || 0;
-          triggerLayerWithSemitone(layerId, semitones, velocity ?? 1, choke > 0 ? `choke:${choke}` : undefined);
-        }}
-        onPlayNote={(midi, velocity) => playMidiNote(midi, velocity ?? 1)}
-        onStopNote={(midi) => stopMidiNote(midi)}
-      />
-      {/* Phase 6.3 — Web MIDI input (maps MIDI notes → pads/melodic, with real velocity) */}
-      <MidiPanel
-        padSlots={programs[activeBank]}
         onTriggerPad={(index, velocity) => {
           const layerId = programs[activeBank][index];
           if (!layerId) return;
@@ -1003,28 +1098,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           });
         }}
         onApplyToPattern={(chords) => {
-          // Voice the progression and stamp each chord's root into the active
-          // pattern row as a melodic cell on the 16th grid (one cell per chord,
-          // spaced by its duration in 16th steps).
-          const rowId = activeRowRef.current;
-          if (!rowId) return;
-          const store = usePatternStore.getState();
-          const pid = store.activePatternId;
-          const p = store.patterns[pid];
-          const stepLength = p.stepLength;
-          const row = (p.layerRows[rowId] ?? Array.from({ length: stepLength }, () => ({ on: false }))).slice();
-          const pcOf = { C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5, 'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11 };
-          let step = 0;
-          for (const ch of chords) {
-            if (step >= stepLength) break;
-            const pc = pcOf[ch.root as keyof typeof pcOf] ?? 0;
-            const midi = 60 + pc; // C4-based
-            row[step] = { on: true, note: midi, velocity: 100, duration: Math.max(1, Math.round(ch.duration / 4) || 1) };
-            step += Math.max(1, Math.round(ch.duration / 4) || 1); // duration in 16ths
-          }
-          store.setRow(pid, rowId, row);
+          applyProgressionToPattern(chords);
         }}
       />
+
       {!isRecordingAudio && lastRecordedBuffer && (
         <div className="flex gap-2 mt-2 text-sm">
           <span className="text-white/70 self-center">Slice take:</span>
@@ -1051,102 +1128,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           </button>
         </div>
       )}
-      {/* Transport bar */}
-      <div className="bg-[#0f0f12] border border-[#1e293b] rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={togglePlay}
-            className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-              isPlaying
-                ? 'bg-red-500/20 border border-red-500/50 text-red-400'
-                : 'bg-emerald-500 hover:bg-emerald-400 text-black'
-            }`}
-          >
-            {isPlaying ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
-            {isPlaying ? 'Stop' : 'Play Pattern'}
-          </button>
-          <button
-            onClick={() => setIsRecording((r) => !r)}
-            className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 border ${
-              isRecording
-                ? 'bg-red-600 text-white border-red-400 shadow-[0_0_14px_rgba(239,68,68,0.5)]'
-                : 'bg-[#121215] border-[#1e293b] text-slate-300 hover:text-red-400'
-            }`}
-          >
-            <span className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-white animate-pulse' : 'bg-red-500'}`} />
-            {isRecording ? 'Recording' : 'Record'}
-          </button>
-          <button
-            onClick={clearPattern}
-            className="px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white transition-all"
-          >
-            Clear Pattern
-          </button>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => openImport('prgm')}
-              className="px-2.5 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-blue-400 hover:text-white transition-all flex items-center gap-1"
-              title="Load an MPC program (.prgm)"
-            >
-              <FolderOpen size={11} /> Load Pgm
-            </button>
-            <button
-              onClick={() => openImport('seq')}
-              className="px-2.5 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-blue-400 hover:text-white transition-all flex items-center gap-1"
-              title="Load an MPC sequence (.seq)"
-            >
-              <FolderOpen size={11} /> Load Seq
-            </button>
-            <button
-              onClick={exportProgram}
-              className="px-2.5 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-emerald-400 hover:text-white transition-all flex items-center gap-1"
-              title="Export MPC program (.prgm)"
-            >
-              <Save size={11} /> Save Pgm
-            </button>
-            <button
-              onClick={exportSequence}
-              className="px-2.5 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-emerald-400 hover:text-white transition-all flex items-center gap-1"
-              title="Export MPC sequence (.seq)"
-            >
-              <Save size={11} /> Save Seq
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".prgm,.seq,.json,application/json"
-              className="hidden"
-              onChange={handleImportFile}
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-widest">BPM</span>
-            <input
-              type="range"
-              min="60"
-              max="200"
-              value={bpm}
-              onChange={(e) => setBpm(parseInt(e.target.value))}
-              className="w-32 accent-blue-400 h-1.5 rounded-lg cursor-pointer"
-              aria-label="Tempo (BPM)"
-            />
-            <span className="text-sm font-mono font-black text-yellow-400 w-10">{bpm}</span>
-            <button
-              onClick={tapTempo}
-              className="px-2.5 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-blue-400 hover:text-white transition-all"
-              title="Tap to set tempo"
-            >
-              Tap
-            </button>
-          </div>
-          <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">
-            {trackCount} tracks · step {String(currentStep + 1).padStart(2, '0')}/16
-          </span>
-        </div>
-      </div>
+      {/* The second transport bar was merged into the sticky DAW transport above. */}
 
       {/* Step sequencer grid / piano roll */}
       <div className="bg-[#0f0f12] border border-[#1e293b] rounded-xl overflow-hidden">
@@ -1443,6 +1425,17 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           )}
         </div>
       </div>
+
+        </div>{/* /main pane */}
+
+        {/* ── CONTROLLER RAIL (right, sticky) ── */}
+        <aside
+          className="space-y-3 min-w-0 xl:sticky xl:top-[100px] xl:max-h-[calc(100vh-118px)] xl:overflow-y-auto custom-scrollbar xl:pr-1"
+          data-controller-rail
+        >
+          <RecourseComposerPanel onApplyProgression={applyProgressionToPattern} />
+        </aside>
+      </div>{/* /workspace grid */}
     </div>
   );
 }

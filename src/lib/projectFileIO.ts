@@ -25,6 +25,36 @@ import {
 
 const FILE_ACCEPT = '.nsl,application/json';
 
+/**
+ * Minimal structural types for the File System Access API (not in the default
+ * DOM lib). Typing the surface we use removes the previous `window as any`.
+ */
+interface FilePickerType {
+  description: string;
+  accept: Record<string, string[]>;
+}
+interface WritableFileStreamLike {
+  write(data: BlobPart): Promise<void>;
+  close(): Promise<void>;
+}
+interface FileHandleLike {
+  createWritable(): Promise<WritableFileStreamLike>;
+  getFile(): Promise<File>;
+}
+interface FileSystemAccessWindow {
+  showSaveFilePicker?: (options: { suggestedName?: string; types?: FilePickerType[] }) => Promise<FileHandleLike>;
+  showOpenFilePicker?: (options: { multiple?: boolean; types?: FilePickerType[] }) => Promise<FileHandleLike[]>;
+}
+
+const fileSystemAccess = (): FileSystemAccessWindow => window as unknown as FileSystemAccessWindow;
+
+const isAbortError = (err: unknown): boolean =>
+  typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError';
+
+const PROJECT_PICKER_TYPES: FilePickerType[] = [
+  { description: 'NC Sound Lab Project', accept: { 'application/json': ['.nsl'] } },
+];
+
 const sanitizeFilename = (raw: string): string => {
   const trimmed = raw.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/-+/g, '-');
   const withExt = trimmed.toLowerCase().endsWith(PROJECT_FILE_EXTENSION) ? trimmed : `${trimmed}${PROJECT_FILE_EXTENSION}`;
@@ -32,7 +62,7 @@ const sanitizeFilename = (raw: string): string => {
 };
 
 const isFileSystemAccessSupported = (): boolean => {
-  return typeof window !== 'undefined' && typeof (window as any).showSaveFilePicker === 'function';
+  return typeof window !== 'undefined' && typeof fileSystemAccess().showSaveFilePicker === 'function';
 };
 
 /**
@@ -46,25 +76,20 @@ export const exportProjectFile = async (doc: ProjectDocument, filename?: string)
   const blob = new Blob([json], { type: 'application/json' });
   const finalName = sanitizeFilename(filename ?? doc.title ?? 'project');
 
-  const w = window as any;
-  if (isFileSystemAccessSupported()) {
+  const w = fileSystemAccess();
+  if (isFileSystemAccessSupported() && w.showSaveFilePicker) {
     try {
       const handle = await w.showSaveFilePicker({
         suggestedName: finalName,
-        types: [
-          {
-            description: 'NC Sound Lab Project',
-            accept: { 'application/json': ['.nsl'] },
-          },
-        ],
+        types: PROJECT_PICKER_TYPES,
       });
       const writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();
       return;
-    } catch (err: any) {
+    } catch (err) {
       // User cancelled or API unavailable — fall through to legacy download.
-      if (err && err.name === 'AbortError') return;
+      if (isAbortError(err)) return;
     }
   }
 
@@ -82,7 +107,7 @@ export const exportProjectFile = async (doc: ProjectDocument, filename?: string)
 };
 
 const isOpenFilePickerSupported = (): boolean => {
-  return typeof window !== 'undefined' && typeof (window as any).showOpenFilePicker === 'function';
+  return typeof window !== 'undefined' && typeof fileSystemAccess().showOpenFilePicker === 'function';
 };
 
 /**
@@ -90,23 +115,18 @@ const isOpenFilePickerSupported = (): boolean => {
  * file cannot be parsed as a project document.
  */
 export const importProjectFile = async (): Promise<ProjectDocument> => {
-  const w = window as any;
-  if (isOpenFilePickerSupported()) {
+  const w = fileSystemAccess();
+  if (isOpenFilePickerSupported() && w.showOpenFilePicker) {
     try {
       const [handle] = await w.showOpenFilePicker({
         multiple: false,
-        types: [
-          {
-            description: 'NC Sound Lab Project',
-            accept: { 'application/json': ['.nsl'] },
-          },
-        ],
+        types: PROJECT_PICKER_TYPES,
       });
       const file = await handle.getFile();
       const text = await file.text();
       return parseProjectText(text);
-    } catch (err: any) {
-      if (err && err.name === 'AbortError') {
+    } catch (err) {
+      if (isAbortError(err)) {
         throw new Error('Project import cancelled.');
       }
       throw err;

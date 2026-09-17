@@ -18,8 +18,17 @@ import {
 import { DEMO_SESSION_MS } from '../lib/demoConfig';
 import { trackEvent } from '../lib/analytics';
 
+/**
+ * The demo gate is off for the desktop build and when a local dev server is
+ * started with `VITE_DISABLE_DEMO_GATE=1` (used for hardware/dev testing so the
+ * 20-minute timer can't interrupt a session). Production web builds are gated.
+ */
+function isGateDisabled(): boolean {
+  return isDesktopBuild() || import.meta.env.VITE_DISABLE_DEMO_GATE === '1';
+}
+
 function bootstrapDemo(): { status: DemoStatus; remaining: number } {
-  if (isDesktopBuild()) return { status: 'purchased', remaining: 0 };
+  if (isGateDisabled()) return { status: 'purchased', remaining: 0 };
   const res = resolveActiveSession();
   return {
     status: res.status,
@@ -41,7 +50,7 @@ interface DemoSessionValue {
 const DemoSessionContext = createContext<DemoSessionValue | null>(null);
 
 export function DemoSessionProvider({ children }: { children: React.ReactNode }) {
-  const enabled = useMemo(() => !isDesktopBuild(), []);
+  const enabled = useMemo(() => !isGateDisabled(), []);
   const [boot] = useState(bootstrapDemo);
   const [status, setStatus] = useState<DemoStatus>(boot.status);
   const [remaining, setRemaining] = useState<number>(boot.remaining);

@@ -431,11 +431,18 @@ describe('SampleBrowser', () => {
     expect(panel.className).not.toContain('ring-2 ring-blue-500/60');
   });
 
-  it('warns and recovers when the library refresh fails', async () => {
+  it('warns, surfaces an error banner, and recovers on retry when the library fails', async () => {
     libMock.fetchLibraryFolders.mockRejectedValue(new Error('db down'));
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     renderBrowser();
     await waitFor(() => expect(warnSpy).toHaveBeenCalledWith('Sample library refresh failed:', expect.anything()));
+    // The failure must be visible, not only in the console.
+    expect(await screen.findByText(/sample library could not load/i)).toBeTruthy();
+
+    libMock.fetchLibraryFolders.mockResolvedValue([]);
+    libMock.fetchLibrarySamples.mockResolvedValue([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText(/sample library could not load/i)).toBeNull());
     warnSpy.mockRestore();
   });
 

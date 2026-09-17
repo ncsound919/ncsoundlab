@@ -76,7 +76,7 @@ describe('App dashboard', () => {
     const next = screen.getByRole('button', { name: 'Next stage' });
     expect((prev as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(next);
-    expect(screen.getAllByText(/Synth Parameter Tweaker/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Beat Studio & Sequencer/i).length).toBeGreaterThan(0);
     fireEvent.click(prev);
     expect(screen.getAllByText(/Synth Layering & Samples/i).length).toBeGreaterThan(0);
   });
@@ -90,14 +90,14 @@ describe('App dashboard', () => {
   it('keeps the stage hash in sync as the user navigates', () => {
     renderDashboard();
     fireEvent.click(screen.getByRole('button', { name: 'Next stage' }));
-    expect(window.location.hash).toContain('#stage=tweaking');
+    expect(window.location.hash).toContain('#stage=produce');
   });
 
   it('ignores unknown stage ids in the hash and stays on the default stage', async () => {
     window.history.replaceState(null, '', '#stage=not-a-real-stage');
     renderDashboard();
     await waitFor(() => expect(screen.getAllByText(/Synth Layering & Samples/i).length).toBeGreaterThan(0), { timeout: 5000 });
-    expect(window.location.hash).toContain('#stage=soundlab');
+    expect(window.location.hash).toContain('#stage=design');
   });
 
   it('collapses and expands the sidebar', () => {
@@ -163,14 +163,14 @@ describe('App dashboard', () => {
 
   it('plays and stops the layer stack from the mixer stage', async () => {
     renderDashboard();
-    fireEvent.click(screen.getByTitle(/Studio Console Mixer/));
+    fireEvent.click(screen.getAllByTitle(/Mix, Space & Compare/)[0]);
     const play = await screen.findByRole('button', { name: /▶ Play Layer Stack/i }, { timeout: 5000 });
     fireEvent.click(play);
   });
 
   it('toggles the loop setting from the mixer stage', async () => {
     renderDashboard();
-    fireEvent.click(screen.getByTitle(/Studio Console Mixer/));
+    fireEvent.click(screen.getAllByTitle(/Mix, Space & Compare/)[0]);
     const loop = await screen.findByRole('button', { name: /🔁 Loop: OFF/i }, { timeout: 5000 });
     fireEvent.click(loop);
     expect(screen.getByRole('button', { name: /🔁 Loop: ON/i })).toBeDefined();
@@ -185,18 +185,14 @@ describe('App dashboard', () => {
   it('walks through every production stage without crashing', async () => {
     renderDashboard();
     const stages = [
-      'Synth Layering & Samples',
-      'Synth Parameter Tweaker',
+      'Sound Design',
       'Beat Studio & Sequencer',
-      'Studio Console Mixer',
-      'Spatial 3D & Reverb',
+      'Mix, Space & Compare',
       'Sound Evolution Engine',
-      'Compare Engine',
-      'Sound Kit Creator',
-      'Production Catalog',
+      'Sound Kits',
     ];
     for (const name of stages) {
-      fireEvent.click(screen.getByTitle(new RegExp(name)));
+      fireEvent.click(screen.getAllByTitle(new RegExp(name))[0]);
       await waitFor(() => expect(screen.getAllByText(new RegExp(name)).length).toBeGreaterThan(0));
     }
   });

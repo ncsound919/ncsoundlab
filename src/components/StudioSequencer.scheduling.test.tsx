@@ -103,6 +103,7 @@ vi.mock('../lib/db', () => {
     fetchUserFavorites: vi.fn(async () => []),
     toggleFavorite: vi.fn(async () => undefined),
     saveSoundKit: vi.fn(async () => 'k'),
+    fetchFolderLinks: vi.fn(async () => []),
   };
 });
 
@@ -152,9 +153,9 @@ describe('StudioSequencer sample-accurate scheduling', () => {
     usePatternStore.getState().reset();
   });
 
-  it('mounts and exposes the pattern play control', () => {
+  it('mounts and exposes the transport play control', () => {
     renderSequencer();
-    expect(screen.getByRole('button', { name: /Play Pattern/i })).toBeDefined();
+    expect(screen.getAllByLabelText('Play')[0]).toBeDefined();
   });
 
   it('registers a Tone.Sequence when Tone mode is active', async () => {
@@ -196,7 +197,7 @@ describe('StudioSequencer sample-accurate scheduling', () => {
     renderSequencer();
     // Disable Tone Transport → the interval path drives tick().
     fireEvent.click(screen.getByLabelText('Tone Transport'));
-    fireEvent.click(screen.getByRole('button', { name: /Play Pattern/i }));
+    fireEvent.click(screen.getAllByLabelText('Play')[0]);
     await act(async () => {
       vi.advanceTimersByTime(2000); // let several ticks fire
     });

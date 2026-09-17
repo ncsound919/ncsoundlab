@@ -28,5 +28,9 @@ export default defineConfig({
     url: `http://localhost:${E2E_PORT}`,
     reuseExistingServer: false,
     timeout: 120 * 1000,
+    // A local `.env.development.local` may set VITE_DISABLE_DEMO_GATE=1 for
+    // manual dev, which would hide the welcome/paywall dialogs and break
+    // app.spec. Process env wins over .env files in Vite, so force it off here.
+    env: { VITE_DISABLE_DEMO_GATE: '0' },
   },
 });

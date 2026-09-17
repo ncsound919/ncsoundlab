@@ -66,6 +66,54 @@ vi.mock('../audio/AudioEngine', () => ({
   audioEngine: createAudioEngineMock()
 }));
 
+// jsdom does not implement ResizeObserver / IntersectionObserver; several
+// canvases and editors use them.
+if (typeof ResizeObserver === 'undefined') {
+  class MockResizeObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  vi.stubGlobal('ResizeObserver', MockResizeObserver);
+}
+if (typeof IntersectionObserver === 'undefined') {
+  class MockIntersectionObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): [] { return []; }
+    root = null;
+    rootMargin = '';
+    thresholds = [];
+  }
+  vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+}
+
+// jsdom has no canvas implementation. Provide a no-op 2D context so components
+// that draw (cover art, waveform overlays, spectrograms) can mount in tests.
+const canvasContextStub = () => ({
+  canvas: { width: 300, height: 150 },
+  clearRect: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
+  beginPath: vi.fn(), closePath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(),
+  arc: vi.fn(), fill: vi.fn(), stroke: vi.fn(), save: vi.fn(), restore: vi.fn(),
+  translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(), setTransform: vi.fn(),
+  drawImage: vi.fn(), fillText: vi.fn(), strokeText: vi.fn(),
+  createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+  createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+  createPattern: vi.fn(() => ({})),
+  getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4) })),
+  putImageData: vi.fn(),
+  measureText: vi.fn(() => ({ width: 0 })),
+  shadowColor: '#000', shadowBlur: 0, fillStyle: '#000', strokeStyle: '#000',
+  lineWidth: 1, globalAlpha: 1, font: '10px sans-serif', textAlign: 'left', textBaseline: 'alphabetic',
+});
+// Some suites run under the `node` environment (no DOM); only patch when a
+// canvas implementation exists.
+if (typeof HTMLCanvasElement !== 'undefined') {
+  HTMLCanvasElement.prototype.getContext = vi.fn(() => canvasContextStub()) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.toDataURL = vi.fn(() => 'data:image/png;base64,');
+}
+
 // Mock OfflineAudioContext
 class MockOfflineAudioContext {
   sampleRate = 44100;

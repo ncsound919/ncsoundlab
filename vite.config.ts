@@ -25,11 +25,21 @@ export default defineConfig(() => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            'react-vendor': ['react', 'react-dom'],
-            'motion': ['motion', 'framer-motion'],
-            'lucide': ['lucide-react']
-          }
+          // Keep the entry chunk small by separating vendor libraries into
+          // long-lived, cacheable groups. Function form so subpath imports
+          // (e.g. react/jsx-runtime) are grouped with their package. Heavy
+          // feature panels are already lazy-loaded on top of this.
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) return undefined;
+            if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'react-vendor';
+            if (/[\\/]node_modules[\\/](motion|framer-motion)[\\/]/.test(id)) return 'motion';
+            if (/[\\/]node_modules[\\/]lucide-react[\\/]/.test(id)) return 'lucide';
+            if (/[\\/]node_modules[\\/]tone[\\/]/.test(id)) return 'audio-engine';
+            if (/[\\/]node_modules[\\/]tonal[\\/]/.test(id)) return 'music-theory';
+            if (/[\\/]node_modules[\\/](dexie|jszip)[\\/]/.test(id)) return 'persistence';
+            if (/[\\/]node_modules[\\/](meyda|wavesurfer\.js)[\\/]/.test(id)) return 'analysis';
+            return 'vendor';
+          },
         }
       }
     }

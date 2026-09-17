@@ -16,6 +16,15 @@ import { useMasterDynamicsStore } from '../store/masterDynamicsStore';
 // inside methods at runtime — never at module-evaluation time.
 import { audioEngine as sharedAudioEngine } from '../audio/AudioEngine';
 
+/** Shape of a single band inside a rack EQ module's serialized settings. */
+interface EqBandShape {
+  enabled?: boolean;
+  type?: string;
+  freq?: number;
+  q?: number;
+  gain?: number;
+}
+
 // Module-level caches for the static WaveShaper transfer curves. These are
 // pure functions of their args, and each build allocates a 44100-float array
 // (~172KB). On a fast pad run that's megabytes of GC churn per trigger. Keys
@@ -106,7 +115,10 @@ export class AudioEngine {
     // sequencer/beatmaker — long sessions, many scheduled events — so we
     // favor stable playback. Real-time pad hits remain responsive via the
     // audio-clock scheduling elsewhere.
-    this.context = new (window.AudioContext || (window as any).webkitAudioContext)({
+    const AudioContextCtor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    this.context = new AudioContextCtor({
       latencyHint: 'playback',
     });
     this.masterGain = this.context.createGain();
@@ -576,7 +588,7 @@ export class AudioEngine {
       switch (mod.type) {
         case 'eq': {
           let cursor: AudioNode = entry;
-          const bands = Array.isArray(s.bands) ? (s.bands as any[]) : [];
+          const bands: EqBandShape[] = Array.isArray(s.bands) ? s.bands : [];
           for (const b of bands) {
             if (!b || b.enabled === false) continue;
             const f = ctx.createBiquadFilter();

@@ -12,6 +12,7 @@ import {
   ZDFLadderFilter,
   PinkNoiseState,
   getVoiceAgeParameters,
+  WarmthEngineDSP,
 } from './AnalogEngineDSP';
 
 const WAVEFORMS = ['sawtooth', 'square', 'triangle', 'sine', 'pink_noise'];
@@ -136,5 +137,34 @@ describe('getVoiceAgeParameters', () => {
 
   it('throws on an unknown age (exhaustiveness guard)', () => {
     expect(() => getVoiceAgeParameters('made-up' as never)).toThrow();
+  });
+});
+
+describe('WarmthEngineDSP', () => {
+  it('is a pass-through at zero warmth', () => {
+    const w = new WarmthEngineDSP();
+    expect(w.processSample(0.42, 0)).toBe(0.42);
+    expect(w.processSample(-0.7, 0)).toBe(-0.7);
+  });
+
+  it('colours the signal at full warmth without producing non-finite output', () => {
+    const w = new WarmthEngineDSP();
+    const out: number[] = [];
+    for (let i = 0; i < 500; i++) {
+      const s = w.processSample(Math.sin((2 * Math.PI * 220 * i) / 44100) * 0.8, 1);
+      expect(Number.isFinite(s)).toBe(true);
+      out.push(s);
+    }
+    // Saturated output must differ from the raw sine.
+    const raw = Math.sin((2 * Math.PI * 220 * 200) / 44100) * 0.8;
+    expect(out[200]).not.toBe(raw);
+  });
+
+  it('clamps warmth and recovers after reset()', () => {
+    const w = new WarmthEngineDSP();
+    for (let i = 0; i < 200; i++) w.processSample(0.5, 5); // >1 clamps to 1
+    w.reset();
+    const s = w.processSample(0.25, 1);
+    expect(Number.isFinite(s)).toBe(true);
   });
 });

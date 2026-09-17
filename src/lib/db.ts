@@ -65,6 +65,22 @@ export interface StoredSampleLibraryFolder {
   createdAt: string;
 }
 
+/**
+ * A linked on-disk folder (File System Access API). The directory handle is
+ * structured-cloneable, so it lives in IndexedDB and survives reloads; the app
+ * asks for permission again on re-scan.
+ */
+export interface StoredFolderLink {
+  id: string;
+  name: string;
+  rootFolderId: string;
+  handle: unknown;
+  folderCount: number;
+  sampleCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** SoundKit without non-serializable sample buffers. */
 export type StoredSoundKit = Omit<SoundKit, 'samples'> & {
   ownerId: string;
@@ -99,6 +115,7 @@ class SoundLabDB extends Dexie {
    */
   sampleLibraryFolders!: Table<StoredSampleLibraryFolder, string>;
   sampleLibrarySamples!: Table<StoredSampleLibrarySample, string>;
+  folderLinks!: Table<StoredFolderLink, string>;
 
   constructor() {
     super('soundlab-db');
@@ -119,6 +136,11 @@ class SoundLabDB extends Dexie {
     this.version(3).stores({
       sampleLibraryFolders: 'id, parentId, createdAt',
       sampleLibrarySamples: 'id, folderId, category, updatedAt, createdAt',
+    });
+    // Linked on-disk folders (e.g. E:\drums) — mirror the directory tree into
+    // library folders and remember the handle so the bank can be re-scanned.
+    this.version(4).stores({
+      folderLinks: 'id, name, createdAt',
     });
   }
 }
@@ -297,5 +319,40 @@ export const deleteProjectDocument = async (id: string): Promise<void> => {
     await db.projectDocuments.delete(id);
   } catch (err) {
     console.warn('Local project document delete notice (offline/unsupported):', err);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Linked on-disk folders (File System Access API)
+// ---------------------------------------------------------------------------
+
+export const saveFolderLink = async (
+  link: Omit<StoredFolderLink, 'createdAt' | 'updatedAt'> & { createdAt?: string }
+): Promise<string> => {
+  const now = new Date().toISOString();
+  const row: StoredFolderLink = { ...link, createdAt: link.createdAt ?? now, updatedAt: now };
+  try {
+    await db.folderLinks.put(row);
+  } catch (err) {
+    console.warn('Folder link save notice (offline/unsupported):', err);
+  }
+  return row.id;
+};
+
+export const fetchFolderLinks = async (): Promise<StoredFolderLink[]> => {
+  try {
+    const rows = await db.folderLinks.toArray();
+    return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  } catch (err) {
+    console.warn('Folder link load notice (offline/unsupported):', err);
+    return [];
+  }
+};
+
+export const deleteFolderLink = async (id: string): Promise<void> => {
+  try {
+    await db.folderLinks.delete(id);
+  } catch (err) {
+    console.warn('Folder link delete notice (offline/unsupported):', err);
   }
 };

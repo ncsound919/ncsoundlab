@@ -24,6 +24,14 @@ import { EvolutionVariation, SoundLayer } from '../types';
 import { RatingSessionView } from './RatingSessionView';
 import { audioEngine } from '../lib/audioEngine';
 import { generateEvolutionVariations, FXEvolutionOption } from '../lib/evolutionEngine';
+import { useEvolutionStore, type EvolutionBridge } from '../store/evolutionStore';
+import {
+  fetchRecoursePiece,
+  renderRecoursePiece,
+  recoursePieceUrl,
+  DEFAULT_RECOURSE_BASE,
+  RECOURSE_STYLES,
+} from '../lib/recourseEvolution';
 
 interface EvolutionPanelProps {
   variations: EvolutionVariation[];
@@ -61,6 +69,13 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
   const [fxOption, setFxOption] = useState<FXEvolutionOption>('mutate');
   const [showRating, setShowRating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Recourse source (pull a composed piece → bounce → evolve).
+  const [recourseStyle, setRecourseStyle] = useState<string>(RECOURSE_STYLES[0]);
+  const [recourseSeed, setRecourseSeed] = useState(1);
+  const [recourseBase, setRecourseBase] = useState(DEFAULT_RECOURSE_BASE);
+  const [isPullingRecourse, setIsPullingRecourse] = useState(false);
+  const [recourseError, setRecourseError] = useState<string | null>(null);
 
   const handleAddFiles = async (files: File[]) => {
     const audioCtx = audioEngine.getContext();
@@ -180,6 +195,38 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
     }
   };
 
+  /**
+   * Pull a piece from the Recourse composer, bounce it to one audio buffer, and
+   * either queue it for batch evolution or evolve it immediately.
+   */
+  const pullRecourse = async (evolve: boolean) => {
+    setIsPullingRecourse(true);
+    setRecourseError(null);
+    try {
+      const url = recoursePieceUrl(recourseBase, recourseStyle, recourseSeed);
+      const piece = await fetchRecoursePiece(url);
+      const buffer = await renderRecoursePiece(piece);
+      const label = `${piece.title || piece.style} (Recourse)`;
+
+      if (evolve) {
+        const ctx = audioEngine.getContext();
+        if (!ctx) throw new Error('AudioContext unavailable');
+        const generated = await generateEvolutionVariations(ctx, buffer, 6, 0.6, evolutionMode, fxOption);
+        const prefixed = generated.map((v, idx) => ({ ...v, name: `${label} // MT-${idx + 1}` }));
+        if (onSetVariations) onSetVariations([...prefixed, ...variations]);
+      } else {
+        setUploadedBatch((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), name: label.toUpperCase(), buffer, isEvolving: false },
+        ]);
+      }
+    } catch (err) {
+      setRecourseError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (isMountedRef.current) setIsPullingRecourse(false);
+    }
+  };
+
   const removeRawRecording = (id: string) => {
     setUploadedBatch(prev => prev.filter(item => item.id !== id));
   };
@@ -244,6 +291,44 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
       setPlayingId((prev) => (prev === variation.id ? null : prev));
     }, durationMs + 200);
   };
+
+  // Phase 8 — publish the panel's controls to the MIDI controller. The
+  // controller's `section:evolution:*` actions drive generation settings,
+  // preview, add/save/discard through this bridge while the stage is mounted.
+  const setBridge = useEvolutionStore((s) => s.setBridge);
+  const clearBridge = useEvolutionStore((s) => s.clearBridge);
+  useEffect(() => {
+    const bridge: EvolutionBridge = {
+      setMode: (mode) => setEvolutionMode(mode),
+      setFx: (fx) => setFxOption(fx),
+      reEvolve: () => onReEvolve(evolutionMode, fxOption),
+      playVariation: (index) => {
+        const v = variations[index];
+        if (v) handlePreview(v);
+      },
+      stopPlayback: () => {
+        audioEngine.stop();
+        setPlayingId(null);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      },
+      addVariation: (index) => {
+        const v = variations[index];
+        if (v) onAddLayer(v);
+      },
+      saveVariationToKit: (index) => {
+        const v = variations[index];
+        if (v) onSaveToKit(v);
+      },
+      discardVariation: (index) => {
+        const v = variations[index];
+        if (v) onDiscard?.(v.id);
+      },
+      variationCount: () => variations.length,
+    };
+    setBridge(bridge);
+    return () => clearBridge();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variations, evolutionMode, fxOption, playingId, onReEvolve, onAddLayer, onSaveToKit, onDiscard]);
 
   return (
     <div className="space-y-8">
@@ -335,6 +420,74 @@ export const EvolutionPanel: React.FC<EvolutionPanelProps> = ({
             </button>
           )}
         </div>
+      </div>
+
+      {/* Recourse → Evolution: pull a composed piece and evolve it */}
+      <div className="bg-[#0b0b0d] border border-[#1e293b] rounded-2xl p-5 space-y-3 shadow-xl" data-recourse-source>
+        <div className="flex items-center gap-2">
+          <span className="p-1 bg-fuchsia-500/10 border border-fuchsia-500/30 text-fuchsia-400 rounded-lg text-xs font-bold font-mono">
+            RC
+          </span>
+          <div>
+            <div className="text-xs font-black text-white uppercase tracking-wider">Recourse Source</div>
+            <p className="text-[10px] text-gray-500">
+              Pull a composed piece from the Recourse composer, bounce it to audio, and feed it into the evolution engine.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3 text-[10px] text-gray-400">
+          <label className="flex flex-col gap-1">
+            Style
+            <input
+              list="recourse-styles"
+              value={recourseStyle}
+              onChange={(e) => setRecourseStyle(e.target.value)}
+              aria-label="Recourse style"
+              className="bg-[#070709] border border-[#1e293b] rounded px-2 py-1 text-white w-40"
+            />
+          </label>
+          <datalist id="recourse-styles">
+            {RECOURSE_STYLES.map((s) => <option key={s} value={s} />)}
+          </datalist>
+          <label className="flex flex-col gap-1">
+            Seed
+            <input
+              type="number"
+              value={recourseSeed}
+              onChange={(e) => setRecourseSeed(parseInt(e.target.value) || 0)}
+              aria-label="Recourse seed"
+              className="bg-[#070709] border border-[#1e293b] rounded px-2 py-1 text-white w-20"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            Recourse URL
+            <input
+              value={recourseBase}
+              onChange={(e) => setRecourseBase(e.target.value)}
+              aria-label="Recourse base URL"
+              className="bg-[#070709] border border-[#1e293b] rounded px-2 py-1 text-white w-52"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => pullRecourse(false)}
+            disabled={isPullingRecourse}
+            className="px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-cyan-300 hover:text-white disabled:opacity-50"
+          >
+            Add to Batch
+          </button>
+          <button
+            type="button"
+            onClick={() => pullRecourse(true)}
+            disabled={isPullingRecourse}
+            className="px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider bg-fuchsia-500/20 border border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/30 disabled:opacity-50 flex items-center gap-2"
+          >
+            {isPullingRecourse ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+            {isPullingRecourse ? 'Pulling…' : 'Pull & Evolve'}
+          </button>
+        </div>
+        {recourseError && <p className="text-[10px] text-rose-400 font-mono">{recourseError}</p>}
       </div>
 
       {/* Cyberpunk Batch Ingest Dropzone & Stage Panel */}

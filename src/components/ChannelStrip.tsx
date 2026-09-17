@@ -15,6 +15,7 @@ import React from 'react';
 import { SoundLayer } from '../types';
 import { Fader } from './Fader';
 import { Knob } from './Knob';
+import { layerColorFor } from '../lib/layerColors';
 import {
   ArrowRight,
   Scissors,
@@ -57,6 +58,7 @@ export const ChannelStrip: React.FC<ChannelStripProps> = ({
   bypassed,
 }) => {
   const displayNum = (index + 1).toString().padStart(2, '0');
+  const color = layerColorFor(layer, index);
 
   return (
     <div
@@ -68,13 +70,16 @@ export const ChannelStrip: React.FC<ChannelStripProps> = ({
       } ${!layer.enabled ? 'opacity-40 hover:opacity-75' : ''}`}
       data-channel-strip
       data-layer-id={layer.id}
+      data-layer-color={color}
       data-bypassed={bypassed ? 'true' : undefined}
     >
+      {/* Identity colour cap */}
+      <span className="absolute top-0 left-1 right-1 h-1 rounded-b-full" style={{ backgroundColor: color }} aria-hidden="true" />
       {/* Channel Strip Top Details */}
       <div className="space-y-2 mb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
-            <span className="text-[10px] font-mono font-black text-yellow-400">CH {displayNum}</span>
+            <span className="text-[10px] font-mono font-black" style={{ color }}>CH {displayNum}</span>
             <button
               onClick={(e) => { e.stopPropagation(); onReorderLayer?.(layer.id, 'up'); }}
               disabled={index === 0}

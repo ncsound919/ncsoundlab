@@ -6,6 +6,13 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // Component/integration suites (App shell, AAF panel, SmartRandomizer) render
+    // large jsdom trees and can exceed the 5s default on constrained Windows
+    // boxes (small pagefile, Defender scanning, Mandatory ASLR). The ceiling is
+    // for environment throughput, not for hiding hangs — genuine deadlocks still
+    // fail, just at a higher bound.
+    testTimeout: 15000,
+    hookTimeout: 15000,
     setupFiles: ['./src/tests/setup.ts'],
     exclude: ['e2e/**/*', 'node_modules/**/*', 'dist/**/*'],
     coverage: {

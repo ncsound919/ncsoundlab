@@ -46,10 +46,12 @@ import {
   FXSettings
 } from './types';
 import { audioEngine } from './lib/audioEngine';
+import { ControllerHost } from './components/controller/ControllerHost';
+import { useControllerStore } from './store/controllerStore';
 import { synthLayerFor, patternFor, isRecoursePiece } from './lib/recourseBridge';
 import { audioEngine as sharedAudioEngine } from './audio/AudioEngine';
 import { audioBufferToWav } from './lib/audioUtils';
-const WaveformEditor = lazy(() => import('./components/WaveformEditor').then(m => ({ default: m.WaveformEditor })));
+const SamplerUnit = lazy(() => import('./components/sampler/SamplerUnit').then(m => ({ default: m.SamplerUnit })));
 import { Knob } from './components/Knob';
 
 // Lazy loaded heavy components
@@ -71,7 +73,6 @@ const FXChainPresetsPanel = lazy(() => import('./components/FXChainPresetsPanel'
 const LayerEditor = lazy(() => import('./components/LayerEditor').then(m => ({ default: m.LayerEditor })));
 const LayerPresetBrowser = lazy(() => import('./components/LayerPresetBrowser').then(m => ({ default: m.LayerPresetBrowser })));
 
-const SystemCohesionDeck = lazy(() => import('./components/SystemCohesionDeck').then(m => ({ default: m.SystemCohesionDeck })));
 const AafExportPanel = lazy(() => import('./components/AafExportPanel').then(m => ({ default: m.AafExportPanel })));
 // Advanced Waveform Editing and Procedural Chaos Synthesis imports
 import { 
@@ -105,160 +106,61 @@ import {
   clearAutosave,
 } from './lib/autosave';
 import { deserializeProject } from './lib/projectFormat';
+import {
+  useAudioTelemetry,
+  formatLatency,
+  formatSampleRate,
+  describeContextState,
+} from './lib/audioTelemetry';
+import { nextLayerColor } from './lib/layerColors';
+import { LayerRow } from './components/LayerRow';
+import { useLayerLevels } from './audio/useLayerLevels';
+import { CommandPalette } from './components/CommandPalette';
+import { HeaderTransport } from './components/HeaderTransport';
+import { buildCommands } from './lib/appCommands';
 
-type TabType = 'soundlab' | 'tweaking' | 'mixer' | 'spatial' | 'evolution' | 'compare' | 'kitcreator' | 'catalog' | 'produce';
 import { EvolutionVariation } from './types';
-
-interface WorkflowStage {
-  id: TabType;
-  stageNumber: string;
-  name: string;
-  shortName: string;
-  subtitle: string;
-  description: string;
-  icon: React.ElementType;
-  accentClass: string;
-  badgeClass: string;
-  borderActive: string;
-}
-
-const WORKFLOW_STAGES: WorkflowStage[] = [
-  {
-    id: 'soundlab',
-    stageNumber: '01',
-    name: 'Synth Layering & Samples',
-    shortName: '01 Layering',
-    subtitle: 'Layer & Preset Workspace',
-    description: 'Manage sound layers, apply presets, and upload/edit audio sample files.',
-    icon: Layers,
-    accentClass: 'text-blue-400',
-    badgeClass: 'bg-blue-600/20 text-blue-300 border-blue-500/40 shadow-[0_0_10px_rgba(37,99,235,0.3)]',
-    borderActive: 'border-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.45)]',
-  },
-  {
-    id: 'tweaking',
-    stageNumber: '02',
-    name: 'Synth Parameter Tweaker',
-    shortName: '02 Tweaking',
-    subtitle: 'Presets, LFO, Osc, Filter, FX',
-    description: 'Tweak synthesis, envelope generators, layer presets, and effects parameters for the active layer.',
-    icon: Sliders,
-    accentClass: 'text-teal-400',
-    badgeClass: 'bg-teal-600/20 text-teal-300 border-teal-500/40 shadow-[0_0_10px_rgba(20,184,166,0.3)]',
-    borderActive: 'border-teal-400 shadow-[0_0_20px_rgba(20,184,166,0.45)]',
-  },
-  {
-    id: 'produce',
-    stageNumber: '03',
-    name: 'Beat Studio & Sequencer',
-    shortName: '03 Beat Studio',
-    subtitle: 'MPC Pads · Step Sequencer · Piano',
-    description: 'Build beats on MPC pads, program 16-step patterns per layer, and play the piano.',
-    icon: Drum,
-    accentClass: 'text-rose-400',
-    badgeClass: 'bg-rose-600/20 text-rose-300 border-rose-500/40 shadow-[0_0_10px_rgba(244,63,94,0.3)]',
-    borderActive: 'border-rose-400 shadow-[0_0_20px_rgba(244,63,94,0.45)]',
-  },
-  {
-    id: 'mixer',
-    stageNumber: '04',
-    name: 'Studio Console Mixer',
-    shortName: '04 Mixer Console',
-    subtitle: 'Faders & Master Dynamics Rack',
-    description: 'Full-screen multi-channel fader console, channel strip EQ, and master processing rack.',
-    icon: Volume2,
-    accentClass: 'text-indigo-400',
-    badgeClass: 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40 shadow-[0_0_10px_rgba(99,102,241,0.3)]',
-    borderActive: 'border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.45)]',
-  },
-  {
-    id: 'spatial',
-    stageNumber: '05',
-    name: 'Spatial 3D & Reverb',
-    shortName: '05 Spatial Space',
-    subtitle: '3D Positioning & Reverb',
-    description: 'Full-screen 3D spatial pan coordinates room, binaural sound stage, and spatial reverb parameters.',
-    icon: Move3d,
-    accentClass: 'text-amber-400',
-    badgeClass: 'bg-amber-600/20 text-amber-300 border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.3)]',
-    borderActive: 'border-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.45)]',
-  },
-  {
-    id: 'evolution',
-    stageNumber: '06',
-    name: 'Sound Evolution Engine',
-    shortName: '06 Evolution',
-    subtitle: 'Mutant Variation Lab',
-    description: 'Take a sound and mutate it through multiple states to generate 10–50 unique variations.',
-    icon: Sparkles,
-    accentClass: 'text-fuchsia-300',
-    badgeClass: 'bg-fuchsia-600/20 text-fuchsia-300 border-fuchsia-500/40 shadow-[0_0_10px_rgba(232,121,249,0.3)]',
-    borderActive: 'border-fuchsia-400 shadow-[0_0_20px_rgba(232,121,249,0.45)]',
-  },
-  {
-    id: 'compare',
-    stageNumber: '07',
-    name: 'Compare Engine',
-    shortName: '07 Compare',
-    subtitle: 'Dry vs Wet Level Matching',
-    description: 'Compare Dry and Wet waveforms with zero‑latency volume matching and precise differential analysis.',
-    icon: Activity,
-    accentClass: 'text-orange-400',
-    badgeClass: 'bg-orange-600/20 text-orange-300 border-orange-500/40 shadow-[0_0_10px_rgba(249,115,22,0.3)]',
-    borderActive: 'border-orange-400 shadow-[0_0_20px_rgba(249,115,22,0.45)]',
-  },
-  {
-    id: 'kitcreator',
-    stageNumber: '08',
-    name: 'Sound Kit Creator',
-    subtitle: 'Sample Pack & Artwork',
-    shortName: '08 Creator',
-    description: 'Bundle synthesized one-shots into distribution kits with AI artwork',
-    icon: Package,
-    accentClass: 'text-yellow-400',
-    badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40 shadow-[0_0_10px_rgba(250,204,21,0.3)]',
-    borderActive: 'border-yellow-400 shadow-[0_0_20px_rgba(250,204,21,0.45)]',
-  },
-  {
-    id: 'catalog',
-    stageNumber: '09',
-    name: 'Production Catalog',
-    shortName: '09 Catalog',
-    subtitle: 'Publish & Cloud Distro',
-    description: 'Publish sound kits to your local catalog or audition catalog packs',
-    icon: ShoppingBag,
-    accentClass: 'text-purple-300',
-    badgeClass: 'bg-purple-600/20 text-purple-300 border-purple-500/40 shadow-[0_0_10px_rgba(192,132,252,0.3)]',
-    borderActive: 'border-purple-400 shadow-[0_0_20px_rgba(192,132,252,0.45)]',
-  },
-];
+import {
+  WORKFLOW_STAGES,
+  TAB_LABELS,
+  stageForTab,
+  resolveHashTarget,
+  type TabType,
+} from './lib/workflowStages';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('soundlab');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
-  // Deep-linkable stages: ?stage=<id> on load, and the hash stays in sync
-  // with navigation so users can bookmark/share a specific workflow stage
-  // and use browser back/forward.
-  const STAGE_IDS = useMemo(() => new Set<string>(WORKFLOW_STAGES.map((s) => s.id)), []);
-
+  // Deep-linkable screens: #stage=<id> accepts both condensed stage ids and
+  // the legacy per-tab ids, and stays in sync with navigation so users can
+  // bookmark/share a screen and use browser back/forward.
   useEffect(() => {
     const stageFromHash = () => {
-      const match = window.location.hash.match(/^#stage=([a-z]+)/);
-      if (match && STAGE_IDS.has(match[1])) setActiveTab(match[1] as TabType);
+      const match = window.location.hash.match(/^#stage=([a-z-]+)/);
+      if (!match) return;
+      const target = resolveHashTarget(match[1]);
+      if (target) setActiveTab(target.tab);
     };
     stageFromHash();
     window.addEventListener('hashchange', stageFromHash);
     return () => window.removeEventListener('hashchange', stageFromHash);
-  }, [STAGE_IDS]);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const nextHash = `#stage=${activeTab}`;
+    const nextHash = `#stage=${stageForTab(activeTab).id}`;
     if (window.location.hash !== nextHash) {
       window.history.replaceState(null, '', nextHash);
     }
   }, [activeTab]);
+
+  // The MPD follows the visible screen: bank-0 pads/knobs/faders are
+  // re-targeted by the section map; see lib/controller/sectionMap.ts.
+  const setControllerSection = useControllerStore((s) => s.setSection);
+  useEffect(() => {
+    setControllerSection(activeTab);
+  }, [activeTab, setControllerSection]);
 
   const [layers, setLayersInternal] = useState<SoundLayer[]>([]);
   const [masterLevel, setMasterLevel] = useState(0.8);
@@ -371,6 +273,7 @@ export default function App() {
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const [isUserManualOpen, setIsUserManualOpen] = useState(false);
   const [isProjectManagerOpen, setIsProjectManagerOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [hasAutoSave, setHasAutoSave] = useState(false);
 
   const [snapshotA, setSnapshotA] = useState<SoundLayer[] | null>(() => {
@@ -421,6 +324,7 @@ export default function App() {
       id: crypto.randomUUID(),
       name: `${layerToDup.name} (Copy)`,
       audioBuffer: layerToDup.audioBuffer,
+      color: nextLayerColor(layers.length),
     };
     setLayers((prev) => [...prev, duplicated]);
     setSelectedLayerId(duplicated.id);
@@ -557,8 +461,15 @@ export default function App() {
   const [evolutionVariations, setEvolutionVariations] = useState<EvolutionVariation[]>([]);
   const [isEvolving, setIsEvolving] = useState(false);
 
-  const currentStageIndex = WORKFLOW_STAGES.findIndex(s => s.id === activeTab);
-  const currentStage = WORKFLOW_STAGES[currentStageIndex] || WORKFLOW_STAGES[0];
+  const currentStage = stageForTab(activeTab);
+  const currentStageIndex = WORKFLOW_STAGES.indexOf(currentStage);
+
+  // Live engine telemetry for the status bar (replaces the old fake readout).
+  const audioTelemetry = useAudioTelemetry();
+  // Per-layer peak levels for the Sound Design rows (one shared rAF loop).
+  const layerLevels = useLayerLevels(layers.map((l) => l.id), isPlaying);
+  // Current key/scale for the header transport readout.
+  const chordSettings = useControllerStore((s) => s.chord);
 
   // Sync published kits from local IndexedDB on startup
   useEffect(() => {
@@ -801,16 +712,45 @@ export default function App() {
     audioEngine.setMasterLevel(masterLevel);
   }, [masterLevel]);
 
+  // Clear the workspace into a fresh empty session (Ctrl/Cmd+N, command palette).
+  const startNewSession = () => {
+    layers.forEach((l) => {
+      try {
+        sharedAudioEngine.disposeModule(l.id);
+      } catch {
+        // module may already be gone — ignore
+      }
+    });
+    setLayers([]);
+    setSelectedLayerId(null);
+    patternStore.reset();
+    useSequencerStore.setState({
+      programs: {
+        A: Array(16).fill(null), B: Array(16).fill(null), C: Array(16).fill(null), D: Array(16).fill(null),
+      },
+    });
+    addToast('New Session', 'info');
+  };
+
   // Global Interactive Keyboard Shortcuts
   useEffect(() => {
-    const isAnyModalOpen = isShortcutsOpen || isUserManualOpen || isProjectManagerOpen || isAddToKitOpen || !!chopBuffer;
+    const otherModalOpen = isShortcutsOpen || isUserManualOpen || isProjectManagerOpen || isAddToKitOpen || !!chopBuffer;
+    const isAnyModalOpen = otherModalOpen || isCommandPaletteOpen;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const tag = document.activeElement?.tagName;
       const inField = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON' || !!document.activeElement?.hasAttribute('contenteditable');
 
+      // Command palette: Ctrl/Cmd+K toggles it (unless another modal is open).
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && !otherModalOpen) {
+        e.preventDefault();
+        setIsCommandPaletteOpen((v) => !v);
+        return;
+      }
+
       // Escape always closes the topmost modal, even when a control is focused
       if (e.key === 'Escape' && isAnyModalOpen) {
+        if (isCommandPaletteOpen) { setIsCommandPaletteOpen(false); return; }
         if (isShortcutsOpen) { setIsShortcutsOpen(false); return; }
         if (isUserManualOpen) { setIsUserManualOpen(false); return; }
         if (isProjectManagerOpen) { setIsProjectManagerOpen(false); return; }
@@ -829,14 +769,14 @@ export default function App() {
       if (e.key === 'ArrowRight') {
         e.preventDefault();
         if (currentStageIndex < WORKFLOW_STAGES.length - 1) {
-          setActiveTab(WORKFLOW_STAGES[currentStageIndex + 1].id);
+          setActiveTab(WORKFLOW_STAGES[currentStageIndex + 1].defaultTab);
         }
         return;
       }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         if (currentStageIndex > 0) {
-          setActiveTab(WORKFLOW_STAGES[currentStageIndex - 1].id);
+          setActiveTab(WORKFLOW_STAGES[currentStageIndex - 1].defaultTab);
         }
         return;
       }
@@ -868,22 +808,7 @@ export default function App() {
       } else if ((e.key === 'n' || e.key === 'N') && (e.ctrlKey || e.metaKey)) {
         // Phase 6.4 — Ctrl/Cmd+N new project (empty session).
         e.preventDefault();
-        // Release per-layer audio modules before clearing so a new session
-        // doesn't leave stale analyser/gain nodes behind.
-        layers.forEach((l) => {
-          try {
-            sharedAudioEngine.disposeModule(l.id);
-          } catch {
-            // module may already be gone — ignore
-          }
-        });
-        setLayers([]);
-        setSelectedLayerId(null);
-        patternStore.reset();
-        useSequencerStore.setState({ programs: {
-          A: Array(16).fill(null), B: Array(16).fill(null), C: Array(16).fill(null), D: Array(16).fill(null),
-        } });
-        addToast('New Session', 'info');
+        startNewSession();
       } else if (/^[a-dA-D]$/.test(e.key) && !e.ctrlKey && !e.metaKey) {
         // Phase 6.4 — A/B/C/D switches the active pattern.
         const pid = e.key.toUpperCase() as 'A' | 'B' | 'C' | 'D';
@@ -914,7 +839,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [layers, selectedLayerId, activeTab, currentStageIndex, isShortcutsOpen, isUserManualOpen, isProjectManagerOpen, isAddToKitOpen, chopBuffer]);
+  }, [layers, selectedLayerId, activeTab, currentStageIndex, isShortcutsOpen, isUserManualOpen, isProjectManagerOpen, isAddToKitOpen, isCommandPaletteOpen, chopBuffer]);
 
   // Synchronize A/B state and handle automatic project-wide waveform preview updates with debouncing
   useEffect(() => {
@@ -1041,6 +966,7 @@ export default function App() {
       fx: { ...DEFAULT_FX },
       audioBuffer,
       synth: type === 'synth' ? { ...DEFAULT_SYNTH } : undefined,
+      color: nextLayerColor(layers.length),
     };
     setLayers(prev => {
       if (type === 'sample' && prev.length === 1 && prev[0].type === 'synth' && (prev[0].name === 'Synth Layer' || prev[0].name === 'Synth Layer 1')) {
@@ -1069,6 +995,7 @@ export default function App() {
       envelope: layerData.envelope ? { ...DEFAULT_ENVELOPE, ...layerData.envelope } : { ...DEFAULT_ENVELOPE },
       fx: layerData.fx ? { ...DEFAULT_FX, ...layerData.fx } : { ...DEFAULT_FX },
       synth: layerData.synth ? { ...DEFAULT_SYNTH, ...layerData.synth } : { ...DEFAULT_SYNTH },
+      color: nextLayerColor(layers.length),
     };
     setLayers(prev => [...prev, newLayer]);
     setSelectedLayerId(newLayer.id);
@@ -1076,7 +1003,7 @@ export default function App() {
   };
 
   const handleLoadKitToSoundLab = (kitSamples: SoundKitSample[]) => {
-    const newLayers: SoundLayer[] = kitSamples.map((s) => ({
+    const newLayers: SoundLayer[] = kitSamples.map((s, i) => ({
       id: crypto.randomUUID(),
       name: s.name,
       type: 'sample',
@@ -1087,6 +1014,7 @@ export default function App() {
       envelope: { ...DEFAULT_ENVELOPE },
       fx: { ...DEFAULT_FX },
       audioBuffer: s.audioBuffer,
+      color: nextLayerColor(layers.length + i),
     }));
 
     setLayers((prev) => [...prev, ...newLayers]);
@@ -1422,15 +1350,44 @@ export default function App() {
 
   const goToNextStage = () => {
     if (currentStageIndex < WORKFLOW_STAGES.length - 1) {
-      setActiveTab(WORKFLOW_STAGES[currentStageIndex + 1].id);
+      setActiveTab(WORKFLOW_STAGES[currentStageIndex + 1].defaultTab);
     }
   };
 
   const goToPrevStage = () => {
     if (currentStageIndex > 0) {
-      setActiveTab(WORKFLOW_STAGES[currentStageIndex - 1].id);
+      setActiveTab(WORKFLOW_STAGES[currentStageIndex - 1].defaultTab);
     }
   };
+
+  // ⌘/Ctrl+K action registry (see lib/appCommands). Rebuilt each render so
+  // every command sees the latest state; the palette reads it only while open.
+  const commands = buildCommands({
+    setActiveTab,
+    layers,
+    selectedLayer,
+    selectedLayerId,
+    setSelectedLayerId,
+    addLayer,
+    sampleFileInput: fileInputRef,
+    duplicateLayer: handleDuplicateLayer,
+    removeLayer,
+    updateLayer,
+    playSelectedLayer,
+    isPlaying,
+    playAll,
+    stopAll: () => audioEngine.stop(),
+    bpm: patternStore.patterns[patternStore.activePatternId].bpm,
+    setBpm: patternStore.setBpm,
+    loopEnabled,
+    toggleLoop: handleToggleLoop,
+    exportWav,
+    setProjectManagerOpen: setIsProjectManagerOpen,
+    newSession: startNewSession,
+    toggleSidebar: () => setIsSidebarCollapsed((v) => !v),
+    setShortcutsOpen: setIsShortcutsOpen,
+    setManualOpen: setIsUserManualOpen,
+  });
 
   return (
     <DemoSessionProvider>
@@ -1525,13 +1482,13 @@ export default function App() {
             <div className="space-y-1.5">
               {WORKFLOW_STAGES.map((stage) => {
                 const Icon = stage.icon;
-                const isActive = activeTab === stage.id;
+                const isActive = currentStage.id === stage.id;
 
                 if (isSidebarCollapsed) {
                   return (
                     <button
                       key={stage.id}
-                      onClick={() => setActiveTab(stage.id)}
+                      onClick={() => setActiveTab(stage.defaultTab)}
                       aria-current={isActive ? 'page' : undefined}
                       className={`w-full py-3 rounded-xl flex flex-col items-center justify-center relative transition-all focus-visible:outline-2 focus-visible:outline-yellow-400 ${
                         isActive
@@ -1551,7 +1508,7 @@ export default function App() {
                 return (
                   <button
                     key={stage.id}
-                    onClick={() => setActiveTab(stage.id)}
+                    onClick={() => setActiveTab(stage.defaultTab)}
                     aria-current={isActive ? 'page' : undefined}
                     className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between group relative overflow-hidden focus-visible:outline-2 focus-visible:outline-yellow-400 ${
                       isActive
@@ -1720,11 +1677,11 @@ export default function App() {
           <img src="/logo.png" alt="" className="h-6 w-auto object-contain shrink-0 mr-1" aria-hidden="true" />
           {WORKFLOW_STAGES.map((stage) => {
             const Icon = stage.icon;
-            const isActive = activeTab === stage.id;
+            const isActive = currentStage.id === stage.id;
             return (
               <button
                 key={stage.id}
-                onClick={() => setActiveTab(stage.id)}
+                onClick={() => setActiveTab(stage.defaultTab)}
                 aria-current={isActive ? 'page' : undefined}
                 title={stage.name}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-[9px] font-mono font-bold uppercase tracking-wider shrink-0 transition-all ${
@@ -1791,6 +1748,16 @@ export default function App() {
 
           {/* Top Quick Actions & Navigation Controls */}
           <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar no-scrollbar py-1">
+            {/* Persistent transport (visible on every screen) */}
+            <HeaderTransport
+              isPlaying={isPlaying}
+              onTogglePlay={() => { if (isPlaying) audioEngine.stop(); else audioEngine.playAll(layers); }}
+              bpm={patternStore.patterns[patternStore.activePatternId].bpm}
+              onBpmChange={(bpm) => patternStore.setBpm(bpm)}
+              keyName={chordSettings.key}
+              scaleName={chordSettings.scale}
+            />
+
             {/* Real-time A/B FX Bypass comparison toggle */}
             <div className="flex items-center bg-[#000000] border border-[#1e293b] p-0.5 rounded-xl gap-0.5 shrink-0 shadow-md">
               <span className="text-[8.5px] font-mono font-black text-gray-500 px-2 uppercase tracking-widest">Master FX</span>
@@ -1941,6 +1908,32 @@ export default function App() {
           />
         </div>
 
+        {/* Sub-tab strip for condensed stages (e.g. Mixer / 3D Space / Compare) */}
+        {currentStage.tabs.length > 1 && (
+          <nav
+            aria-label={`${currentStage.name} views`}
+            className="flex items-center gap-1 px-6 py-1.5 bg-[#0c0c0f] border-b border-[#1e293b] shrink-0 overflow-x-auto custom-scrollbar no-scrollbar"
+          >
+            {currentStage.tabs.map((tab) => {
+              const isActive = activeTab === tab;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all shrink-0 ${
+                    isActive
+                      ? `bg-[#0f172a] text-white ${currentStage.borderActive}`
+                      : 'bg-black border-[#1e293b] text-slate-400 hover:text-white hover:border-blue-900'
+                  }`}
+                >
+                  {TAB_LABELS[tab]}
+                </button>
+              );
+            })}
+          </nav>
+        )}
+
         {hasAutoSave && (
           <div className="bg-[#121824] border-b border-blue-900/40 px-6 py-2.5 flex items-center justify-between gap-4 shrink-0">
             <div className="flex items-center gap-2">
@@ -1989,14 +1982,16 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          <AnimatePresence mode="wait">
+          {/* Panel mount is not gated on the previous panel's exit animation:
+              switching screens is instant, and the panels overlap (absolute). */}
+          <AnimatePresence>
             {activeTab === 'soundlab' && (
               <motion.div 
                 key="soundlab"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="h-full overflow-y-auto custom-scrollbar p-6 space-y-6"
+                className="absolute inset-0 h-full overflow-y-auto custom-scrollbar p-6 space-y-6"
               >
                 {/* Header Banner */}
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#1e293b] pb-4">
@@ -2084,90 +2079,43 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="space-y-1.5">
-                      {layers.map((l, idx) => {
-                        const isSelected = selectedLayerId === l.id;
-                        return (
-                          <div
-                            key={l.id}
-                            onClick={() => setSelectedLayerId(l.id)}
-                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-all cursor-pointer group ${
-                              isSelected
-                                ? 'bg-[#0f172a]/30 border-yellow-400/70 shadow-[0_0_10px_rgba(250,204,21,0.08)]'
-                                : 'bg-[#0b0b0d] border-[#1e293b] hover:border-slate-500 hover:bg-[#121215]'
-                            }`}
-                          >
-                            <span className="text-[10px] font-mono font-bold text-slate-500 bg-black border border-[#1e293b] w-5 h-5 rounded flex items-center justify-center shrink-0">
-                              {(idx + 1).toString().padStart(2, '0')}
-                            </span>
-                            <input
-                              type="text"
-                              value={l.name}
-                              aria-label={`Layer ${l.id} name`}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => updateLayer(l.id, { name: e.target.value })}
-                              className="bg-transparent text-[11px] font-black text-white uppercase tracking-wider border-b border-transparent hover:border-slate-700 focus:border-yellow-400 focus:outline-none py-0.5 max-w-[140px] min-w-0 flex-1"
-                            />
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-widest font-mono shrink-0 ${
-                              l.type === 'synth'
-                                ? 'bg-teal-950/50 text-teal-300 border border-teal-500/30'
-                                : 'bg-orange-950/50 text-orange-300 border border-orange-500/30'
-                            }`}>
-                              {l.type}
-                            </span>
-                            <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                onClick={() => updateLayer(l.id, { enabled: !l.enabled })}
-                                className={`px-2 py-1 text-[9px] font-extrabold rounded border transition-all ${
-                                  l.enabled
-                                    ? 'bg-emerald-600/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/20'
-                                    : 'bg-black border-[#1e293b] text-slate-500 hover:text-slate-300'
-                                }`}
-                                aria-label={l.enabled ? 'Mute Layer' : 'Unmute Layer'}
-                                title={l.enabled ? 'Mute Layer' : 'Unmute Layer'}
-                              >
-                                {l.enabled ? 'ON' : 'OFF'}
-                              </button>
-                              <button
-                                onClick={() => audioEngine.playLayer(l)}
-                                className="p-1.5 rounded hover:bg-[#1a1a24] text-slate-400 hover:text-yellow-400 transition-colors"
-                                aria-label="Play Layer"
-                                title="Play Layer"
-                              >
-                                <Play size={12} fill="currentColor" />
-                              </button>
-                              <button
-                                onClick={() => handleDuplicateLayer(l.id)}
-                                className="p-1.5 rounded hover:bg-[#1a1a24] text-slate-400 hover:text-white transition-colors"
-                                aria-label="Duplicate Layer"
-                                title="Duplicate Layer"
-                              >
-                                <Layers size={13} />
-                              </button>
-                              <button
-                                onClick={() => removeLayer(l.id)}
-                                className="p-1.5 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition-colors"
-                                aria-label="Delete Layer"
-                                title="Delete Layer"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {layers.map((l, idx) => (
+                        <LayerRow
+                          key={l.id}
+                          layer={l}
+                          index={idx}
+                          isSelected={selectedLayerId === l.id}
+                          level={layerLevels[l.id] ?? 0}
+                          onSelect={() => setSelectedLayerId(l.id)}
+                          onRename={(name) => updateLayer(l.id, { name })}
+                          onToggleEnabled={() => updateLayer(l.id, { enabled: !l.enabled })}
+                          onPlay={() => audioEngine.playLayer(l)}
+                          onDuplicate={() => handleDuplicateLayer(l.id)}
+                          onDelete={() => removeLayer(l.id)}
+                        />
+                      ))}
                     </div>
                   )}
                 </div>
 
-                {/* Waveform DSP Editor / Sample Editor Block (collapsible) */}
-                <details className="bg-[#0b0b0d] border border-[#1e293b] rounded-2xl overflow-hidden shadow-2xl flex flex-col w-full">
-                  <summary className="flex items-center justify-between border-b border-[#1e293b] bg-black px-4 py-3 cursor-pointer select-none list-none">
+                {/* Waveform DSP Editor / Sample Editor Block (always visible) */}
+                <section
+                  aria-label="Sample Waveform & Detailed DSP Editor"
+                  className="bg-[#0b0b0d] border border-[#1e293b] rounded-2xl overflow-hidden shadow-2xl flex flex-col w-full"
+                >
+                  <div className="flex items-center justify-between border-b border-[#1e293b] bg-black px-4 py-3">
                     <div className="flex items-center gap-2">
                       <Music className="w-4 h-4 text-sky-400" />
                       <span className="text-xs font-black uppercase tracking-wider text-white">Sample Waveform & Detailed DSP Editor</span>
-                      <span className="text-[9px] font-mono text-slate-500">(click to expand)</span>
+                      {selectedLayer ? (
+                        <span className="text-[9px] font-mono text-slate-400">
+                          {selectedLayer.type === 'sample' ? 'waveform + destructive DSP' : 'bounce this synth to a sample to edit its waveform'}
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-mono text-slate-500">select a layer to begin</span>
+                      )}
                     </div>
-                  </summary>
+                  </div>
 
                   <div className="p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
                     {selectedLayer && selectedLayer.type === 'synth' && (
@@ -2182,30 +2130,30 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Visualizer Plot (8 cols) */}
-                    <div className="lg:col-span-8 bg-black border border-[#1e293b] rounded-xl p-4 flex flex-col justify-between min-h-[220px]">
+                    {/* Sampler screen — MPD226-framed, full-width sample editor */}
+                    <div className="lg:col-span-12 space-y-2">
                       {selectedLayer ? (
-                        <div className="flex-1 flex flex-col justify-between h-full space-y-4">
-                          <div className="flex-1 min-h-[140px] relative">
-                            <Suspense fallback={<div className="h-full flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-slate-500" /></div>}>
-                              <WaveformEditor
-                                buffer={selectedLayer.audioBuffer || compositeBuffer}
-                                selectionStart={selectionStart}
-                                selectionEnd={selectionEnd}
-                                onSelectionChange={(start, end) => {
-                                  setSelectionStart(start);
-                                  setSelectionEnd(end);
-                                }}
-                              />
-                            </Suspense>
-                          </div>
+                        <>
+                          <Suspense fallback={<div className="h-[260px] flex items-center justify-center bg-black border border-[#1e293b] rounded-2xl"><Loader2 className="w-8 h-8 animate-spin text-slate-500" /></div>}>
+                            <SamplerUnit
+                              buffer={selectedLayer.audioBuffer || compositeBuffer}
+                              selectionStart={selectionStart}
+                              selectionEnd={selectionEnd}
+                              onSelectionChange={(start, end) => {
+                                setSelectionStart(start);
+                                setSelectionEnd(end);
+                              }}
+                              layerName={selectedLayer.name}
+                              onApplyEffect={applyWaveformEdit}
+                            />
+                          </Suspense>
                           <div className="text-[9.5px] text-slate-500 font-mono flex justify-between items-center bg-[#070709] border border-[#1e293b]/40 px-3 py-1.5 rounded-lg">
                             <span>Active Layer buffer rendering: {selectedLayer.name}</span>
-                            <span className="text-yellow-400 font-bold font-mono text-[8.5px]">Drag waveform to highlight selection range for cropping / fades</span>
+                            <span className="text-yellow-400 font-bold font-mono text-[8.5px]">Drag the on-screen region to set crop / fades · zoom in for sample-precise edits</span>
                           </div>
-                        </div>
+                        </>
                       ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 py-12 gap-2">
+                        <div className="bg-black border border-[#1e293b] rounded-2xl flex flex-col items-center justify-center text-center text-slate-500 py-12 gap-2">
                           <Music className="w-8 h-8 text-slate-700 animate-pulse" />
                           <p className="text-xs uppercase font-extrabold tracking-wider">No Active Layer Waveform</p>
                           <p className="text-[10px] text-slate-400">Select any Layer above to inspect and edit its sample buffer.</p>
@@ -2213,8 +2161,8 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Waveform DSP Toolbar (4 cols) */}
-                    <div className="lg:col-span-4 bg-black border border-[#1e293b] rounded-xl p-4 flex flex-col justify-between">
+                    {/* Waveform DSP Toolbar (full width, below the screen) */}
+                    <div className="lg:col-span-12 bg-black border border-[#1e293b] rounded-xl p-4 flex flex-col justify-between">
                       <div className="space-y-4">
                         <div className="flex items-center justify-between border-b border-[#1e293b] pb-2">
                           <span className="text-[10px] font-black text-white uppercase tracking-wider">Waveform DSP Edit Lab</span>
@@ -2231,7 +2179,7 @@ export default function App() {
                               Run direct destructive digital signal processing on the selected layer's audio buffer waveform. You can edit the entire file, or highlight a specific selection segment!
                             </p>
 
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                               <button onClick={() => applyWaveformEdit('reverse')} className="py-2 px-3 bg-[#121215] border border-[#1e293b] hover:border-yellow-400/40 hover:bg-[#1a1a24] rounded-lg text-[9.5px] uppercase font-extrabold text-slate-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer">🔄 Reverse</button>
                               <button onClick={() => applyWaveformEdit('normalize')} className="py-2 px-3 bg-[#121215] border border-[#1e293b] hover:border-yellow-400/40 hover:bg-[#1a1a24] rounded-lg text-[9.5px] uppercase font-extrabold text-slate-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer">🔊 Normalize</button>
                               <button onClick={() => applyWaveformEdit('invert')} className="py-2 px-3 bg-[#121215] border border-[#1e293b] hover:border-yellow-400/40 hover:bg-[#1a1a24] rounded-lg text-[9.5px] uppercase font-extrabold text-slate-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer">🔌 Phase Flip</button>
@@ -2271,7 +2219,7 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                </details>
+                </section>
               </motion.div>
             )}
 
@@ -2281,7 +2229,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="h-full overflow-y-auto custom-scrollbar p-6 space-y-6"
+                className="absolute inset-0 h-full overflow-y-auto custom-scrollbar p-6 space-y-6"
               >
                 {/* Header Banner */}
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#1e293b] pb-4">
@@ -2381,7 +2329,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="h-full overflow-y-auto custom-scrollbar p-6 space-y-6"
+                className="absolute inset-0 h-full overflow-y-auto custom-scrollbar p-6 space-y-6"
               >
                 {/* Header Banner */}
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#1e293b] pb-4">
@@ -2481,7 +2429,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="h-full overflow-y-auto custom-scrollbar p-6 space-y-6"
+                className="absolute inset-0 h-full overflow-y-auto custom-scrollbar p-6 space-y-6"
               >
                 {/* Header Banner */}
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#1e293b] pb-4">
@@ -2538,7 +2486,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="h-full overflow-y-auto custom-scrollbar p-4"
+                className="absolute inset-0 h-full overflow-y-auto custom-scrollbar p-4"
               >
                 <Suspense fallback={<div className="h-[400px] flex items-center justify-center p-12"><Loader2 className="w-8 h-8 animate-spin text-purple-500" /></div>}>
                   <SoundKitCreator 
@@ -2555,7 +2503,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="w-full h-full p-8 overflow-y-auto"
+                className="absolute inset-0 w-full h-full p-8 overflow-y-auto"
               >
                 <Suspense fallback={<div className="h-[400px] flex items-center justify-center p-12"><Loader2 className="w-8 h-8 animate-spin text-green-500" /></div>}>
                   <EvolutionPanel 
@@ -2597,7 +2545,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="h-full overflow-y-auto custom-scrollbar p-4"
+                className="absolute inset-0 h-full overflow-y-auto custom-scrollbar p-4"
               >
                 <Suspense fallback={<div className="h-[400px] flex items-center justify-center p-12"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>}>
                   <SoundKitCatalog 
@@ -2614,7 +2562,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="h-full overflow-y-auto custom-scrollbar p-4"
+                className="absolute inset-0 h-full overflow-y-auto custom-scrollbar p-4"
               >
                 <Suspense fallback={<div className="h-[400px] flex items-center justify-center p-12"><Loader2 className="w-8 h-8 animate-spin text-yellow-500" /></div>}>
                   <CompareEnginePanel isVisible={activeTab === 'compare'} />
@@ -2628,7 +2576,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="h-full"
+                className="absolute inset-0 h-full"
               >
                 <Suspense fallback={<div className="h-[400px] flex items-center justify-center p-12"><Loader2 className="w-8 h-8 animate-spin text-rose-500" /></div>}>
                   <StudioSequencer
@@ -2658,36 +2606,53 @@ export default function App() {
           </AnimatePresence>
         </main>
 
-        <Suspense fallback={<div className="h-16 flex items-center justify-center"><Loader2 className="w-5 h-5 animate-spin text-slate-500" /></div>}>
-        <SystemCohesionDeck
-          layers={layers}
-          selectedLayerId={selectedLayerId}
-          onUpdateLayer={updateLayer}
-          onAddToast={addToast}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          bpm={120}
-        />
-      </Suspense>
-
         {/* Studio Workspace Bottom Status Bar */}
         <footer className="h-8 bg-[#0a0a0c] border-t border-[#1f1f21] px-6 flex items-center justify-between text-[9px] text-[#a1a1aa] flex-shrink-0 font-mono">
           <div className="flex items-center space-x-6">
-            <span className="flex items-center gap-1.5 text-blue-400 font-bold">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-              DSP ENGINE: ONLINE
+            <span
+              className={`flex items-center gap-1.5 font-bold ${describeContextState(audioTelemetry.state).ok ? 'text-blue-400' : 'text-amber-400'}`}
+              data-audio-state={audioTelemetry.state}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${describeContextState(audioTelemetry.state).ok ? 'bg-blue-500 animate-pulse' : 'bg-amber-500'}`}
+              />
+              {describeContextState(audioTelemetry.state).label}
             </span>
-            <span>LATENCY: 0.8ms</span>
+            <span data-audio-latency>LATENCY: {formatLatency(audioTelemetry.latencyMs)}</span>
+            <span className="hidden sm:inline" data-audio-samplerate>
+              {formatSampleRate(audioTelemetry.sampleRateKHz)}
+            </span>
             <span className="hidden sm:inline">WORKFLOW: {currentStage.shortName.toUpperCase()}</span>
           </div>
           <div className="uppercase tracking-widest text-[#a1a1aa]">
-            SONIK STUDIO ARCHITECTURE v5.2 PRO
+            SONIK STUDIO ARCHITECTURE v1.1
           </div>
         </footer>
 
       </div>
 
+      {/* Right-rail MIDI centrepiece: a single engine for every screen. */}
+      <ControllerHost
+        layers={layers}
+        selectedLayerId={selectedLayerId}
+        updateLayer={updateLayer}
+        playAll={playAll}
+        stopStack={() => audioEngine.stop()}
+        stackPlaying={isPlaying}
+        selectLayer={(index) => {
+          const target = layers[index];
+          if (target) setSelectedLayerId(target.id);
+        }}
+      />
+
       <Suspense fallback={null}>
+        {/* Command palette (⌘/Ctrl+K) */}
+        <CommandPalette
+          isOpen={isCommandPaletteOpen}
+          onClose={() => setIsCommandPaletteOpen(false)}
+          commands={commands}
+        />
+
         {/* Add To Sound Kit Modal */}
         <AddToKitModal
           isOpen={isAddToKitOpen}

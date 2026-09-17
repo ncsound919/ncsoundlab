@@ -29,6 +29,8 @@ import {
   type SampleLibraryFolder,
 } from '../lib/sampleLibrary';
 import { audioEngine } from '../audio/AudioEngine';
+import { pickDirectory, scanDirectoryToLibrary, isFolderLinkSupported, ensureReadPermission, countAudioFiles, listSubfolders, type DirectoryLike, type SubfolderInfo } from '../lib/folderLink';
+import { saveFolderLink, fetchFolderLinks, deleteFolderLink, type StoredFolderLink } from '../lib/db';
 import {
   Search,
   FolderPlus,
@@ -41,6 +43,8 @@ import {
   Plus,
   Upload,
   Music,
+  HardDrive,
+  RefreshCw,
 } from 'lucide-react';
 
 /** Custom MIME carried by dragstart so other components can detect a library
@@ -99,7 +103,14 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
   const [renameValue, setRenameValue] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  // Separate from `errors` so a failed library load can't be silently hidden
+  // behind (or cleared by) unrelated action errors.
+  const [libraryError, setLibraryError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [linkedRoots, setLinkedRoots] = useState<StoredFolderLink[]>([]);
+  const [isLinking, setIsLinking] = useState(false);
+  const [pendingLink, setPendingLink] = useState<{ dir: DirectoryLike; subs: SubfolderInfo[] } | null>(null);
+  const [selectedSubs, setSelectedSubs] = useState<Set<string>>(new Set());
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -119,9 +130,11 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
       if (reqId !== refreshRequestRef.current) return;
       setFolders(f);
       setSamples(s);
+      setLibraryError(null);
     } catch (err) {
       if (reqId !== refreshRequestRef.current) return;
       console.warn('Sample library refresh failed:', err);
+      setLibraryError('Sample library could not load. Storage may be unavailable in this browser.');
     }
   }, [activeFolderId]);
 
@@ -326,6 +339,144 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
     }
   };
 
+  // ----- Linked on-disk folders (E:\drums etc.) -----
+
+  const loadLinkedRoots = useCallback(async () => {
+    try {
+      setLinkedRoots(await fetchFolderLinks());
+    } catch (err) {
+      console.warn('Failed to load folder links:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLinkedRoots();
+  }, [loadLinkedRoots]);
+
+  const scanDeps = {
+    createFolder: (name: string, parentId: string | null) => createLibraryFolder({ name, parentId }),
+    saveSample: async (input: { name: string; fileName: string; folderId: string; audioBuffer: AudioBuffer; sizeBytes: number }) =>
+      saveLibrarySample({
+        name: input.name,
+        fileName: input.fileName,
+        folderId: input.folderId,
+        audioBuffer: input.audioBuffer,
+        sizeBytes: input.sizeBytes,
+      }),
+    decode: async (file: File) => {
+      const ctx = audioEngine.getContext();
+      if (!ctx) throw new Error('AudioContext unavailable');
+      return ctx.decodeAudioData(await file.arrayBuffer());
+    },
+    existingFileNames: async (folderId: string) =>
+      new Set((await fetchLibrarySamples(folderId)).map((s) => s.fileName)),
+  };
+
+  const runScan = async (dir: DirectoryLike, options: { selectedSubfolders?: string[] } = {}) => {
+    setIsLinking(true);
+    try {
+      const result = await scanDirectoryToLibrary(dir, scanDeps, options);
+      await saveFolderLink({
+        id: crypto.randomUUID(),
+        name: dir.name,
+        rootFolderId: result.rootFolderId,
+        handle: dir,
+        folderCount: result.folders,
+        sampleCount: result.samples,
+      });
+      if (result.skipped.length) setErrors([`Skipped ${result.skipped.length} file(s) that failed to decode.`]);
+      await loadLinkedRoots();
+      await refresh();
+    } catch (err) {
+      console.warn('Folder link scan failed:', err);
+      setErrors(['Could not scan the linked folder.']);
+    } finally {
+      setIsLinking(false);
+    }
+  };
+
+  const handleLinkFolder = async () => {
+    if (!isFolderLinkSupported()) {
+      setErrors(['Folder linking needs a Chromium browser (Chrome/Edge) or the desktop build.']);
+      return;
+    }
+    const dir = await pickDirectory();
+    if (!dir) return;
+
+    // If the root holds several folders, let the user pick which to import.
+    let subs: SubfolderInfo[] = [];
+    try {
+      subs = await listSubfolders(dir);
+    } catch {
+      subs = [];
+    }
+    if (subs.length > 1) {
+      setPendingLink({ dir, subs });
+      setSelectedSubs(new Set(subs.filter((s) => s.audioCount > 0).map((s) => s.name)));
+      return;
+    }
+
+    // A whole-drive sample folder can be thousands of files; confirm before
+    // committing that much to IndexedDB.
+    const audioCount = await countAudioFiles(dir);
+    if (audioCount > 500) {
+      const proceed = typeof window !== 'undefined' && window.confirm(
+        `"${dir.name}" contains ${audioCount} audio files. Importing them all can take a while and use significant browser storage. Link the whole folder?`
+      );
+      if (!proceed) return;
+    }
+    await runScan(dir);
+  };
+
+  const toggleSub = (name: string) => {
+    setSelectedSubs((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const confirmPendingLink = async () => {
+    if (!pendingLink) return;
+    const dir = pendingLink.dir;
+    const selected: string[] = Array.from(selectedSubs.values());
+    setPendingLink(null);
+    setSelectedSubs(new Set<string>());
+    await runScan(dir, { selectedSubfolders: selected });
+  };
+
+  const handleRescanLink = async (link: StoredFolderLink) => {
+    const handle = link.handle as DirectoryLike;
+    const granted = await ensureReadPermission(handle, true);
+    if (!granted) {
+      setErrors([`Permission to read "${link.name}" was denied.`]);
+      return;
+    }
+    setIsLinking(true);
+    try {
+      const result = await scanDirectoryToLibrary(handle, scanDeps, { rootFolderId: link.rootFolderId });
+      await saveFolderLink({
+        ...link,
+        folderCount: (link.folderCount || 0) + result.folders,
+        sampleCount: (link.sampleCount || 0) + result.samples,
+      });
+      await loadLinkedRoots();
+      await refresh();
+    } catch (err) {
+      console.warn('Folder rescan failed:', err);
+      setErrors([`Could not rescan "${link.name}".`]);
+    } finally {
+      setIsLinking(false);
+    }
+  };
+
+  const handleUnlinkFolder = async (link: StoredFolderLink) => {
+    // Unlink only forgets the handle + root mapping; imported samples stay.
+    await deleteFolderLink(link.id);
+    await loadLinkedRoots();
+  };
+
   return (
     <div
       className={`flex flex-col h-full bg-[#0e0e12] border border-[#1e293b] rounded-xl overflow-hidden ${
@@ -341,6 +492,21 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
       }}
       onDrop={handleDrop}
     >
+      {libraryError && (
+        <div
+          data-library-error
+          className="px-3 py-2 border-b border-rose-900/50 bg-rose-950/20 flex items-center justify-between gap-2"
+        >
+          <span className="text-[10px] text-rose-300">{libraryError}</span>
+          <button
+            onClick={() => { void refresh(); }}
+            className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-[#16161a] border border-rose-500/40 text-rose-200 hover:text-white"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {!compact && (
         <div className="px-3 py-2 border-b border-[#1e293b] flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -363,6 +529,14 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
             >
               <FolderPlus className="w-3.5 h-3.5" />
             </button>
+            <button
+              onClick={handleLinkFolder}
+              disabled={isLinking}
+              title="Link a folder on disk — subfolders import as folders (e.g. E:\drums)"
+              className="p-1.5 rounded-md bg-[#16161a] border border-[#2A2A2E] hover:border-emerald-500 text-emerald-400 disabled:opacity-50"
+            >
+              {isLinking ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <HardDrive className="w-3.5 h-3.5" />}
+            </button>
           </div>
           <input
             ref={fileInputRef}
@@ -372,6 +546,78 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
             onChange={handleFileInput}
             className="hidden"
           />
+        </div>
+      )}
+
+      {/* Linked on-disk folders (root + rescan) */}
+      {linkedRoots.length > 0 && (
+        <div className="px-2 py-1.5 border-b border-[#1e293b] bg-[#0a0a0e] space-y-1" data-linked-roots>
+          {linkedRoots.map((link) => (
+            <div key={link.id} className="flex items-center gap-1.5 text-[10px]">
+              <HardDrive className="w-3 h-3 text-emerald-400 shrink-0" />
+              <span className="text-slate-300 truncate flex-1" title={`${link.name} · ${link.folderCount} folders · ${link.sampleCount} samples`}>
+                {link.name}
+              </span>
+              <span className="text-slate-600 font-mono">{link.sampleCount}</span>
+              <button
+                onClick={() => handleRescanLink(link)}
+                disabled={isLinking}
+                title="Rescan this folder (new files only)"
+                className="p-1 rounded hover:bg-[#16161a] text-emerald-400 disabled:opacity-50"
+              >
+                <RefreshCw className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => handleUnlinkFolder(link)}
+                title="Unlink (keeps imported samples)"
+                className="p-1 rounded hover:bg-[#16161a] text-slate-500 hover:text-rose-400"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Subfolder import picker (chosen from a linked root) */}
+      {pendingLink && (
+        <div className="px-2 py-2 border-b border-[#1e293b] bg-[#0a0a0e] space-y-1.5" data-link-picker>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-white uppercase tracking-wider truncate">
+              Import from {pendingLink.dir.name}
+            </span>
+            <span className="text-[9px] font-mono text-slate-500">{selectedSubs.size}/{pendingLink.subs.length}</span>
+          </div>
+          <div className="max-h-40 overflow-y-auto custom-scrollbar space-y-0.5">
+            {pendingLink.subs.map((sub) => (
+              <label key={sub.name} className="flex items-center gap-2 text-[10px] px-1 py-0.5 rounded hover:bg-[#16161a] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedSubs.has(sub.name)}
+                  onChange={() => toggleSub(sub.name)}
+                  className="accent-emerald-400"
+                  aria-label={`Import ${sub.name}`}
+                />
+                <span className="text-slate-300 truncate flex-1">{sub.name}</span>
+                <span className={`font-mono ${sub.audioCount ? 'text-slate-500' : 'text-rose-400'}`}>{sub.audioCount}</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={confirmPendingLink}
+              disabled={isLinking || selectedSubs.size === 0}
+              className="px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 disabled:opacity-50"
+            >
+              {isLinking ? 'Importing…' : 'Import selected'}
+            </button>
+            <button
+              onClick={() => { setPendingLink(null); setSelectedSubs(new Set<string>()); }}
+              className="px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-400 hover:text-white"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

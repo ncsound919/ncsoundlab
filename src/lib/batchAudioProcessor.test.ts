@@ -153,4 +153,103 @@ describe('batchAudioProcessor', () => {
     expect(result.transientSharpness).toBeLessThanOrEqual(10);
     expect(Number.isFinite(result.peakDb)).toBe(true);
   });
+
+  it('classifies samples by filename keyword override before feature logic', () => {
+    const buf = createMockBuffer();
+    expect(analyzeAudioBuffer(buf, 'snare_hit.wav').suggestedCategory).toBe('Snare');
+    expect(analyzeAudioBuffer(buf, 'closed-hat_01.wav').suggestedCategory).toBe('HiHat');
+    expect(analyzeAudioBuffer(buf, 'clap_stack.wav').suggestedCategory).toBe('Clap');
+    expect(analyzeAudioBuffer(buf, 'perc_loop.wav').suggestedCategory).toBe('Percussive FX');
+    expect(analyzeAudioBuffer(buf, 'glitch_07.wav').suggestedCategory).toBe('Glitches');
+    expect(analyzeAudioBuffer(buf, 'atmosphere_pad.wav').suggestedCategory).toBe('Atmospheres');
+  });
+
+  const makeCtx = () => ({
+    createBuffer: vi.fn((channels: number, length: number, rate: number) => {
+      const channelData = Array.from({ length: channels }, () => new Float32Array(length));
+      return {
+        numberOfChannels: channels,
+        length,
+        sampleRate: rate,
+        getChannelData: (ch: number) => channelData[ch] ?? channelData[0],
+        copyToChannel: (src: Float32Array, ch: number) => channelData[ch]?.set(src),
+        copyFromChannel: vi.fn(),
+      };
+    }),
+  }) as any;
+
+  const baseOptions = {
+    normalizePeak: true,
+    targetPeakDb: -1.0,
+    trimSilence: true,
+    silenceThresholdDb: -45,
+    transientSharpness: 0,
+    pitchSemitones: 0,
+    tubeDrive: 0,
+    highPassFreq: 0,
+    lowPassFreq: 20000,
+    fadeOutDurationSec: 0,
+  };
+
+  it('runs bitcrush, reverb and fade-out branches with finite output', () => {
+    const out = processAudioBuffer(makeCtx(), createMockBuffer(), {
+      ...baseOptions,
+      bitcrushDepth: 60,
+      reverbSpace: 40,
+      fadeOutDurationSec: 0.05,
+    }) as unknown as AudioBuffer;
+    const data = out.getChannelData(0);
+    expect(out.numberOfChannels).toBe(2);
+    for (let i = 0; i < data.length; i += 37) expect(Number.isFinite(data[i])).toBe(true);
+  });
+
+  it('upmixes a mono source to two channels via the Haas pseudo-stereo path', () => {
+    const data = new Float32Array(4410);
+    for (let i = 0; i < data.length; i++) data[i] = Math.sin((i / 4410) * Math.PI * 8) * 0.5;
+    const mono = {
+      numberOfChannels: 1,
+      length: 4410,
+      sampleRate: 44100,
+      getChannelData: () => data,
+    } as unknown as AudioBuffer;
+
+    const out = processAudioBuffer(makeCtx(), mono, { ...baseOptions, stereoWidening: 150 }) as unknown as AudioBuffer;
+    expect(out.numberOfChannels).toBe(2);
+    // Haas channel is delayed ~12ms, so its first sample must be silent.
+    expect(Math.abs(out.getChannelData(1)[0])).toBeLessThan(1e-6);
+  });
+
+  it('applies mid/side widening to a native stereo source', () => {
+    const left = new Float32Array(4410);
+    const right = new Float32Array(4410);
+    for (let i = 0; i < 4410; i++) {
+      left[i] = Math.sin((i / 4410) * Math.PI * 8) * 0.5;
+      right[i] = Math.sin((i / 4410) * Math.PI * 6) * 0.5;
+    }
+    const stereo = {
+      numberOfChannels: 2,
+      length: 4410,
+      sampleRate: 44100,
+      getChannelData: (c: number) => (c === 0 ? left : right),
+    } as unknown as AudioBuffer;
+
+    const out = processAudioBuffer(makeCtx(), stereo, { ...baseOptions, stereoWidening: 150 }) as unknown as AudioBuffer;
+    expect(out.numberOfChannels).toBe(2);
+    const outL = out.getChannelData(0);
+    for (let i = 0; i < outL.length; i += 53) expect(Number.isFinite(outL[i])).toBe(true);
+  });
+
+  it('keeps the original length when trimming is disabled (no normalization)', () => {
+    const out = processAudioBuffer(makeCtx(), createMockBuffer(), {
+      ...baseOptions,
+      trimSilence: false,
+      normalizePeak: false,
+    }) as unknown as AudioBuffer;
+    expect(out.length).toBe(4410);
+  });
+
+  it('returns no variants when count is zero', async () => {
+    const variants = await generateVariants(makeCtx(), createMockBuffer(), 0, {});
+    expect(variants).toEqual([]);
+  });
 });

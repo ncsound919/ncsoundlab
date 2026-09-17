@@ -45,6 +45,10 @@ export const LayerPresetBrowser: React.FC<LayerPresetBrowserProps> = ({
   const [showSaveForm, setShowSaveForm] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'all' | 'factory' | 'user' | 'favorites'>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+
+  // Non-destructive audition: applying a preset is snapshotted so the user can
+  // A/B it and either keep or revert without relying on undo history.
+  const [audition, setAudition] = useState<{ name: string; layerId: string; snapshot: Partial<SoundLayer> } | null>(null);
   
   // Custom Preset Form State
   const [newPresetName, setNewPresetName] = useState('');
@@ -95,48 +99,95 @@ export const LayerPresetBrowser: React.FC<LayerPresetBrowserProps> = ({
     );
   };
 
+  /**
+   * Factory items are tagged `isUser:false`, so `'isUser' in preset` was true
+   * for them too and Apply silently no-op'd on factory presets. Test the value.
+   */
+  const isUserPreset = (preset: SoundPreset | UserSoundPreset): preset is UserSoundPreset =>
+    (preset as UserSoundPreset).isUser === true;
+
+  /** Compute the layer patch a preset would apply (pure, reused by apply/audition). */
+  const presetUpdatesFor = (
+    preset: SoundPreset | UserSoundPreset,
+    layer: SoundLayer
+  ): Partial<SoundLayer> | null => {
+    if (isUserPreset(preset)) {
+      if (!preset.layerData) return null;
+      const updates: Partial<SoundLayer> = {
+        name: `${layer.name.split(' (')[0]} (${preset.name})`,
+        envelope: preset.layerData.envelope ? { ...preset.layerData.envelope } : { ...DEFAULT_ENVELOPE },
+        fx: preset.layerData.fx ? { ...preset.layerData.fx } : { ...DEFAULT_FX },
+        gain: preset.layerData.gain ?? layer.gain,
+        pan: preset.layerData.pan ?? layer.pan,
+        pitch: preset.layerData.pitch ?? layer.pitch,
+        macroPunch: preset.layerData.macroPunch,
+        macroDepth: preset.layerData.macroDepth,
+        macroSpace: preset.layerData.macroSpace,
+        macroGrit: preset.layerData.macroGrit,
+      };
+      if (preset.layerData.synth) {
+        updates.synth = { ...preset.layerData.synth };
+      }
+      return updates;
+    }
+    const result = preset.apply(layer);
+    return {
+      name: result.name,
+      envelope: result.envelope,
+      synth: result.synth,
+      fx: result.fx,
+      macroPunch: result.macroPunch,
+      macroDepth: result.macroDepth,
+      macroSpace: result.macroSpace,
+      macroGrit: result.macroGrit,
+    };
+  };
+
+  /** Snapshot only the fields a patch will overwrite, for exact revert. */
+  const snapshotFor = (layer: SoundLayer, updates: Partial<SoundLayer>): Partial<SoundLayer> => {
+    const snap: Record<string, unknown> = {};
+    for (const key of Object.keys(updates)) {
+      snap[key] = (layer as unknown as Record<string, unknown>)[key];
+    }
+    return snap as Partial<SoundLayer>;
+  };
+
   const handleApplyPreset = (preset: SoundPreset | UserSoundPreset) => {
     if (!selectedLayer) {
       onAddToast('Please select a layer first to apply this preset!', 'warn');
       return;
     }
+    const updates = presetUpdatesFor(preset, selectedLayer);
+    if (!updates) return;
+    setAudition(null);
+    onUpdateLayer(selectedLayer.id, updates);
+    const kind = isUserPreset(preset) ? 'custom' : 'factory';
+    onAddToast(`Applied ${kind} preset "${preset.name}" to ${selectedLayer.name}`, 'success');
+  };
 
-    if ('isUser' in preset) {
-      // User Preset
-      if (preset.layerData) {
-        const updates: Partial<SoundLayer> = {
-          name: `${selectedLayer.name.split(' (')[0]} (${preset.name})`,
-          envelope: preset.layerData.envelope ? { ...preset.layerData.envelope } : { ...DEFAULT_ENVELOPE },
-          fx: preset.layerData.fx ? { ...preset.layerData.fx } : { ...DEFAULT_FX },
-          gain: preset.layerData.gain ?? selectedLayer.gain,
-          pan: preset.layerData.pan ?? selectedLayer.pan,
-          pitch: preset.layerData.pitch ?? selectedLayer.pitch,
-          macroPunch: preset.layerData.macroPunch,
-          macroDepth: preset.layerData.macroDepth,
-          macroSpace: preset.layerData.macroSpace,
-          macroGrit: preset.layerData.macroGrit,
-        };
-        if (preset.layerData.synth) {
-          updates.synth = { ...preset.layerData.synth };
-        }
-        onUpdateLayer(selectedLayer.id, updates);
-        onAddToast(`Applied custom preset "${preset.name}" to ${selectedLayer.name}`, 'success');
-      }
-    } else {
-      // Factory Preset
-      const result = preset.apply(selectedLayer);
-      onUpdateLayer(selectedLayer.id, {
-        name: result.name,
-        envelope: result.envelope,
-        synth: result.synth,
-        fx: result.fx,
-        macroPunch: result.macroPunch,
-        macroDepth: result.macroDepth,
-        macroSpace: result.macroSpace,
-        macroGrit: result.macroGrit,
-      });
-      onAddToast(`Applied factory preset "${preset.name}" to ${selectedLayer.name}`, 'success');
+  const handleAuditionPreset = (preset: SoundPreset | UserSoundPreset) => {
+    if (!selectedLayer) {
+      onAddToast('Please select a layer first to audition this preset!', 'warn');
+      return;
     }
+    const updates = presetUpdatesFor(preset, selectedLayer);
+    if (!updates) return;
+    const snapshot = snapshotFor(selectedLayer, updates);
+    onUpdateLayer(selectedLayer.id, updates);
+    setAudition({ name: preset.name, layerId: selectedLayer.id, snapshot });
+  };
+
+  const handleKeepAudition = () => {
+    if (!audition) return;
+    onAddToast(`Kept preset "${audition.name}"`, 'success');
+    setAudition(null);
+  };
+
+  const handleRevertAudition = () => {
+    if (!audition) return;
+    onUpdateLayer(audition.layerId, audition.snapshot);
+    onAddToast(`Reverted audition "${audition.name}"`, 'info');
+    setAudition(null);
   };
 
   const handleSaveCurrentAsPreset = (e: React.FormEvent) => {
@@ -302,6 +353,32 @@ export const LayerPresetBrowser: React.FC<LayerPresetBrowserProps> = ({
         </span>
       </div>
 
+      {/* Non-destructive audition banner */}
+      {audition && (
+        <div
+          data-audition-banner
+          className="px-4 py-2 bg-yellow-950/30 border-b border-yellow-500/40 flex items-center justify-between gap-3"
+        >
+          <span className="text-[10px] font-mono text-yellow-200">
+            Auditioning <b className="uppercase">{audition.name}</b> — not committed
+          </span>
+          <span className="flex items-center gap-1.5">
+            <button
+              onClick={handleKeepAudition}
+              className="px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/30"
+            >
+              Keep
+            </button>
+            <button
+              onClick={handleRevertAudition}
+              className="px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-wider bg-[#121215] border border-[#1e293b] text-slate-300 hover:text-white"
+            >
+              Revert
+            </button>
+          </span>
+        </div>
+      )}
+
       {/* List / Form Main layout */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 p-5 overflow-y-auto max-h-[500px] custom-scrollbar">
         {/* Left Side: Preset Cards (changes from 8 to 12 cols depending on save form visibility) */}
@@ -376,6 +453,16 @@ export const LayerPresetBrowser: React.FC<LayerPresetBrowserProps> = ({
                       </span>
                       
                       <div className="flex gap-1.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAuditionPreset(item);
+                          }}
+                          className="px-2 py-1 bg-[#121215] border border-[#1e293b] hover:bg-cyan-500 hover:text-black rounded text-[8.5px] font-bold uppercase tracking-wider transition-all cursor-pointer"
+                          title="Audition without committing (Keep / Revert)"
+                        >
+                          Audition
+                        </button>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

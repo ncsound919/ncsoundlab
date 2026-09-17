@@ -21,8 +21,19 @@ const makeGain = () => ({
 const makeCtx = (state = 'running') => ({
   currentTime: 0.5,
   state,
+  sampleRate: 44100,
   resume: vi.fn(() => Promise.resolve()),
   destination: {},
+  createBuffer: vi.fn((channels: number, length: number, rate: number) => {
+    const channelData = Array.from({ length: channels }, () => new Float32Array(length));
+    return {
+      numberOfChannels: channels,
+      length,
+      sampleRate: rate,
+      duration: length / rate,
+      getChannelData: (ch: number) => channelData[ch] ?? channelData[0],
+    };
+  }),
   createGain: vi.fn(() => ({ gain: makeGain(), connect: vi.fn() })),
   createStereoPanner: vi.fn(() => ({ pan: { setValueAtTime: vi.fn() }, connect: vi.fn() })),
   createBiquadFilter: vi.fn(() => ({
@@ -123,5 +134,51 @@ describe('SoundLayerPlayer', () => {
     expect(suspendedCtx.resume).toHaveBeenCalled();
     player.setGain('s1', -6);
     expect(player.getGain('s1')).toBe(-6);
+  });
+
+  it('synthesizes an audio buffer for a synth layer with no sample', () => {
+    const player = new SoundLayerPlayer();
+    player.playNote(makeSampleLayer({ type: 'synth', audioBuffer: undefined }), 60, 0.05);
+    expect(ctx.createBufferSource).toHaveBeenCalled();
+    // The synth path generates into a buffer rather than leaving `buffer` null.
+    const source = ctx.createBufferSource.mock.results[0].value;
+    expect(source.buffer).not.toBeNull();
+  });
+
+  it('does nothing for a disabled layer', () => {
+    const player = new SoundLayerPlayer();
+    player.playNote(makeSampleLayer({ enabled: false }));
+    expect(ctx.createBufferSource).not.toHaveBeenCalled();
+  });
+
+  it('updates an active note gain when setGain is called mid-playback', () => {
+    const player = new SoundLayerPlayer();
+    player.playNote(makeSampleLayer(), 60, 1, 1);
+    player.setGain('s1', -12);
+    const firstGain = ctx.createGain.mock.results[0].value.gain;
+    expect(firstGain.setTargetAtTime).toHaveBeenCalled();
+  });
+
+  it('cleans up the active node and per-note subgraph on ended', () => {
+    const player = new SoundLayerPlayer();
+    player.playNote(makeSampleLayer(), 60, 1, 1);
+    const source = ctx.createBufferSource.mock.results[0].value;
+    expect(typeof source.onended).toBe('function');
+    source.onended();
+    // A subsequent stop is a no-op (the node was already removed).
+    expect(() => player.stop('s1')).not.toThrow();
+  });
+
+  it('stop() with no active nodes is a no-op', () => {
+    const player = new SoundLayerPlayer();
+    expect(() => player.stop('missing')).not.toThrow();
+  });
+
+  it('unloadLayer clears tracked gain and loaded state', () => {
+    const player = new SoundLayerPlayer();
+    player.setGain('s1', -3);
+    expect(player.getGain('s1')).toBe(-3);
+    player.unloadLayer('s1');
+    expect(player.getGain('s1')).toBe(0);
   });
 });

@@ -5,7 +5,7 @@
  * Tests for master dynamics + sidechain helpers (Phase 3.5).
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyMasterDynamics,
   createSidechainDuck,
@@ -177,5 +177,57 @@ describe('masterDynamics — isValidSidechainRoute', () => {
     expect(isValidSidechainRoute({ source: '', target: 'reverb' })).toBe(false);
     expect(isValidSidechainRoute({ source: 'master', target: '' })).toBe(false);
     expect(isValidSidechainRoute({ source: 'master', target: 'reverb' })).toBe(true);
+  });
+});
+
+describe('masterDynamics — sidechain envelope follower', () => {
+  it('drives the duck gain from the analyser peak on each animation tick', () => {
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    let rafCb: FrameRequestCallback | null = null;
+    const cancel = vi.fn();
+    (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
+      rafCb = cb;
+      return 7;
+    };
+    (globalThis as any).cancelAnimationFrame = cancel;
+
+    const setTargetAtTime = vi.fn();
+    const getFloatTimeDomainData = vi.fn((buf: Float32Array) => {
+      buf[10] = 0.8; // a hot peak
+    });
+
+    const ctx = {
+      currentTime: 0,
+      createAnalyser: () => ({
+        fftSize: 256,
+        smoothingTimeConstant: 0,
+        getFloatTimeDomainData,
+        disconnect: () => {},
+      }),
+      createGain: () => ({
+        gain: { value: 0, setTargetAtTime },
+        disconnect: () => {},
+      }),
+    } as unknown as AudioContext;
+
+    try {
+      const duck = createSidechainDuck(ctx, {
+        id: 'x', source: 'master', target: 'reverb',
+        amount: 1, attackSec: 0.01, releaseSec: 0.1, enabled: true,
+      });
+      expect(rafCb).toBeTypeOf('function');
+      rafCb!(16); // run one envelope-follower frame
+      expect(getFloatTimeDomainData).toHaveBeenCalled();
+      expect(setTargetAtTime).toHaveBeenCalled();
+      // Full amount with peak 0.8 → target gain 0.2.
+      expect(setTargetAtTime.mock.calls[0][0]).toBeCloseTo(0.2, 5);
+
+      duck.dispose();
+      expect(cancel).toHaveBeenCalledWith(7);
+    } finally {
+      (globalThis as any).requestAnimationFrame = originalRaf;
+      (globalThis as any).cancelAnimationFrame = originalCancel;
+    }
   });
 });

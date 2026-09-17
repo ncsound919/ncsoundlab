@@ -17,6 +17,8 @@ export interface PadEntry {
   layerId: string;
   name: string;
   type: string;
+  /** Stable layer identity colour, if known. */
+  color?: string;
 }
 
 export type VelocityCurve = 'linear' | 'exponential' | 'log';
@@ -303,7 +305,12 @@ export function MpcPadBank({
                 >
                   <span className="flex items-center justify-between">
                     <span className="text-[8px] font-mono font-bold text-white/70">{String(gridIdx + 1).padStart(2, '0')}</span>
-                    {isFocused && <span className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)]" />}
+                    <span className="flex items-center gap-1">
+                      {entry?.color && (
+                        <span className="w-1.5 h-1.5 rounded-full border border-black/40" style={{ backgroundColor: entry.color }} />
+                      )}
+                      {isFocused && <span className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)]" />}
+                    </span>
                   </span>
                   <div className="min-w-0">
                     <span className="block text-[9px] font-black uppercase tracking-wider text-white truncate">{shown.name}</span>

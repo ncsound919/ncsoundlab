@@ -613,7 +613,6 @@ export const FolderUploadModal: React.FC<FolderUploadModalProps> = ({
               type="file"
               multiple
               accept=".wav,.mp3,.ogg,.flac,.aiff,.m4a"
-              // @ts-ignore
               webkitdirectory=""
               directory=""
               onChange={handleFolderSelect}

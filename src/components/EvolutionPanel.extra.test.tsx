@@ -8,12 +8,13 @@
  * has its getContext override per-test.
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { EvolutionPanel } from './EvolutionPanel';
 import { audioEngine } from '../lib/audioEngine';
 import { generateEvolutionVariations } from '../lib/evolutionEngine';
+import { useEvolutionStore } from '../store/evolutionStore';
 
 vi.mock('../lib/evolutionEngine', () => ({
   generateEvolutionVariations: vi.fn(),
@@ -326,6 +327,39 @@ describe('EvolutionPanel interaction tests', () => {
     expect(calls.onSetVariations).not.toHaveBeenCalled();
     await new Promise((r) => setTimeout(r, 20));
     expect(calls.onSetVariations).not.toHaveBeenCalled();
+  });
+
+  it('publishes a controller bridge that drives generation and variation actions', () => {
+    const { calls } = renderPanel({ variations: [makeVariation('v1'), makeVariation('v2')] });
+    const bridge = useEvolutionStore.getState().bridge;
+    expect(bridge).not.toBeNull();
+    expect(bridge!.variationCount()).toBe(2);
+
+    act(() => {
+      bridge!.setMode('melodic');
+      bridge!.setFx('freeze');
+      bridge!.reEvolve();
+      bridge!.playVariation(1);
+      bridge!.stopPlayback();
+      bridge!.addVariation(0);
+      bridge!.saveVariationToKit(1);
+      bridge!.discardVariation(0);
+      bridge!.playVariation(9); // out of range → no-op
+    });
+
+    expect(calls.onReEvolve).toHaveBeenCalled();
+    expect(calls.onAddLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'v1' }));
+    expect(calls.onSaveToKit).toHaveBeenCalledWith(expect.objectContaining({ id: 'v2' }));
+    expect(calls.onDiscard).toHaveBeenCalledWith('v1');
+    expect(audioEngine.playLayer).toHaveBeenCalled();
+    expect(audioEngine.stop).toHaveBeenCalled();
+  });
+
+  it('clears the controller bridge on unmount', () => {
+    const { unmount } = renderPanel({ variations: [makeVariation('v1')] });
+    expect(useEvolutionStore.getState().bridge).not.toBeNull();
+    unmount();
+    expect(useEvolutionStore.getState().bridge).toBeNull();
   });
 });
 
