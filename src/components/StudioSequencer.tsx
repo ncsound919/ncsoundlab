@@ -27,7 +27,7 @@ import { applySemitoneShift, stepOffsetSeconds } from '../lib/sequencerHelpers';
 import { layerColorFor } from '../lib/layerColors';
 import { audioEngine } from '../lib/audioEngine';
 import { SoundLayerPlayer } from '../audio/SoundLayerPlayer';
-import { MpcPadBank, PadEntry, type SixteenLevelsMode } from './MpcPadBank';
+import { MpcPadBank, PadEntry, type SixteenLevelsMode, type PadPlayMode } from './MpcPadBank';
 import { PianoRoll } from './PianoRoll';
 import { useSequencerStore, BANK_IDS, BankId } from '../store/sequencerStore';
 import { usePatternStore, PATTERN_IDS, type PatternId } from '../store/patternStore';
@@ -51,6 +51,7 @@ import {
   decodeLibrarySample,
 } from '../lib/sampleLibrary';
 import { autoSampleSynthLayer } from '../lib/autoSample';
+import { applyPadParams } from '../lib/padParams';
 import {
   snapshotProgram,
   resolveProgram,
@@ -132,6 +133,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const [padChoke, setPadChoke] = useState<Record<string, number>>({});
   const [padMuted, setPadMuted] = useState<Record<string, boolean>>({});
   const [padLevel, setPadLevel] = useState<Record<string, number>>({}); // per-pad output level multiplier (0..1.5)
+  const [padFilter, setPadFilter] = useState<Record<string, number>>({}); // per-pad low-pass Hz (20000 = off)
+  const [padSendReverb, setPadSendReverb] = useState<Record<string, number>>({});
+  const [padSendDelay, setPadSendDelay] = useState<Record<string, number>>({});
+  const [padVoices, setPadVoices] = useState<Record<string, number>>({}); // 0 = unlimited
+  const [padMode, setPadMode] = useState<Record<string, PadPlayMode>>({});
   const [selectedPad, setSelectedPad] = useState<number>(0);
   const [sixteenLevels, setSixteenLevels] = useState(false);
   const [sixteenLevelsMode, setSixteenLevelsMode] = useState<SixteenLevelsMode>('velocity');
@@ -171,6 +177,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   const padPocketRef = useRef(padPocket);
   const padTuneRef = useRef(padTune);
   const padLevelRef = useRef(padLevel);
+  const padFilterRef = useRef(padFilter);
+  const padSendReverbRef = useRef(padSendReverb);
+  const padSendDelayRef = useRef(padSendDelay);
+  const padVoicesRef = useRef(padVoices);
   const padChokeRef = useRef(padChoke);
   const swingTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const tickRef = useRef<() => void>(() => {});
@@ -189,6 +199,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
   useEffect(() => { padPocketRef.current = padPocket; }, [padPocket]);
   useEffect(() => { padTuneRef.current = padTune; }, [padTune]);
   useEffect(() => { padLevelRef.current = padLevel; }, [padLevel]);
+  useEffect(() => { padFilterRef.current = padFilter; }, [padFilter]);
+  useEffect(() => { padSendReverbRef.current = padSendReverb; }, [padSendReverb]);
+  useEffect(() => { padSendDelayRef.current = padSendDelay; }, [padSendDelay]);
+  useEffect(() => { padVoicesRef.current = padVoices; }, [padVoices]);
   useEffect(() => { padChokeRef.current = padChoke; }, [padChoke]);
   useEffect(() => { timeCorrectRef.current = timeCorrect; }, [timeCorrect]);
   useEffect(() => { activeRowRef.current = activeRowId; }, [activeRowId]);
@@ -247,6 +261,29 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     });
     setPadLevel((prev) => {
       const pruned: Record<string, number> = {};
+      let changed = false;
+      for (const id of Object.keys(prev)) {
+        if (ids.has(id)) pruned[id] = prev[id];
+        else changed = true;
+      }
+      return changed ? pruned : prev;
+    });
+    const pruneNumberMap = (setter: React.Dispatch<React.SetStateAction<Record<string, number>>>) =>
+      setter((prev) => {
+        const pruned: Record<string, number> = {};
+        let changed = false;
+        for (const id of Object.keys(prev)) {
+          if (ids.has(id)) pruned[id] = prev[id];
+          else changed = true;
+        }
+        return changed ? pruned : prev;
+      });
+    pruneNumberMap(setPadFilter);
+    pruneNumberMap(setPadSendReverb);
+    pruneNumberMap(setPadSendDelay);
+    pruneNumberMap(setPadVoices);
+    setPadMode((prev) => {
+      const pruned: Record<string, PadPlayMode> = {};
       let changed = false;
       for (const id of Object.keys(prev)) {
         if (ids.has(id)) pruned[id] = prev[id];
@@ -325,8 +362,13 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       // its original pitch when the pattern runs.
       const tune = padTuneRef.current[layerId] || 0;
       const level = padLevelRef.current[layerId] ?? 1;
-      const velLayer = applySemitoneShift({ ...layer, gain: (layer.gain || 1) * velocity * level }, tune);
-      audioEngine.triggerLayer(velLayer, undefined, choke > 0 ? `choke:${choke}` : undefined, when);
+      const padParams = applyPadParams(layer, {
+        filter: padFilterRef.current,
+        sendReverb: padSendReverbRef.current,
+        sendDelay: padSendDelayRef.current,
+      });
+      const velLayer = applySemitoneShift({ ...padParams, gain: (padParams.gain || 1) * velocity * level }, tune);
+      audioEngine.triggerLayer(velLayer, undefined, choke > 0 ? `choke:${choke}` : undefined, when, { maxVoices: padVoicesRef.current[layerId] ?? 0 });
     }
   }, [layers, isLayerAudible, bpm]);
 
@@ -744,13 +786,18 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     const layer = layers.find((l) => l.id === layerId);
     if (!layer || !isLayerAudible(layer)) return;
     const level = padLevel[layerId] ?? 1;
+    const withPads = applyPadParams(layer, {
+      filter: padFilter,
+      sendReverb: padSendReverb,
+      sendDelay: padSendDelay,
+    });
     const base: SoundLayer = {
-      ...layer,
-      gain: Math.max(0.02, (layer.gain || 1) * velocity * level),
+      ...withPads,
+      gain: Math.max(0.02, (withPads.gain || 1) * velocity * level),
     };
     const shifted = applySemitoneShift(base, semitones);
-    audioEngine.triggerLayer(shifted, undefined, chokeKey, when);
-  }, [layers, isLayerAudible, padLevel]);
+    audioEngine.triggerLayer(shifted, undefined, chokeKey, when, { maxVoices: padVoices[layerId] ?? 0 });
+  }, [layers, isLayerAudible, padLevel, padFilter, padSendReverb, padSendDelay, padVoices]);
 
   const playMidiNote = useCallback((midi: number, velocity?: number) => {    const rowId = activeRowRef.current;
     const layer = layers.find((l) => l.id === rowId);
@@ -823,6 +870,31 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
 
   const setLevel = useCallback((layerId: string, level: number) => {
     setPadLevel((prev) => ({ ...prev, [layerId]: Math.max(0, Math.min(1.5, level)) }));
+  }, []);
+
+  const setFilter = useCallback((layerId: string, hz: number) => {
+    setPadFilter((prev) => ({ ...prev, [layerId]: Math.max(200, Math.min(20000, hz)) }));
+  }, []);
+
+  const setSendReverb = useCallback((layerId: string, amount: number) => {
+    setPadSendReverb((prev) => ({ ...prev, [layerId]: Math.max(0, Math.min(1, amount)) }));
+  }, []);
+
+  const setSendDelay = useCallback((layerId: string, amount: number) => {
+    setPadSendDelay((prev) => ({ ...prev, [layerId]: Math.max(0, Math.min(1, amount)) }));
+  }, []);
+
+  const setVoices = useCallback((layerId: string, voices: number) => {
+    setPadVoices((prev) => ({ ...prev, [layerId]: Math.max(0, Math.min(16, Math.round(voices))) }));
+  }, []);
+
+  const setPadPlayMode = useCallback((layerId: string, mode: PadPlayMode) => {
+    setPadMode((prev) => ({ ...prev, [layerId]: mode }));
+  }, []);
+
+  // Gate/toggle release: fade-stop this layer's live voices.
+  const releasePad = useCallback((layerId: string) => {
+    audioEngine.stopLayerVoices(layerId);
   }, []);
 
   const togglePadMute = useCallback((layerId: string) => {
@@ -901,6 +973,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       choke: padChoke,
       muted: padMuted,
       level: padLevel,
+      filter: padFilter,
+      sendReverb: padSendReverb,
+      sendDelay: padSendDelay,
+      voices: padVoices,
+      mode: padMode,
       sixteenLevels,
       sixteenLevelsMode,
       globalSwing,
@@ -912,7 +989,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     setPresetName('');
     setPresetStatus(`Saved "${body.name}"`);
     await refreshPadPresets();
-  }, [presetName, padPresets.length, programs, padSwing, padPocket, padTune, padChoke, padMuted, padLevel, sixteenLevels, sixteenLevelsMode, globalSwing, fullLevel, velocityCurve, timeCorrect, layers, refreshPadPresets]);
+  }, [presetName, padPresets.length, programs, padSwing, padPocket, padTune, padChoke, padMuted, padLevel, padFilter, padSendReverb, padSendDelay, padVoices, padMode, sixteenLevels, sixteenLevelsMode, globalSwing, fullLevel, velocityCurve, timeCorrect, layers, refreshPadPresets]);
 
   const loadPreset = useCallback(async (id: string) => {
     const stored = padPresets.find((p) => p.id === id);
@@ -926,6 +1003,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     setPadTune(resolved.tune);
     setPadChoke(resolved.choke);
     setPadLevel(resolved.level);
+    setPadFilter(resolved.filter);
+    setPadSendReverb(resolved.sendReverb);
+    setPadSendDelay(resolved.sendDelay);
+    setPadVoices(resolved.voices);
+    setPadMode(resolved.mode);
     setGlobalSwing(resolved.globalSwing);
     setSixteenLevels(resolved.sixteenLevels);
     setSixteenLevelsMode(resolved.sixteenLevelsMode);
@@ -1020,6 +1102,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       tune: padTune,
       choke: padChoke,
       level: padLevel,
+      filter: padFilter,
+      sendReverb: padSendReverb,
+      sendDelay: padSendDelay,
+      voices: padVoices,
+      mode: padMode,
     };
     downloadFile(JSON.stringify(data, null, 2), 'mpc-program.prgm');
   };
@@ -1050,6 +1137,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           const loadedTune: Record<string, number> = {};
           const loadedChoke: Record<string, number> = {};
           const loadedLevel: Record<string, number> = {};
+          const loadedFilter: Record<string, number> = {};
+          const loadedSendReverb: Record<string, number> = {};
+          const loadedSendDelay: Record<string, number> = {};
+          const loadedVoices: Record<string, number> = {};
+          const loadedMode: Record<string, PadPlayMode> = {};
           // v4: programs are per-bank arrays of layerId (older v3 files had flat `pads`)
           if (data.programs && typeof data.programs === 'object') {
             for (const bank of BANK_IDS) {
@@ -1076,10 +1168,30 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           for (const [id, v] of Object.entries(data.level || {})) {
             if (layers.some((l) => l.id === id) && typeof v === 'number') loadedLevel[id] = Math.max(0, Math.min(1.5, v));
           }
+          for (const [id, v] of Object.entries(data.filter || {})) {
+            if (layers.some((l) => l.id === id) && typeof v === 'number') loadedFilter[id] = Math.max(200, Math.min(20000, v));
+          }
+          for (const [id, v] of Object.entries(data.sendReverb || {})) {
+            if (layers.some((l) => l.id === id) && typeof v === 'number') loadedSendReverb[id] = Math.max(0, Math.min(1, v));
+          }
+          for (const [id, v] of Object.entries(data.sendDelay || {})) {
+            if (layers.some((l) => l.id === id) && typeof v === 'number') loadedSendDelay[id] = Math.max(0, Math.min(1, v));
+          }
+          for (const [id, v] of Object.entries(data.voices || {})) {
+            if (layers.some((l) => l.id === id) && typeof v === 'number') loadedVoices[id] = Math.max(0, Math.min(16, v));
+          }
+          for (const [id, v] of Object.entries(data.mode || {})) {
+            if (layers.some((l) => l.id === id) && (v === 'oneshot' || v === 'gate' || v === 'toggle')) loadedMode[id] = v;
+          }
           setPadSwing(loadedSwing);
           setPadTune(loadedTune);
           setPadChoke(loadedChoke);
           setPadLevel(loadedLevel);
+          setPadFilter(loadedFilter);
+          setPadSendReverb(loadedSendReverb);
+          setPadSendDelay(loadedSendDelay);
+          setPadVoices(loadedVoices);
+          setPadMode(loadedMode);
           setSelectedPad(0);
           if (typeof data.globalSwing === 'number') setGlobalSwing(data.globalSwing);
           if (typeof data.sixteenLevels === 'boolean') setSixteenLevels(data.sixteenLevels);
@@ -1629,6 +1741,11 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
         padPocket={padPocket}
         padTune={padTune}
         padLevel={padLevel}
+        padFilter={padFilter}
+        padSendReverb={padSendReverb}
+        padSendDelay={padSendDelay}
+        padVoices={padVoices}
+        padMode={padMode}
           padChoke={padChoke}
           padMuted={padMuted}
           bpm={bpm}
@@ -1643,6 +1760,12 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
           onSetPocket={setPocket}
           onSetTune={setTune}
           onSetLevel={setLevel}
+          onSetFilter={setFilter}
+          onSetSendReverb={setSendReverb}
+          onSetSendDelay={setSendDelay}
+          onSetVoices={setVoices}
+          onSetMode={setPadPlayMode}
+          onPadRelease={releasePad}
           onSetChoke={setChoke}
           onTogglePadMute={togglePadMute}
           onClearPad={clearPad}

@@ -8,7 +8,7 @@
  * synth auto-sampler.
  */
 
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 
@@ -66,6 +66,7 @@ vi.mock('../audio/transport/transport', () => ({
 const audioState = vi.hoisted(() => ({
   triggerLayer: vi.fn(),
   exportWav: vi.fn(),
+  stopLayerVoices: vi.fn(),
 }));
 
 vi.mock('../lib/audioEngine', () => ({
@@ -74,6 +75,7 @@ vi.mock('../lib/audioEngine', () => ({
     getMasterRackInput: vi.fn(() => null),
     triggerLayer: audioState.triggerLayer,
     exportWav: audioState.exportWav,
+    stopLayerVoices: audioState.stopLayerVoices,
     stop: vi.fn(),
     playAll: vi.fn(),
     getIsPlaying: vi.fn(() => false),
@@ -235,6 +237,7 @@ describe('StudioSequencer programs + keygroup', () => {
     toneState.sequenceCallback = null;
     Element.prototype.setPointerCapture = vi.fn() as never;
     Element.prototype.releasePointerCapture = vi.fn() as never;
+    Element.prototype.hasPointerCapture = vi.fn(() => true) as never;
     // Deterministic pad programs: the mount auto-fill only runs when empty.
     const blank = () => Array.from({ length: 16 }, () => null as string | null);
     const banks = { A: blank(), B: blank(), C: blank(), D: blank() };
@@ -320,6 +323,29 @@ describe('StudioSequencer programs + keygroup', () => {
     const id = (select.querySelector('option[value]:not([value=""])') as HTMLOptionElement).value;
     fireEvent.change(select, { target: { value: id } });
     await waitFor(() => expect(screen.getByText(/missing: Kick/)).toBeDefined());
+  });
+
+  it('applies per-pad filter/sends/voice-limit and gate release', () => {
+    renderSequencer();
+    audioState.triggerLayer.mockClear();
+    fireEvent.change(screen.getByLabelText('Per-pad filter'), { target: { value: '1200' } });
+    fireEvent.change(screen.getByLabelText('Per-pad reverb send'), { target: { value: '0.5' } });
+    const voicesSection = screen.getByText('Voices').closest('div[class*="space-y-1.5"]') as HTMLElement;
+    fireEvent.click(within(voicesSection).getByRole('button', { name: '2' }));
+    const modeSection = screen.getByText('Play Mode').closest('div[class*="space-y-1.5"]') as HTMLElement;
+    fireEvent.click(within(modeSection).getByRole('button', { name: 'gate' }));
+
+    const pad = screen.getByText('01').closest('button') as HTMLElement;
+    fireEvent.pointerDown(pad, { pointerId: 1, clientY: 25 });
+    const call = audioState.triggerLayer.mock.calls.at(-1) as [SoundLayer, unknown, unknown, unknown, { maxVoices: number }];
+    expect(call[0].fx.filterFreq).toBe(1200);
+    expect(call[0].fx.filterType).toBe('lowpass');
+    expect(call[0].sends).toMatchObject({ reverb: 0.5 });
+    expect(call[4]).toMatchObject({ maxVoices: 2 });
+
+    // Gate mode fades the layer's voices when the pad is released.
+    fireEvent.pointerUp(pad, { pointerId: 1 });
+    expect(audioState.stopLayerVoices).toHaveBeenCalledWith('l1');
   });
 
   it('auto-samples the active synth across 16 pitches onto Program B', async () => {

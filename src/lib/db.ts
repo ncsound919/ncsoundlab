@@ -134,6 +134,11 @@ export interface StoredPadProgram {
   choke: Record<string, number>;
   muted: Record<string, boolean>;
   level: Record<string, number>;
+  filter: Record<string, number>;
+  sendReverb: Record<string, number>;
+  sendDelay: Record<string, number>;
+  voices: Record<string, number>;
+  mode: Record<string, 'oneshot' | 'gate' | 'toggle'>;
   sixteenLevels: boolean;
   sixteenLevelsMode: 'velocity' | 'tune';
   globalSwing: number;

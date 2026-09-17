@@ -43,6 +43,12 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     onSetPocket: vi.fn(),
     onSetTune: vi.fn(),
     onSetLevel: vi.fn(),
+    onSetFilter: vi.fn(),
+    onSetSendReverb: vi.fn(),
+    onSetSendDelay: vi.fn(),
+    onSetVoices: vi.fn(),
+    onSetMode: vi.fn(),
+    onPadRelease: vi.fn(),
     onSetChoke: vi.fn(),
     onTogglePadMute: vi.fn(),
     onClearPad: vi.fn(),
@@ -70,6 +76,11 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     padPocket: { 'layer-1': -5 },
     padTune: { 'layer-1': 3 },
     padLevel: { 'layer-1': 0.8 },
+    padFilter: {},
+    padSendReverb: {},
+    padSendDelay: {},
+    padVoices: {},
+    padMode: {},
     padChoke: { 'layer-1': 2 },
     padMuted: { 'layer-1': false },
     bpm: 120,
@@ -355,6 +366,50 @@ describe('MpcPadBank interactions', () => {
     // Swap is enabled once source and target differ.
     fireEvent.click(screen.getByRole('button', { name: 'Swap' }));
     expect(props.onSwapPads).toHaveBeenCalledWith(0, 5);
+  });
+
+  it('applies per-pad filter, sends, voice limit and play mode', () => {
+    const props = makeProps();
+    render(<MpcPadBank {...props} />);
+    fireEvent.change(screen.getByLabelText('Per-pad filter'), { target: { value: '1500' } });
+    expect(props.onSetFilter).toHaveBeenCalledWith('layer-1', 1500);
+    fireEvent.change(screen.getByLabelText('Per-pad reverb send'), { target: { value: '0.4' } });
+    expect(props.onSetSendReverb).toHaveBeenCalledWith('layer-1', 0.4);
+    fireEvent.change(screen.getByLabelText('Per-pad delay send'), { target: { value: '0.3' } });
+    expect(props.onSetSendDelay).toHaveBeenCalledWith('layer-1', 0.3);
+
+    const voices = findSection('Voices', document.body);
+    fireEvent.click(within(voices).getByRole('button', { name: '4' }));
+    expect(props.onSetVoices).toHaveBeenCalledWith('layer-1', 4);
+
+    const mode = findSection('Play Mode', document.body);
+    fireEvent.click(within(mode).getByRole('button', { name: 'gate' }));
+    expect(props.onSetMode).toHaveBeenCalledWith('layer-1', 'gate');
+  });
+
+  it('releases gate-mode pads on pointer up and latches toggle-mode pads', () => {
+    const gate = makeProps({ padMode: { 'layer-1': 'gate' } });
+    const g = render(<MpcPadBank {...gate} />);
+    const gatePads = getPads(g.container);
+    setRect(gatePads[0]);
+    fireEvent.pointerDown(gatePads[0], { pointerId: 1, clientY: 25 });
+    expect(gate.onTriggerPad).toHaveBeenCalled();
+    fireEvent.pointerUp(gatePads[0], { pointerId: 1 });
+    expect(gate.onPadRelease).toHaveBeenCalledWith('layer-1');
+    g.unmount();
+
+    const toggle = makeProps({ padMode: { 'layer-1': 'toggle' } });
+    const t = render(<MpcPadBank {...toggle} />);
+    const togglePads = getPads(t.container);
+    setRect(togglePads[0]);
+    fireEvent.pointerDown(togglePads[0], { pointerId: 1, clientY: 25 });
+    expect(toggle.onTriggerPad).toHaveBeenCalledTimes(1);
+    fireEvent.pointerUp(togglePads[0], { pointerId: 1 });
+    expect(toggle.onPadRelease).not.toHaveBeenCalled();
+    // Second press stops (releases) rather than retriggering.
+    fireEvent.pointerDown(togglePads[0], { pointerId: 1, clientY: 25 });
+    expect(toggle.onPadRelease).toHaveBeenCalledWith('layer-1');
+    expect(toggle.onTriggerPad).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to the global swing/tune values and shows focus indicator', () => {

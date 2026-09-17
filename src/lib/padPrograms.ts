@@ -34,6 +34,11 @@ export interface LiveProgramState {
   choke: Record<string, number>;
   muted: Record<string, boolean>;
   level: Record<string, number>;
+  filter: Record<string, number>;
+  sendReverb: Record<string, number>;
+  sendDelay: Record<string, number>;
+  voices: Record<string, number>;
+  mode: Record<string, 'oneshot' | 'gate' | 'toggle'>;
   sixteenLevels: boolean;
   sixteenLevelsMode: SixteenLevelsMode;
   globalSwing: number;
@@ -71,6 +76,20 @@ const remapBoolKeys = (obj: Record<string, boolean>, map: Map<string, string>): 
   return out;
 };
 
+const remapModes = (
+  obj: Record<string, 'oneshot' | 'gate' | 'toggle'>,
+  map: Map<string, string>
+): Record<string, 'oneshot' | 'gate' | 'toggle'> => {
+  const out: Record<string, 'oneshot' | 'gate' | 'toggle'> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const nk = map.get(k);
+    if (nk !== undefined) {
+      out[nk] = v === 'gate' || v === 'toggle' ? v : 'oneshot';
+    }
+  }
+  return out;
+};
+
 /** Snapshot live id-keyed state into a name-keyed preset body. */
 export function snapshotProgram(
   name: string,
@@ -99,6 +118,14 @@ export function snapshotProgram(
     }
     return out;
   };
+  const remapMode = (o: Record<string, 'oneshot' | 'gate' | 'toggle'>) => {
+    const out: Record<string, 'oneshot' | 'gate' | 'toggle'> = {};
+    for (const [id, v] of Object.entries(o)) {
+      const n = names.get(id);
+      if (n !== undefined) out[n] = v;
+    }
+    return out;
+  };
   return {
     name: (name || '').trim() || 'Program',
     banks,
@@ -108,6 +135,11 @@ export function snapshotProgram(
     choke: remapNum(live.choke),
     muted: remapBool(live.muted),
     level: remapNum(live.level),
+    filter: remapNum(live.filter),
+    sendReverb: remapNum(live.sendReverb),
+    sendDelay: remapNum(live.sendDelay),
+    voices: remapNum(live.voices),
+    mode: remapMode(live.mode),
     sixteenLevels: live.sixteenLevels,
     sixteenLevelsMode: live.sixteenLevelsMode,
     globalSwing: live.globalSwing,
@@ -147,6 +179,11 @@ export function resolveProgram(stored: StoredPadProgram, layers: LayerRef[]): Re
     choke: remapKeys(stored.choke ?? {}, ids),
     muted: remapBoolKeys(stored.muted ?? {}, ids),
     level: remapKeys(stored.level ?? {}, ids),
+    filter: remapKeys(stored.filter ?? {}, ids),
+    sendReverb: remapKeys(stored.sendReverb ?? {}, ids),
+    sendDelay: remapKeys(stored.sendDelay ?? {}, ids),
+    voices: remapKeys(stored.voices ?? {}, ids),
+    mode: remapModes(stored.mode ?? {}, ids),
     sixteenLevels: !!stored.sixteenLevels,
     sixteenLevelsMode: stored.sixteenLevelsMode === 'tune' ? 'tune' : 'velocity',
     globalSwing: stored.globalSwing ?? 0,

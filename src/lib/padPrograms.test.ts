@@ -51,6 +51,11 @@ const live = (over: Partial<LiveProgramState> = {}): LiveProgramState => ({
   choke: {},
   muted: { l1: true },
   level: { l1: 0.8 },
+  filter: { l1: 1200 },
+  sendReverb: { l1: 0.3 },
+  sendDelay: {},
+  voices: { l1: 2 },
+  mode: { l1: 'gate' },
   sixteenLevels: true,
   sixteenLevelsMode: 'tune',
   globalSwing: 50,
@@ -71,6 +76,10 @@ describe('snapshotProgram', () => {
     expect(snap.tune).toEqual({ Snare: 3 });
     expect(snap.muted).toEqual({ Kick: true });
     expect(snap.level).toEqual({ Kick: 0.8 });
+    expect(snap.filter).toEqual({ Kick: 1200 });
+    expect(snap.sendReverb).toEqual({ Kick: 0.3 });
+    expect(snap.voices).toEqual({ Kick: 2 });
+    expect(snap.mode).toEqual({ Kick: 'gate' });
   });
 
   it('drops params for layers that no longer exist', () => {
@@ -90,6 +99,9 @@ describe('resolveProgram', () => {
     expect(resolved.missing).toEqual(['Snare']);
     expect(resolved.swing).toEqual({ n1: 10 });
     expect(resolved.tune).toEqual({});
+    expect(resolved.filter).toEqual({ n1: 1200 });
+    expect(resolved.voices).toEqual({ n1: 2 });
+    expect(resolved.mode).toEqual({ n1: 'gate' });
   });
 
   it('sanitizes the mode and globals', () => {

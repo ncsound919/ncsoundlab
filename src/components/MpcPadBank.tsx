@@ -32,6 +32,12 @@ export type VelocityCurve = 'linear' | 'exponential' | 'log';
  */
 export type SixteenLevelsMode = 'velocity' | 'tune';
 
+/**
+ * MPC pad playback mode: `oneshot` plays through, `gate` sounds only while
+ * held, `toggle` starts on press and stops on the next press.
+ */
+export type PadPlayMode = 'oneshot' | 'gate' | 'toggle';
+
 interface MpcPadBankProps {
   entries: (PadEntry | null)[]; // active bank's 16 slots
   activeBank: BankId;
@@ -45,6 +51,15 @@ interface MpcPadBankProps {
   padTune: Record<string, number>;
   /** Per-pad output level multiplier (0..1.5, default 1). */
   padLevel: Record<string, number>;
+  /** Per-pad low-pass cutoff in Hz (20000 = bypass/off). */
+  padFilter: Record<string, number>;
+  /** Per-pad FX send levels (0..1). */
+  padSendReverb: Record<string, number>;
+  padSendDelay: Record<string, number>;
+  /** Per-pad voice limit (0 = unlimited). */
+  padVoices: Record<string, number>;
+  /** Per-pad playback mode. */
+  padMode: Record<string, PadPlayMode>;
   padChoke: Record<string, number>;
   padMuted: Record<string, boolean>;
   bpm: number;
@@ -60,6 +75,13 @@ interface MpcPadBankProps {
   onSetPocket: (layerId: string, pocketMs: number) => void;
   onSetTune: (layerId: string, tune: number) => void;
   onSetLevel: (layerId: string, level: number) => void;
+  onSetFilter: (layerId: string, hz: number) => void;
+  onSetSendReverb: (layerId: string, amount: number) => void;
+  onSetSendDelay: (layerId: string, amount: number) => void;
+  onSetVoices: (layerId: string, voices: number) => void;
+  onSetMode: (layerId: string, mode: PadPlayMode) => void;
+  /** Gate/toggle release: fade-stop the layer's live voices. */
+  onPadRelease?: (layerId: string) => void;
   onSetChoke: (layerId: string, group: number) => void;
   onTogglePadMute: (layerId: string) => void;
   onClearPad: (index: number) => void;
@@ -164,6 +186,11 @@ export function MpcPadBank({
   padPocket,
   padTune,
   padLevel,
+  padFilter,
+  padSendReverb,
+  padSendDelay,
+  padVoices,
+  padMode,
   padChoke,
   padMuted,
   bpm,
@@ -178,6 +205,12 @@ export function MpcPadBank({
   onSetPocket,
   onSetTune,
   onSetLevel,
+  onSetFilter,
+  onSetSendReverb,
+  onSetSendDelay,
+  onSetVoices,
+  onSetMode,
+  onPadRelease,
   onSetChoke,
   onTogglePadMute,
   onClearPad,
@@ -201,6 +234,8 @@ export function MpcPadBank({
   const repeatTargetRef = useRef<{ layerId: string; semitones: number; velocity: number } | null>(null);
   /** Copy/paste source pad index (local UI state; the parent owns the program). */
   const [copyIdx, setCopyIdx] = useState<number | null>(null);
+  /** Layer ids latched on in toggle mode. */
+  const [latched, setLatched] = useState<Set<string>>(() => new Set());
 
   const stopRepeat = useCallback(() => {
     repeatRef.current?.stop();
@@ -243,6 +278,11 @@ export function MpcPadBank({
   const selectedPocket = activeEntry ? Math.round(padPocket[activeEntry.layerId] || 0) : 0;
   const selectedTune = activeEntry ? Math.round(padTune[activeEntry.layerId] || 0) : 0;
   const selectedLevel = activeEntry ? Math.round((padLevel[activeEntry.layerId] ?? 1) * 100) / 100 : 1;
+  const selectedFilter = activeEntry ? (padFilter[activeEntry.layerId] ?? 20000) : 20000;
+  const selectedSendReverb = activeEntry ? (padSendReverb[activeEntry.layerId] ?? 0) : 0;
+  const selectedSendDelay = activeEntry ? (padSendDelay[activeEntry.layerId] ?? 0) : 0;
+  const selectedVoices = activeEntry ? (padVoices[activeEntry.layerId] ?? 0) : 0;
+  const selectedMode: PadPlayMode = activeEntry ? (padMode[activeEntry.layerId] ?? 'oneshot') : 'oneshot';
   const selectedChoke = activeEntry ? (padChoke[activeEntry.layerId] || 0) : 0;
   const selectedMuted = activeEntry ? !!padMuted[activeEntry.layerId] : false;
 
@@ -259,21 +299,41 @@ export function MpcPadBank({
     e.currentTarget.setPointerCapture(e.pointerId);
     onSelectPad(gridIdx);
     if (!entry || padMuted[entry.layerId]) return;
+    const mode = padMode[entry.layerId] ?? 'oneshot';
+    if (mode === 'toggle' && latched.has(entry.layerId)) {
+      // Second press on a latched pad stops it.
+      setLatched((prev) => {
+        const next = new Set(prev);
+        next.delete(entry.layerId);
+        return next;
+      });
+      onPadRelease?.(entry.layerId);
+      stopRepeat();
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const y = (e.clientY - rect.top) / rect.height;
     // 16-Levels velocity mode uses a fixed per-pad velocity; otherwise the
     // pointer height on the pad sets velocity.
     const velocity = velocityOverride ?? velocityFor(y);
+    if (mode === 'toggle') {
+      setLatched((prev) => new Set(prev).add(entry.layerId));
+    }
     onTriggerPad(entry.layerId, level, velocity);
     onPadInput?.(entry.layerId, velocity);
-    startRepeat(entry.layerId, level, velocity);
+    // Note repeat is a one-shot performance gesture; gate/toggle own their
+    // lifetime via press/release.
+    if (mode === 'oneshot') startRepeat(entry.layerId, level, velocity);
   };
 
-  const handlePadUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+  const handlePadUp = (e: React.PointerEvent<HTMLButtonElement>, entry?: PadEntry) => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
     stopRepeat();
+    if (entry && (padMode[entry.layerId] ?? 'oneshot') === 'gate') {
+      onPadRelease?.(entry.layerId);
+    }
   };
 
   return (
@@ -345,10 +405,10 @@ export function MpcPadBank({
               return (
                 <button
                   key={gridIdx}
-                  onPointerDown={(e) => { e.preventDefault(); handlePadDown(shown, semitoneLevel, gridIdx, e, velocityOverride); }}
-                  onPointerUp={handlePadUp}
-                  onPointerLeave={stopRepeat}
-                  onPointerCancel={handlePadUp}
+                    onPointerDown={(e) => { e.preventDefault(); handlePadDown(shown, semitoneLevel, gridIdx, e, velocityOverride); }}
+                    onPointerUp={(e) => handlePadUp(e, shown)}
+                    onPointerLeave={stopRepeat}
+                    onPointerCancel={(e) => handlePadUp(e, shown)}
                   onContextMenu={(e) => e.preventDefault()}
                   onDragOver={(e) => {
                     if (e.dataTransfer.types.includes(SAMPLE_DRAG_MIME)) {
@@ -367,7 +427,7 @@ export function MpcPadBank({
                     isSelected
                       ? `${PAD_COLORS[gridIdx % 16]} ring-2 ${BANK_ACCENT[activeBank].ring}`
                       : `${PAD_COLORS[gridIdx % 16]} hover:brightness-125 active:scale-95`
-                  } ${muted ? 'opacity-45' : ''} ${isFocused ? 'outline outline-2 outline-offset-1 outline-white/60' : ''}`}
+                  } ${muted ? 'opacity-45' : ''} ${isFocused ? 'outline outline-2 outline-offset-1 outline-white/60' : ''} ${latched.has(shown.layerId) ? 'ring-2 ring-rose-400 shadow-[0_0_16px_rgba(244,63,94,0.5)]' : ''}`}
                   title={`${shown.name}${muted ? ' (muted)' : ''}${isFocused ? ' — active layer' : ''}${sixteenLevels ? (velocityLevels ? ` · L${gridIdx} velocity` : ` · +${gridIdx} st`) : semitoneLevel !== 0 ? ` · ${semitoneLevel >= 0 ? '+' : ''}${semitoneLevel} st` : ''}`}
                 >
                   <span className="flex items-center justify-between">
@@ -618,6 +678,103 @@ export function MpcPadBank({
               ))}
             </div>
           </div>
+
+          {/* Playback mode (one-shot / gate / toggle) */}
+          <div className="space-y-1.5">
+            <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest">Play Mode</span>
+            <div className="grid grid-cols-3 gap-1">
+              {(['oneshot', 'gate', 'toggle'] as PadPlayMode[]).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => activeEntry && onSetMode(activeEntry.layerId, m)}
+                  disabled={!activeEntry}
+                  className={`py-1 rounded text-[9px] font-mono font-bold uppercase transition-all disabled:opacity-30 ${
+                    selectedMode === m ? 'bg-rose-500/20 border border-rose-500/50 text-rose-300' : 'bg-[#121215] border border-[#1e293b] text-slate-500 hover:text-white'
+                  }`}
+                >
+                  {m === 'oneshot' ? '1-shot' : m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Voice limit */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest">Voices</span>
+              <span className="text-[11px] font-mono font-black text-cyan-400">{selectedVoices === 0 ? '∞' : selectedVoices}</span>
+            </div>
+            <div className="grid grid-cols-5 gap-1">
+              {[0, 1, 2, 4, 8].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => activeEntry && onSetVoices(activeEntry.layerId, n)}
+                  disabled={!activeEntry}
+                  className={`py-1 rounded text-[9px] font-mono font-bold transition-all disabled:opacity-30 ${
+                    selectedVoices === n ? 'bg-cyan-500/20 border border-cyan-500/50 text-cyan-300' : 'bg-[#121215] border border-[#1e293b] text-slate-500 hover:text-white'
+                  }`}
+                >
+                  {n === 0 ? '∞' : n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Per-pad filter (low-pass) */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest">Pad Filter</span>
+              <span className="text-[11px] font-mono font-black text-emerald-400">
+                {selectedFilter >= 20000 ? 'Off' : `${(selectedFilter / 1000).toFixed(1)}kHz`}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="200"
+              max="20000"
+              step="100"
+              value={selectedFilter}
+              disabled={!activeEntry}
+              onChange={(e) => activeEntry && onSetFilter(activeEntry.layerId, parseInt(e.target.value))}
+              className="w-full accent-emerald-400 h-1.5 rounded-lg cursor-pointer disabled:opacity-30"
+              aria-label="Per-pad filter"
+            />
+          </div>
+
+          {/* Per-pad FX sends */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest">Send Reverb</span>
+              <span className="text-[11px] font-mono font-black text-indigo-400">{Math.round(selectedSendReverb * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={selectedSendReverb}
+              disabled={!activeEntry}
+              onChange={(e) => activeEntry && onSetSendReverb(activeEntry.layerId, parseFloat(e.target.value))}
+              className="w-full accent-indigo-400 h-1.5 rounded-lg cursor-pointer disabled:opacity-30"
+              aria-label="Per-pad reverb send"
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest">Send Delay</span>
+              <span className="text-[11px] font-mono font-black text-purple-400">{Math.round(selectedSendDelay * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={selectedSendDelay}
+              disabled={!activeEntry}
+              onChange={(e) => activeEntry && onSetSendDelay(activeEntry.layerId, parseFloat(e.target.value))}
+              className="w-full accent-purple-400 h-1.5 rounded-lg cursor-pointer disabled:opacity-30"
+              aria-label="Per-pad delay send"
+            />
+          </div>
+
 
           {/* Global swing */}
           <div className="space-y-1.5">

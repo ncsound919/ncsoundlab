@@ -16,9 +16,15 @@ import { useMasterDynamicsStore } from '../store/masterDynamicsStore';
 // inside methods at runtime — never at module-evaluation time.
 import { audioEngine as sharedAudioEngine } from '../audio/AudioEngine';
 
+/** One live voice for MPC-style voice-limit / gate / toggle handling. */
+interface LayerVoice {
+  source: AudioScheduledSourceNode;
+  gain: (AudioNode & { gain: AudioParam }) | null;
+  startedAt: number;
+}
+
 /** Shape of a single band inside a rack EQ module's serialized settings. */
-interface EqBandShape {
-  enabled?: boolean;
+interface EqBandShape {  enabled?: boolean;
   type?: string;
   freq?: number;
   q?: number;
@@ -87,6 +93,10 @@ export class AudioEngine {
   // MPC choke/mute groups. Each entry tracks the hit's gain node so a choke can
   // fade the sound out instead of hard-stopping mid-waveform (click).
   private chokeGroups = new Map<string, Set<{ source: AudioScheduledSourceNode; gain: AudioNode & { gain: AudioParam } }>>();
+  // Per-layer voice tracking for MPC-style voice limits, gate/hold and toggle
+  // playback. Keyed by layer id; each entry keeps the hit's gain node so a
+  // voice can be faded out (click-free) instead of hard-cut.
+  private layerVoices = new Map<string, Set<LayerVoice>>();
   // Last rack modules, so offline exports can render through the master rack too
   private lastRackModules: RackModule[] = [];
 
@@ -918,6 +928,38 @@ export class AudioEngine {
     return this.loopEnabled;
   }
 
+  /**
+   * Fade-stop every live voice for a layer. Used by MPC gate/hold and toggle
+   * pad playback (stop on release / on second press) and by voice stealing.
+   */
+  stopLayerVoices(layerId: string, fadeSec = 0.012): void {
+    const voices = this.layerVoices.get(layerId);
+    if (!voices || voices.size === 0) return;
+    const at = this.context.currentTime;
+    for (const voice of voices) {
+      this.fadeStopLayerVoice(voice, at, fadeSec);
+    }
+    this.layerVoices.delete(layerId);
+  }
+
+  /** Fade a single voice's gain, then stop its source (click-free). */
+  private fadeStopLayerVoice(voice: LayerVoice, at: number, fadeSec = 0.008): void {
+    try {
+      if (voice.gain) {
+        voice.gain.gain.cancelScheduledValues(at);
+        voice.gain.gain.setValueAtTime(Math.max(0.0001, voice.gain.gain.value), at);
+        voice.gain.gain.exponentialRampToValueAtTime(0.0001, at + fadeSec);
+      }
+    } catch {
+      // gain already disconnected / not an AudioParam — fall through to stop
+    }
+    try {
+      voice.source.stop(at + fadeSec + 0.002);
+    } catch {
+      // source not started / already stopping — ignore
+    }
+  }
+
   stop() {
     this.isPlaying = false;
     if (this.loopTimer) {
@@ -941,6 +983,7 @@ export class AudioEngine {
     this.activeSources = [];
     // Release MPC choke groups (their sources are all being stopped here)
     this.chokeGroups.clear();
+    this.layerVoices.clear();
 
     this.restoreTimer = setTimeout(() => {
       for (const source of sourcesToStop) {
@@ -1094,13 +1137,26 @@ export class AudioEngine {
    * @param chokeKey when provided, stops any in-flight triggers that share the
    *   same key first (MPC choke/mute groups, e.g. open + closed hi-hat).
    */
-  triggerLayer(layer: SoundLayer, duration?: number, chokeKey?: string, when?: number): void {
+  triggerLayer(layer: SoundLayer, duration?: number, chokeKey?: string, when?: number, opts?: { maxVoices?: number }): void {
     if (!layer || !layer.enabled || layer.muted === true) return;
     this.resume();
     // Sample-accurate scheduling: callers may pass the Web Audio clock time
     // the hit should land at (e.g. a Tone transport step + swing offset).
     // When omitted we fire immediately, preserving existing behavior.
     const now = when ?? this.context.currentTime;
+    // MPC-style voice limit: before building this voice, fade out the oldest
+    // voices until one slot is free. 0/undefined = unlimited.
+    const maxVoices = opts?.maxVoices ?? 0;
+    if (maxVoices > 0) {
+      const voices = this.layerVoices.get(layer.id);
+      if (voices && voices.size >= maxVoices) {
+        const oldest = [...voices].sort((a, b) => a.startedAt - b.startedAt).slice(0, voices.size - maxVoices + 1);
+        for (const v of oldest) {
+          voices.delete(v);
+          this.fadeStopLayerVoice(v, now);
+        }
+      }
+    }
     let playDur = duration || 1.5;
     if (layer.type === 'sample' && layer.audioBuffer) {
       const bufferDur = layer.audioBuffer.duration;
@@ -1168,6 +1224,21 @@ export class AudioEngine {
       };
       if (source) {
         source.addEventListener('ended', release);
+        // Register the voice for MPC-style voice limits / gate / toggle.
+        const voice: LayerVoice = { source, gain: gainNode ?? null, startedAt: now };
+        let set = this.layerVoices.get(layer.id);
+        if (!set) {
+          set = new Set();
+          this.layerVoices.set(layer.id, set);
+        }
+        set.add(voice);
+        const removeVoice = () => {
+          const current = this.layerVoices.get(layer.id);
+          if (!current) return;
+          current.delete(voice);
+          if (current.size === 0) this.layerVoices.delete(layer.id);
+        };
+        source.addEventListener('ended', removeVoice);
         if (chokeKey) {
           let group = this.chokeGroups.get(chokeKey);
           if (!group) {

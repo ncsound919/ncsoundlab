@@ -167,6 +167,41 @@ describe('triggerLayer new-code paths', () => {
     expect(() => audioEngine.triggerLayer(layer2)).not.toThrow();
     await new Promise((r) => setTimeout(r, 0));
   });
+
+  it('enforces a per-layer voice limit by stealing the oldest voice', async () => {
+    const eng = audioEngine as unknown as { layerVoices: Map<string, Set<unknown>> };
+    eng.layerVoices.clear();
+    const layer = makeSampleLayer();
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+
+    audioEngine.triggerLayer(layer, 0.5, undefined, undefined, { maxVoices: 2 });
+    await tick();
+    audioEngine.triggerLayer(layer, 0.5, undefined, undefined, { maxVoices: 2 });
+    await tick();
+    expect(eng.layerVoices.get('l1')?.size).toBe(2);
+
+    audioEngine.triggerLayer(layer, 0.5, undefined, undefined, { maxVoices: 2 });
+    await tick();
+    // The third hit stole one voice, keeping the cap at 2.
+    expect(eng.layerVoices.get('l1')?.size).toBe(2);
+    eng.layerVoices.clear();
+  });
+
+  it('stopLayerVoices releases the layer voice set', async () => {
+    const eng = audioEngine as unknown as { layerVoices: Map<string, Set<{ source: { stop: unknown } }>> };
+    eng.layerVoices.clear();
+    const layer = makeSampleLayer();
+    audioEngine.triggerLayer(layer);
+    await new Promise((r) => setTimeout(r, 0));
+    const voice = [...(eng.layerVoices.get('l1') ?? [])][0];
+    expect(voice).toBeTruthy();
+
+    audioEngine.stopLayerVoices('l1');
+    expect(voice.source.stop).toHaveBeenCalled();
+    expect(eng.layerVoices.has('l1')).toBe(false);
+    // Stopping a layer with no voices is a safe no-op.
+    expect(() => audioEngine.stopLayerVoices('ghost')).not.toThrow();
+  });
 });
 
 describe('applyMasterDynamics', () => {
