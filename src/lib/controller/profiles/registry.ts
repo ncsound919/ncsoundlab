@@ -119,7 +119,7 @@ export function importProfile(raw: unknown, vendor?: ProfileVendor): RegisteredP
     // Surface the loss rather than pretending the import was complete.
     console.warn(`Imported profile dropped ${dropped.length} invalid binding(s):`, dropped);
   }
-  return { ...summary, bindingCount: summary.bindingCount };
+  return summary;
 }
 
 /** Serialise a registered profile for export. Throws when the id is unknown. */

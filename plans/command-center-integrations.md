@@ -29,9 +29,11 @@ platform is **Phase 7 — see §15**. Pre-work remediation backlog in **§14**.
 - **Phase 2.1**: typed action registry (`src/lib/actions/registry.ts`) — param
   specs, canonical control ranges, `specForAction`, `clampParam`,
   `validateActionArgs` (21 tests, 98.8% statement coverage).
-- **Still open:** §14 item 7 (secret/keychain) is deferred to **Phase 3.1 by
-  design** — it is provider configuration with no consumer until the provider
-  layer exists; building it now would ship untested-in-use code.
+- §14 item 7 **resolved by Phase 3.1**: secrets are owned by the local **Keywire
+  vault**, not by SoundLab. A service token is held in session memory, the
+  provider key is fetched at runtime and never persisted, and all egress leaves
+  through the Rust core (`http_request`) so no CORS or per-provider CSP entry is
+  needed. See the `feat(ai)` commit.
 
 **Pre-existing issues cleared (2026-09-17):**
 - The one `tsc` error on `main` (`CompareEnginePanel.coverage.test.tsx` typed
@@ -1089,7 +1091,7 @@ capability; `[LATENT]` = present but not yet triggered in production.
 |---|---|---|
 | 6 | **CSP blocks all outbound fetch, both builds.** Tauri `connect-src ipc: http://ipc.localhost`; web `connect-src 'self'`. Blocks cloud LLMs, Ollama, and Recourse. | `[VERIFIED]` `tauri.conf.json:26`, `vercel.json:18`, `.headers:7`, `nginx.conf:10` |
 | 6b | **Existing Recourse fetches are already broken in prod** — un-gated and blocked by CSP. Works in Vite dev only. | `[LATENT]` `recourseSong.ts:77,88`, `recourseEvolution.ts:34` |
-| 7 | **No secret storage.** No keychain; IndexedDB/localStorage is plaintext; `.nsl` exports plaintext; `VITE_*` is embedded in the web bundle. | `[GAP]` |
+| 7 | ~~No secret storage~~ **RESOLVED (Phase 3.1)** — Keywire owns secrets; SoundLab holds a session-memory service token and fetches the key at runtime; Rust-side egress. | done 2026-09-17 |
 
 ### P1 — Missing foundations the NL layer requires
 

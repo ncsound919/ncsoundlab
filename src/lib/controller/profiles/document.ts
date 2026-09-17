@@ -26,7 +26,6 @@ import {
   type ControllerProfile,
   type MidiMessageType,
 } from '../types';
-import type { ChordParamName } from '../actions';
 
 export const CONTROLLER_PROFILE_FORMAT = 'soundlab.controller-profile' as const;
 export const CONTROLLER_PROFILE_VERSION = 1;
@@ -236,14 +235,3 @@ export function parseProfileDocument(raw: unknown): ParseProfileResult {
     dropped,
   };
 }
-
-/** Chord parameter names that may appear in a `chord:param:*` action. */
-export const CHORD_PARAM_ACTIONS: readonly string[] = [
-  'octave',
-  'inversion',
-  'strumMs',
-  'spread',
-  'rootPc',
-  'scaleIndex',
-  'qualityIndex',
-] satisfies readonly ChordParamName[];
