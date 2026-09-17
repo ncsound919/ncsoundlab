@@ -5,7 +5,7 @@
   "type": "module",
   "description": "NC Tar Heel Sound Lab — a web-based beatmaker and sound design workstation.",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "vite --port=3001 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "node -e \"const fs=require('fs');for(const p of ['dist']){try{fs.rmSync(p,{recursive:true,force:true});}catch{}}\"",

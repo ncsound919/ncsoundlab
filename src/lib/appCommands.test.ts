@@ -112,8 +112,8 @@ describe('buildCommands', () => {
 
   it('clamps tempo nudges to the supported range', () => {
     const up = vi.fn();
-    run(ctx({ bpm: 199, setBpm: up }), 'transport:bpm-up');
-    expect(up).toHaveBeenCalledWith(200);
+    run(ctx({ bpm: 238, setBpm: up }), 'transport:bpm-up');
+    expect(up).toHaveBeenCalledWith(240);
 
     const down = vi.fn();
     run(ctx({ bpm: 61, setBpm: down }), 'transport:bpm-down');

@@ -297,7 +297,7 @@ describe('ControllerHost engine', () => {
     } finally {
       nowSpy.mockRestore();
     }
-    expect(usePatternStore.getState().patterns.A.bpm).toBe(200);
+    expect(usePatternStore.getState().patterns.A.bpm).toBe(240);
   });
 
   it('treats arrange edits as safe no-ops without the sequencer', async () => {

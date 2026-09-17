@@ -14,6 +14,7 @@
 
 import type { Pattern, SoundLayer } from '../types';
 import { synthLayerFor, patternFor, isRecoursePiece, type RecoursePiece } from './recourseBridge';
+import { clampBpm } from './controlRanges';
 import { renderMixdown, type MixdownOptions } from '../audio/transport/mixdown';
 import { audioEngine } from './audioEngine';
 
@@ -60,7 +61,7 @@ export const defaultRecourseRenderDeps: RecourseRenderDeps = {
 
 /** One bar of a 4/4 pattern, in seconds. */
 export function barDurationSec(bpm: number): number {
-  const safeBpm = Math.max(30, Math.min(300, bpm || 120));
+  const safeBpm = clampBpm(bpm || 120);
   return (60 / safeBpm) * 4;
 }
 

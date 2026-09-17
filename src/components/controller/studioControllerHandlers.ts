@@ -15,6 +15,7 @@
  */
 
 import { GROOVE_TEMPLATES, type GrooveTemplate } from '../../lib/grooveTemplates';
+import { clampBpm, clampSwingPercent } from '../../lib/controlRanges';
 import { makeProgression, voiceChords, progressionChords, SCALE_PRESETS } from '../../lib/musicTheory';
 import { chordPadTiming, type ChordPadSettings } from '../../lib/controller/chordPads';
 import type { ControllerHandlers, SectionLayerParam, SectionCompareParam, SectionEvolutionParam } from '../../lib/controller/actions';
@@ -179,8 +180,8 @@ export function createStudioControllerHandlers(getDeps: () => StudioControllerDe
       else if (cmd === 'record') deps.toggleRecord();
       else if (cmd === 'tap') deps.tapTempo();
     },
-    setBpm: (v) => getDeps().setBpm(Math.max(60, Math.min(200, Math.round(v)))),
-    setSwing: (v) => getDeps().setSwing(Math.max(0, Math.min(75, Math.round(v)))),
+    setBpm: (v) => getDeps().setBpm(clampBpm(v)),
+    setSwing: (v) => getDeps().setSwing(clampSwingPercent(v)),
     setMaster: (v) => getDeps().setMaster(v),
     setLayerGain: (v) => {
       const deps = getDeps();

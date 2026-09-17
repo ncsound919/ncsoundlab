@@ -11,6 +11,7 @@
  */
 
 import type { Arrangement } from '../types';
+import { clampBpm } from '../lib/controlRanges';
 
 export interface BPMDetection {
   /** Most likely tempo in BPM (60..200 range). */
@@ -244,7 +245,7 @@ export interface TempoSnapInput {
 export const snapProjectToReferenceBpm = (
   input: TempoSnapInput
 ): number => {
-  const safeBpm = Math.max(40, Math.min(300, Math.round(input.bpm)));
+  const safeBpm = clampBpm(input.bpm);
   input.setPatternBpm(safeBpm);
   input.setArrangementTempo([{ tick: 0, bpm: safeBpm }]);
   return safeBpm;

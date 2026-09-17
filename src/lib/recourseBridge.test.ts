@@ -46,8 +46,8 @@ describe('recourse bridge hydrate (pure)', () => {
   });
 
   it('clamps bpm into SoundLab range', () => {
-    expect(patternFor({ ...piece, bpm: 12 }).bpm).toBe(30);
-    expect(patternFor({ ...piece, bpm: 500 }).bpm).toBe(300);
+    expect(patternFor({ ...piece, bpm: 12 }).bpm).toBe(60);
+    expect(patternFor({ ...piece, bpm: 500 }).bpm).toBe(240);
   });
 
   it('recognises the contract', () => {

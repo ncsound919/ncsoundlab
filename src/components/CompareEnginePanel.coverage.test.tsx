@@ -59,6 +59,7 @@ vi.mock('../audio/CompareEngine', () => ({ compareEngine: h.compareEngine }));
 
 import { CompareEnginePanel } from './CompareEnginePanel';
 import { useCompareEngineStore } from '../store/compareEngineStore';
+import type { CompareEngineSnapshot } from '../types';
 
 const makeBuffer = (): AudioBuffer => {
   const data = Float32Array.from({ length: 300 }, () => 0.5);
@@ -94,7 +95,7 @@ const DEFAULTS = {
   loopStart: 0,
   loopEnd: 10,
   levelMatchEnabled: false,
-  snapshots: [] as Array<Record<string, unknown>>,
+  snapshots: [] as CompareEngineSnapshot[],
   mixTrackName: null as string | null,
   mixTrackDuration: 0,
 };

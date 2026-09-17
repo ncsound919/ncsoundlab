@@ -36,7 +36,7 @@ A web-based beatmaker and sound design workstation built with React, Vite, and t
 
 ```bash
 npm install
-npm run dev          # http://localhost:3000
+npm run dev          # http://localhost:3001
 ```
 
 ### Build for production

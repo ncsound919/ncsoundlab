@@ -36,6 +36,18 @@ const empty = (overrides: Partial<HistorySnapshot> = {}): HistorySnapshot => ({
   globalSwing: 0,
   bpm: 120,
   timeSignature: [4, 4],
+  arrangement: { totalBeats: 0, clips: [], tempoMap: [] },
+  buses: {},
+  layerSends: {},
+  masterDynamics: {
+    thresholdDb: -0.5,
+    ratio: 20,
+    attackSec: 0.002,
+    releaseSec: 0.1,
+    makeupDb: 0,
+    enabled: true,
+  },
+  sidechains: [],
   ...overrides,
 });
 
@@ -170,6 +182,18 @@ describe('historyStore — helpers', () => {
       globalSwing: 0,
       bpm: 120,
       timeSignature: [4, 4],
+      arrangement: { totalBeats: 0, clips: [], tempoMap: [] },
+      buses: {},
+      layerSends: {},
+      masterDynamics: {
+        thresholdDb: -0.5,
+        ratio: 20,
+        attackSec: 0.002,
+        releaseSec: 0.1,
+        makeupDb: 0,
+        enabled: true,
+      },
+      sidechains: [],
     });
     expect(typeof snap.committedAt).toBe('string');
   });
@@ -181,6 +205,30 @@ describe('historyStore — helpers', () => {
     expect(snapshotsEqual(shared, twin)).toBe(false);
     const different = empty({ bpm: 110 });
     expect(snapshotsEqual(shared, different)).toBe(false);
+  });
+
+  it('snapshotsEqual compares the Phase 2.2 fields by reference', () => {
+    const base = empty();
+    // A shallow copy shares every field reference, so it is "equal".
+    expect(snapshotsEqual(base, { ...base })).toBe(true);
+    expect(
+      snapshotsEqual(base, { ...base, arrangement: { totalBeats: 16, clips: [], tempoMap: [] } })
+    ).toBe(false);
+    expect(
+      snapshotsEqual(base, { ...base, buses: { reverb: { enabled: false, gain: 1, pan: 0 } } })
+    ).toBe(false);
+    expect(snapshotsEqual(base, { ...base, layerSends: { l1: { reverb: 0.5 } } })).toBe(false);
+    expect(
+      snapshotsEqual(base, { ...base, masterDynamics: { ...base.masterDynamics, ratio: 4 } })
+    ).toBe(false);
+    expect(
+      snapshotsEqual(base, {
+        ...base,
+        sidechains: [
+          { id: 'sc', source: 'l1', target: 'reverb', amount: 0.5, attackSec: 0.01, releaseSec: 0.1, enabled: true },
+        ],
+      })
+    ).toBe(false);
   });
 });
 

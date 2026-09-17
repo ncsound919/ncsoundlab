@@ -17,6 +17,7 @@ import {
   DEFAULT_ENVELOPE,
   DEFAULT_FX,
 } from '../types';
+import { clampBpm } from './controlRanges';
 
 export interface RecoursePieceLayer {
   id: string;
@@ -84,7 +85,7 @@ export function patternFor(piece: RecoursePiece): Pattern {
     timeSignature: [4, 4],
     stepLength: 16,
     swing: 0,
-    bpm: Math.max(30, Math.min(300, piece.bpm ?? 90)),
+    bpm: clampBpm(piece.bpm ?? 90),
   };
 }
 

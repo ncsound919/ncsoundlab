@@ -137,7 +137,7 @@ describe('tempoDetection — detectBpm', () => {
 });
 
 describe('tempoDetection — snapProjectToReferenceBpm', () => {
-  it('clamps to 40..300 and calls both setters', () => {
+  it('clamps to 60..240 and calls both setters', () => {
     const calls = { bpm: 0, tempos: [] as { tick: number; bpm: number }[] };
     snapProjectToReferenceBpm({
       bpm: 125,
@@ -155,13 +155,13 @@ describe('tempoDetection — snapProjectToReferenceBpm', () => {
       setPatternBpm: (b) => { bpm = b; },
       setArrangementTempo: () => {},
     });
-    expect(bpm).toBe(300);
+    expect(bpm).toBe(240);
     bpm = 0;
     snapProjectToReferenceBpm({
       bpm: 5,
       setPatternBpm: (b) => { bpm = b; },
       setArrangementTempo: () => {},
     });
-    expect(bpm).toBe(40);
+    expect(bpm).toBe(60);
   });
 });

@@ -14,6 +14,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as Tone from 'tone';
+import { clampBpm } from '../lib/controlRanges';
 import { initTransport, getTransport } from '../audio/transport/transport';
 import { TransportBar } from './TransportBar';
 import { SongModePanel } from './SongModePanel';
@@ -881,7 +882,7 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
     if (times.length > 4) times.shift();
     if (times.length >= 2) {
       const avgMs = (times[times.length - 1] - times[0]) / (times.length - 1);
-      setBpm(Math.max(60, Math.min(200, Math.round(60000 / avgMs))));
+      setBpm(clampBpm(60000 / avgMs));
     }
   }, []);
 

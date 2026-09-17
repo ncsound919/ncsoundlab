@@ -19,10 +19,11 @@
  */
 
 import { create } from 'zustand';
-import type { SoundLayer } from '../types';
+import type { Arrangement, LayerSends, RackModule, SoundLayer } from '../types';
 import type { BankId, Program } from './sequencerStore';
 import type { PatternId } from './patternStore';
-import type { RackModule } from '../types';
+import type { SerializedBuses } from '../lib/projectFormat';
+import type { MasterDynamicsSettings, SidechainRoute } from './masterDynamicsStore';
 
 export interface HistorySnapshot {
   /** ISO timestamp at commit time. */
@@ -40,6 +41,16 @@ export interface HistorySnapshot {
   globalSwing: number;
   bpm: number;
   timeSignature: [number, number];
+  /** Phase 2.2 — arrangement timeline (clips + tempo map). */
+  arrangement: Arrangement;
+  /** Phase 2.2 — global FX send/return bus configuration. */
+  buses: SerializedBuses;
+  /** Phase 2.2 — per-layer FX send levels. */
+  layerSends: Record<string, LayerSends>;
+  /** Phase 2.2 — master compressor / limiter settings. */
+  masterDynamics: MasterDynamicsSettings;
+  /** Phase 2.2 — sidechain routing. */
+  sidechains: SidechainRoute[];
 }
 
 export type SnapshotApplier = (snapshot: HistorySnapshot) => void;
@@ -194,5 +205,10 @@ export const snapshotsEqual = (a: HistorySnapshot, b: HistorySnapshot): boolean 
   if (a.masterRack !== b.masterRack) return false;
   if (a.programs !== b.programs) return false;
   if (a.songChain !== b.songChain) return false;
+  if (a.arrangement !== b.arrangement) return false;
+  if (a.buses !== b.buses) return false;
+  if (a.layerSends !== b.layerSends) return false;
+  if (a.masterDynamics !== b.masterDynamics) return false;
+  if (a.sidechains !== b.sidechains) return false;
   return true;
 };

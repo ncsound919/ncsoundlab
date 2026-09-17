@@ -94,6 +94,8 @@ import { ToastContainer, ToastMessage } from './components/ToastContainer';
 import { useSequencerStore, BankId } from './store/sequencerStore';
 import { usePatternStore } from './store/patternStore';
 import { useRackStore } from './store/rackStore';
+import { useMixerStore } from './store/mixerStore';
+import { useMasterDynamicsStore } from './store/masterDynamicsStore';
 import { useHistoryStore, buildSnapshot, snapshotsEqual, useCanUndo, useCanRedo, type HistorySnapshot } from './store/historyStore';
 import {
   scheduleAutosave,
@@ -179,6 +181,10 @@ export default function App() {
   const sequencerStore = useSequencerStore();
   const rackModules = useRackStore((s) => s.modules);
   const setRackModules = useRackStore((s) => s.setModules);
+  const mixerBuses = useMixerStore((s) => s.buses);
+  const mixerLayerSends = useMixerStore((s) => s.layerSends);
+  const masterDynamicsSettings = useMasterDynamicsStore((s) => s.settings);
+  const masterDynamicsSidechains = useMasterDynamicsStore((s) => s.sidechains);
 
   const applyHistorySnapshot = useCallback((snap: HistorySnapshot) => {
     setLayersInternal(snap.layers);
@@ -186,6 +192,7 @@ export default function App() {
       patterns: snap.patterns,
       activePatternId: snap.activePatternId,
       songChain: { order: snap.songChain.order as unknown as string[] },
+      arrangement: snap.arrangement,
     });
     useSequencerStore.setState({
       programs: snap.programs,
@@ -193,6 +200,11 @@ export default function App() {
     });
     setRackModules(snap.masterRack);
     setMasterLevel(snap.masterLevel);
+    useMixerStore.setState({ buses: snap.buses, layerSends: snap.layerSends });
+    useMasterDynamicsStore.setState({
+      settings: snap.masterDynamics,
+      sidechains: snap.sidechains,
+    });
     setActiveSnapshotName(null);
   }, [setRackModules]);
 
@@ -224,6 +236,11 @@ export default function App() {
       globalSwing: 0,
       bpm: patternStore.patterns[patternStore.activePatternId].bpm,
       timeSignature: patternStore.patterns[patternStore.activePatternId].timeSignature,
+      arrangement: patternStore.arrangement,
+      buses: mixerBuses,
+      layerSends: mixerLayerSends,
+      masterDynamics: masterDynamicsSettings,
+      sidechains: masterDynamicsSidechains,
     });
     // Skip commits that are byte-for-byte identical to the current history head.
     // Undo/redo re-applies the snapshot state via the applier (sharing the same
@@ -233,7 +250,10 @@ export default function App() {
     const last = history.past[history.past.length - 1];
     if (last && snapshotsEqual(last, snap)) return;
     useHistoryStore.getState().commit(snap);
-  }, [layers, masterLevel, patternStore, sequencerStore, rackModules]);
+  }, [
+    layers, masterLevel, patternStore, sequencerStore, rackModules,
+    mixerBuses, mixerLayerSends, masterDynamicsSettings, masterDynamicsSidechains,
+  ]);
 
   const handleUndo = () => {
     const restored = useHistoryStore.getState().undo();

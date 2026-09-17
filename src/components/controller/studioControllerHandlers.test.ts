@@ -243,7 +243,7 @@ describe('transport + parameters', () => {
     h.setBpm(10);
     h.setSwing(100);
     h.setSwing(-5);
-    expect(deps.setBpm).toHaveBeenNthCalledWith(1, 200);
+    expect(deps.setBpm).toHaveBeenNthCalledWith(1, 240);
     expect(deps.setBpm).toHaveBeenNthCalledWith(2, 60);
     expect(deps.setSwing).toHaveBeenNthCalledWith(1, 75);
     expect(deps.setSwing).toHaveBeenNthCalledWith(2, 0);

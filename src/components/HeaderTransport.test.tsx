@@ -20,7 +20,7 @@ describe('bpmFromTaps', () => {
 
   it('clamps to the supported range', () => {
     expect(bpmFromTaps([0, 10])).toBe(240);
-    expect(bpmFromTaps([0, 5000])).toBe(40);
+    expect(bpmFromTaps([0, 5000])).toBe(60);
   });
 });
 

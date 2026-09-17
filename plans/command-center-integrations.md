@@ -21,6 +21,30 @@ platform is **Phase 7 — see §15**. Pre-work remediation backlog in **§14**.
 - §14 item 19: paid tier removed — demo/paywall modules deleted, app ungated.
 - License audit: **all dependencies are permissive** (MIT / Apache-2.0 / BSD-3 /
   ISC / MPL-2.0). No GPL/AGPL. See §15 licensing policy.
+- §14 item 5 / **Phase 2.2**: undo snapshot extended with `arrangement`, `buses`,
+  `layerSends`, `masterDynamics`, `sidechains`, plus `snapshotsEqual`
+  comparisons and the App applier + commit-effect wiring.
+- §14 item 6: CSP `connect-src` now permits the local Recourse origin in all
+  four configs (`tauri.conf.json`, `vercel.json`, `.headers`, `nginx.conf`).
+- **Phase 2.1**: typed action registry (`src/lib/actions/registry.ts`) — param
+  specs, canonical control ranges, `specForAction`, `clampParam`,
+  `validateActionArgs` (21 tests, 98.8% statement coverage).
+- **Still open:** §14 item 7 (secret/keychain) is deferred to **Phase 3.1 by
+  design** — it is provider configuration with no consumer until the provider
+  layer exists; building it now would ship untested-in-use code.
+
+**Pre-existing issues cleared (2026-09-17):**
+- The one `tsc` error on `main` (`CompareEnginePanel.coverage.test.tsx` typed
+  `snapshots` as `Record<string, unknown>[]`) is fixed — `npm run lint` is clean.
+- **Clamp inconsistency normalized.** Before: BPM was 40–240 in the header,
+  60–200 in the palette/controller, 40–300 in tempo detection, 30–300 on
+  Recourse import, 30–300 in the store, and 20–300 on tempo points; swing was a
+  0–0.66 fraction in the store and 0–75 percent on surfaces. Now every control
+  surface and validator clamps through `src/lib/controlRanges.ts`
+  (**BPM 60–240**, one swing fraction↔percent conversion). The persisted stores
+  keep a wider tolerance on purpose (documented) so older project files and
+  external payloads are not rewritten on load.
+- Full verification: `npm run lint` clean; **215 test files / 2407 tests pass**.
 
 This is a **construction plan**. Every phase is PR-sized with a self-contained
 context brief so a fresh agent can execute it cold. Read `AGENTS.md` first. Two

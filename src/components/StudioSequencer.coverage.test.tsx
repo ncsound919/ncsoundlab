@@ -435,7 +435,7 @@ describe('StudioSequencer gap coverage: transport and tempo', () => {
     fireEvent.click(tap);
     t = 1005;
     fireEvent.click(tap);
-    expect(usePatternStore.getState().patterns.A.bpm).toBe(200);
+    expect(usePatternStore.getState().patterns.A.bpm).toBe(240);
     // Stale gap (>2s) resets the buffer instead of skewing the tempo.
     t = 9000;
     fireEvent.click(tap);
@@ -443,13 +443,13 @@ describe('StudioSequencer gap coverage: transport and tempo', () => {
     fireEvent.click(tap);
     t = 9200;
     fireEvent.click(tap);
-    expect(usePatternStore.getState().patterns.A.bpm).toBe(200);
+    expect(usePatternStore.getState().patterns.A.bpm).toBe(240);
     // A fifth tap overflows the 4-tap window (times.shift branch).
     t = 9300;
     fireEvent.click(tap);
     t = 9400;
     fireEvent.click(tap);
-    expect(usePatternStore.getState().patterns.A.bpm).toBe(200);
+    expect(usePatternStore.getState().patterns.A.bpm).toBe(240);
     now.mockRestore();
   });
 

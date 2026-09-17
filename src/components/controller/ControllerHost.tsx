@@ -21,6 +21,7 @@
 
 import React, { useRef, useState } from 'react';
 import { PanelRight, PanelRightClose, X } from 'lucide-react';
+import { clampBpm } from '../../lib/controlRanges';
 import { audioEngine } from '../../lib/audioEngine';
 import { applySemitoneShift } from '../../lib/sequencerHelpers';
 import { useControllerStore } from '../../store/controllerStore';
@@ -138,7 +139,7 @@ function buildHostDeps({ props, tapTimes }: HostRefs): StudioControllerDeps {
       if (times.length > 4) times.shift();
       if (times.length >= 2) {
         const avg = (times[times.length - 1] - times[0]) / (times.length - 1);
-        usePatternStore.getState().setBpm(Math.max(60, Math.min(200, Math.round(60000 / avg))));
+        usePatternStore.getState().setBpm(clampBpm(60000 / avg));
       }
     },
     setBpm: (v) => usePatternStore.getState().setBpm(v),

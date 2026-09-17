@@ -11,6 +11,7 @@
 
 import React, { useRef } from 'react';
 import { Play, Square, Gauge } from 'lucide-react';
+import { BPM_MAX as MAX_BPM, BPM_MIN as MIN_BPM, clampBpm } from '../lib/controlRanges';
 
 export interface HeaderTransportProps {
   isPlaying: boolean;
@@ -20,10 +21,6 @@ export interface HeaderTransportProps {
   keyName: string;
   scaleName: string;
 }
-
-const MIN_BPM = 40;
-const MAX_BPM = 240;
-const clampBpm = (v: number) => Math.max(MIN_BPM, Math.min(MAX_BPM, Math.round(v)));
 
 /** Compute BPM from tap intervals (ms). Exported for testing. */
 export function bpmFromTaps(times: number[]): number | null {

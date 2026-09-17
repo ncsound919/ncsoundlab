@@ -10,6 +10,7 @@
  */
 
 import { sortCommands, type Command } from './commands';
+import { clampBpm } from './controlRanges';
 import { TAB_LABELS, WORKFLOW_STAGES, type TabType } from './workflowStages';
 import type { SoundLayer } from '../types';
 
@@ -47,10 +48,6 @@ export interface AppCommandContext {
   setShortcutsOpen: (open: boolean) => void;
   setManualOpen: (open: boolean) => void;
 }
-
-const MIN_BPM = 60;
-const MAX_BPM = 200;
-const clampBpm = (v: number) => Math.max(MIN_BPM, Math.min(MAX_BPM, Math.round(v)));
 
 export function buildCommands(ctx: AppCommandContext): Command[] {
   const selectedId = ctx.selectedLayerId;
