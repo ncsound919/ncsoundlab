@@ -182,6 +182,51 @@ describe('projectFormat — serialize/deserialize round-trip', () => {
     expect(hydrated.layers[0].fileName).toBe('sample.wav');
   });
 
+  it('round-trips keygroup velocity layers with embedded audio', async () => {
+    const layer: SoundLayer = {
+      ...makeSampleLayer('k1'),
+      velocityLayers: [
+        { id: 'v1', minVelocity: 1, maxVelocity: 63, audioBuffer: makeBuffer(1, 128), name: 'Soft' },
+        { id: 'v2', minVelocity: 64, maxVelocity: 127, audioBuffer: makeBuffer(1, 256), name: 'Hard' },
+      ],
+    };
+    const doc = await serializeProject({
+      title: 'Keygroup',
+      appVersion: '1.0.0',
+      layers: [layer],
+      patterns: {
+        A: makePattern('A', ['k1']),
+        B: makePattern('B', []),
+        C: makePattern('C', []),
+        D: makePattern('D', []),
+      },
+      activePatternId: 'A',
+      songChain: { order: ['A'] },
+      programs: {
+        A: Array.from({ length: 16 }, () => null),
+        B: Array.from({ length: 16 }, () => null),
+        C: Array.from({ length: 16 }, () => null),
+        D: Array.from({ length: 16 }, () => null),
+      },
+      activeBank: 'A',
+      bpm: 100,
+      timeSignature: [4, 4],
+      masterLevel: 0.8,
+      masterRack: { modules: [] },
+    });
+
+    expect(doc.layers[0].velocityLayers).toHaveLength(2);
+    expect(doc.layers[0].velocityLayers?.[0].sampleData).toBeDefined();
+
+    const ctx = new AudioContext();
+    const hydrated = await deserializeProject(ctx, doc);
+    const vl = hydrated.layers[0].velocityLayers;
+    expect(vl).toHaveLength(2);
+    expect(vl?.[0].audioBuffer).toBeDefined();
+    expect(vl?.[0].minVelocity).toBe(1);
+    expect(vl?.[1].name).toBe('Hard');
+  });
+
   it('round-trips both sample and synth layers together', async () => {
     const layers = [makeSampleLayer('k1'), makeSynthLayer('s1')];
     const patterns = {

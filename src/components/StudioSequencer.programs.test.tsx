@@ -259,13 +259,15 @@ describe('StudioSequencer programs + keygroup', () => {
     act(() => {
       getSequencerBridge()!.playNote(60, 1);
     });
-    let call = audioState.triggerLayer.mock.calls.at(-1) as Array<{ pitch?: number }>;
-    expect(call[0].pitch).toBe(0);
+    // The note is delivered to the engine via `opts.note` (it transposes the
+    // layer internally so the full FX chain runs at the played pitch).
+    let call = audioState.triggerLayer.mock.calls.at(-1) as unknown[];
+    expect((call[4] as { note?: number }).note).toBe(60);
     act(() => {
       getSequencerBridge()!.playNote(72, 1);
     });
-    call = audioState.triggerLayer.mock.calls.at(-1) as Array<{ pitch?: number }>;
-    expect(call[0].pitch).toBe(12);
+    call = audioState.triggerLayer.mock.calls.at(-1) as unknown[];
+    expect((call[4] as { note?: number }).note).toBe(72);
   });
 
   it('syncs pad mute state, layer flag and button label', () => {
@@ -323,6 +325,29 @@ describe('StudioSequencer programs + keygroup', () => {
     const id = (select.querySelector('option[value]:not([value=""])') as HTMLOptionElement).value;
     fireEvent.change(select, { target: { value: id } });
     await waitFor(() => expect(screen.getByText(/missing: Kick/)).toBeDefined());
+  });
+
+  it('selects keygroup velocity layers by hit velocity', () => {
+    const soft = { ...fakeBuffer(), duration: 0.11 } as unknown as AudioBuffer;
+    const hard = { ...fakeBuffer(), duration: 0.22 } as unknown as AudioBuffer;
+    const layer: SoundLayer = {
+      ...makeSampleLayer('l1', 'Kick'),
+      velocityLayers: [
+        { id: 'a', minVelocity: 1, maxVelocity: 63, audioBuffer: soft, name: 'Soft' },
+        { id: 'b', minVelocity: 64, maxVelocity: 127, audioBuffer: hard, name: 'Hard' },
+      ],
+    };
+    renderSequencer({ layers: [layer], selectedLayerId: 'l1' });
+    audioState.triggerLayer.mockClear();
+
+    act(() => { getSequencerBridge()!.playNote(60, 0.2); });
+    expect((audioState.triggerLayer.mock.calls.at(-1)![0] as SoundLayer).audioBuffer).toBe(soft);
+    // Release before the next hit: a still-held note is not retriggered.
+    act(() => {
+      getSequencerBridge()!.stopNote(60);
+      getSequencerBridge()!.playNote(60, 1);
+    });
+    expect((audioState.triggerLayer.mock.calls.at(-1)![0] as SoundLayer).audioBuffer).toBe(hard);
   });
 
   it('applies per-pad filter/sends/voice-limit and gate release', () => {

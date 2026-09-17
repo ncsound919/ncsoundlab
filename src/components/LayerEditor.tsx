@@ -3,18 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Sparkles, Save, Dices, Trash2, Music, Waves, Activity, 
   Sliders, Settings2, Flame, FolderHeart, Play, Info, Zap,
   Scissors
 } from 'lucide-react';
-import { SoundLayer, SynthSettings, FXSettings, Envelope, FXPreset, DEFAULT_ENVELOPE, DEFAULT_FX, DEFAULT_SYNTH } from '../types';
+import { SoundLayer, SynthSettings, FXSettings, Envelope, FXPreset, DEFAULT_ENVELOPE, DEFAULT_FX, DEFAULT_SYNTH, type VelocityLayer } from '../types';
 import { Knob } from './Knob';
 import { SmartRandomizerModal } from './SmartRandomizerModal';
 import { SynthVisualizer } from './SynthVisualizer';
 import { audioEngine } from '../lib/audioEngine';
 import { renderXfadeLoop } from '../lib/loopXfade';
+import { evenVelocityRanges, findVelocityLayer, velocity01ToMidi } from '../lib/velocityLayers';
 
 interface LayerEditorProps {
   selectedLayer: SoundLayer;
@@ -566,6 +567,52 @@ export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounc
   const [chaosEnabled, setChaosEnabled] = useState(false);
   const [isRandomizerOpen, setIsRandomizerOpen] = useState(false);
   const [xfadeSec, setXfadeSec] = useState(0.02);
+  const velocityFileRef = useRef<HTMLInputElement | null>(null);
+
+  // ----- Keygroup velocity layers -----
+
+  const commitVelocityLayers = (list: VelocityLayer[]) => {
+    onUpdate({ velocityLayers: list.length > 0 ? list : undefined });
+  };
+
+  const addVelocityLayer = (buffer: AudioBuffer, name?: string, fileName?: string) => {
+    const current = selectedLayer.velocityLayers ?? [];
+    const next: VelocityLayer[] = [
+      ...current,
+      { id: crypto.randomUUID(), minVelocity: 1, maxVelocity: 127, audioBuffer: buffer, name, fileName },
+    ];
+    // Keep the bands contiguous so every velocity maps to a layer.
+    const ranges = evenVelocityRanges(next.length);
+    commitVelocityLayers(next.map((vl, i) => ({ ...vl, ...ranges[i] })));
+  };
+
+  const handleVelocityFile = async (file: File) => {
+    const ctx = audioEngine.getContext();
+    if (!ctx) return;
+    try {
+      const buffer = await ctx.decodeAudioData(await file.arrayBuffer());
+      addVelocityLayer(buffer, file.name.replace(/\.[^.]+$/, ''), file.name);
+    } catch (e) {
+      console.warn('Velocity layer decode failed', e);
+    }
+  };
+
+  const evenSplitVelocityLayers = () => {
+    const list = selectedLayer.velocityLayers ?? [];
+    const ranges = evenVelocityRanges(list.length);
+    commitVelocityLayers(list.map((vl, i) => ({ ...vl, ...ranges[i] })));
+  };
+
+  const updateVelocityRange = (id: string, patch: Partial<VelocityLayer>) => {
+    commitVelocityLayers((selectedLayer.velocityLayers ?? []).map((vl) => (vl.id === id ? { ...vl, ...patch } : vl)));
+  };
+
+  const removeVelocityLayer = (id: string) => {
+    commitVelocityLayers((selectedLayer.velocityLayers ?? []).filter((vl) => vl.id !== id));
+  };
+
+  /** Which velocity layer a given 0..1 velocity would hit (preview label). */
+  const velocityLayerFor = (v01: number) => findVelocityLayer(selectedLayer.velocityLayers, velocity01ToMidi(v01));
 
   // Render the loop region with an equal-power crossfade so `sampleLoop`
   // wraps without clicking. The rendered region becomes the whole buffer.
@@ -1754,6 +1801,91 @@ export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounc
                     >
                       Render seamless loop
                     </button>
+                  </div>
+                )}
+
+                {selectedLayer.type === 'sample' && (
+                  <div className="mt-4 space-y-2 rounded-xl border border-[#1e1e22] bg-[#121215] p-3" data-velocity-layers>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[11px] font-black uppercase tracking-wider text-gray-300 block">Velocity Layers (Keygroup)</span>
+                        <span className="text-[9px] text-gray-500 font-medium">Hard hits can trigger a different sample than soft hits.</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          ref={velocityFileRef}
+                          type="file"
+                          accept=".wav,.mp3,.ogg,.flac,.aiff,.m4a"
+                          className="hidden"
+                          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void handleVelocityFile(f); }}
+                        />
+                        <button
+                          onClick={() => velocityFileRef.current?.click()}
+                          className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-emerald-600/20 border border-emerald-500/50 text-emerald-300 hover:bg-emerald-600/30 transition-all"
+                        >
+                          Add file…
+                        </button>
+                        {selectedLayer.audioBuffer && (
+                          <button
+                            onClick={() => addVelocityLayer(selectedLayer.audioBuffer as AudioBuffer, selectedLayer.name)}
+                            className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-[#16161a] border border-[#2A2A2E] text-gray-300 hover:text-white transition-all"
+                            title="Add this layer's own sample as a velocity layer"
+                          >
+                            Add current sample
+                          </button>
+                        )}
+                        {(selectedLayer.velocityLayers?.length ?? 0) > 1 && (
+                          <button
+                            onClick={evenSplitVelocityLayers}
+                            className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-[#16161a] border border-[#2A2A2E] text-gray-300 hover:text-white transition-all"
+                          >
+                            Even split
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {(selectedLayer.velocityLayers?.length ?? 0) === 0 ? (
+                      <p className="text-[10px] text-gray-500">No velocity layers — the pad plays one sample for all velocities.</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {selectedLayer.velocityLayers!.map((vl) => (
+                          <div key={vl.id} className="flex flex-wrap items-center gap-2 text-[10px]" data-velocity-layer={vl.id}>
+                            <span className="flex-1 min-w-[110px] truncate text-gray-300" title={vl.fileName || vl.name}>
+                              {vl.name || 'Layer'}
+                            </span>
+                            <label className="flex items-center gap-1 text-gray-500">
+                              Min
+                              <input
+                                type="number" min={1} max={127} value={vl.minVelocity}
+                                onChange={(e) => updateVelocityRange(vl.id, { minVelocity: parseInt(e.target.value) || 1 })}
+                                className="w-14 bg-[#0a0a0c] border border-[#1e293b] rounded px-1 py-0.5 text-white"
+                                aria-label={`Velocity layer ${vl.name || vl.id} min`}
+                              />
+                            </label>
+                            <label className="flex items-center gap-1 text-gray-500">
+                              Max
+                              <input
+                                type="number" min={1} max={127} value={vl.maxVelocity}
+                                onChange={(e) => updateVelocityRange(vl.id, { maxVelocity: parseInt(e.target.value) || 127 })}
+                                className="w-14 bg-[#0a0a0c] border border-[#1e293b] rounded px-1 py-0.5 text-white"
+                                aria-label={`Velocity layer ${vl.name || vl.id} max`}
+                              />
+                            </label>
+                            <button
+                              onClick={() => removeVelocityLayer(vl.id)}
+                              className="p-1 rounded text-gray-500 hover:text-red-400 transition-colors"
+                              title={`Remove ${vl.name || 'layer'}`}
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          </div>
+                        ))}
+                        <p className="text-[9px] font-mono text-gray-600">
+                          Soft (v40) → {velocityLayerFor(40 / 127)?.name || '—'} · Hard (v120) → {velocityLayerFor(120 / 127)?.name || '—'}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

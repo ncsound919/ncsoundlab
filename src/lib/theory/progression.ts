@@ -11,6 +11,7 @@
 import {
   NOTE_NAMES_SHARP,
   getScalePitchClasses,
+  diatonicChordQualities,
   CHORD_QUALITIES,
   type ScaleType,
 } from './pitch';
@@ -49,12 +50,11 @@ export interface BestProgressionOptions extends ProgressionOptions {
 
 const ROOTS = NOTE_NAMES_SHARP;
 
-/** Scale degree → diatonic chord quality (roman-numeral convention). */
-// Note: use the exact CHORD_QUALITIES keys ('m7', not 'min7') so voicings and
-// sophistication rules recognize every emitted type. 'min7' was silently
-// falling back to a major triad in chordTonesForQuality.
-const MAJOR_DEGREE_QUALITY = ['maj7', 'm7', 'm7', 'maj7', '7', 'm7', 'm7b5'];
-const MINOR_DEGREE_QUALITY = ['m7', 'm7b5', 'maj7', 'm7', 'm7', 'maj7', '7'];
+// Scale degree → diatonic chord quality now comes from the single shared
+// table in `theory/pitch.ts` (DIATONIC_QUALITIES), so every mode gets its
+// correct roman-numeral qualities instead of collapsing to natural-minor.
+// Keys are exact CHORD_QUALITIES keys so voicings/sophistication recognize
+// every emitted type.
 
 /**
  * Generate a chord progression for `bars` bars in `key`. Returns an array of
@@ -74,8 +74,9 @@ export function generateProgression(opts: ProgressionOptions): TheoryChord[] {
   const rng: SeededRng = createSeededRng(seed ?? seedBase);
 
   const scale = getScalePitchClasses(ROOTS.indexOf(key) % 12, scaleType);
-  const isMinor = scaleType !== 'major';
-  const degreeQualities = isMinor ? MINOR_DEGREE_QUALITY : MAJOR_DEGREE_QUALITY;
+  // Mode-correct diatonic qualities (e.g. dorian's major IV, lydian's #4) —
+  // not just a major/natural-minor binary.
+  const degreeQualities = diatonicChordQualities(scaleType, true);
 
   if (mode === 'section') {
     return generateSectionProgression(scale, degreeQualities, bars, complexity, rng);

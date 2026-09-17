@@ -17,6 +17,7 @@ import type {
   Pattern,
   PatternCell,
   RackModule,
+  VelocityLayer,
 } from '../types';
 import type { BankId, Program } from '../store/sequencerStore';
 import type { PatternId } from '../store/patternStore';
@@ -37,10 +38,23 @@ export interface ProjectSongChain {
  *
  * For synth layers (no AudioBuffer), `sampleData` is omitted.
  */
-export type SerializedLayer = Omit<SoundLayer, 'audioBuffer' | 'analysis'> & {
+/** One serialized velocity layer: its AudioBuffer is base64 WAV. */
+export interface SerializedVelocityLayer {
+  id: string;
+  minVelocity: number;
+  maxVelocity: number;
+  name?: string;
+  fileName?: string;
+  sampleData?: string;
+  sampleMeta?: { sampleRate: number; channels: number; length: number };
+}
+
+export type SerializedLayer = Omit<SoundLayer, 'audioBuffer' | 'analysis' | 'velocityLayers'> & {
   sampleData?: string;
   /** Channel count and sample rate captured at encode time so re-decode is exact. */
   sampleMeta?: { sampleRate: number; channels: number; length: number };
+  /** Keygroup velocity layers with their audio embedded as base64 WAV. */
+  velocityLayers?: SerializedVelocityLayer[];
 };
 
 export interface SerializedPattern {
@@ -188,20 +202,34 @@ export interface SerializeProjectInput {
 const PROJECT_MIME = 'application/json';
 
 const stripLayerForSerialization = async (layer: SoundLayer): Promise<SerializedLayer> => {
-  const { audioBuffer, analysis, ...rest } = layer;
-  if (!audioBuffer) {
-    return { ...rest };
-  }
-  const sampleData = await audioBufferToBase64(audioBuffer, 16);
-  return {
-    ...rest,
-    sampleData,
-    sampleMeta: {
+  const { audioBuffer, analysis, velocityLayers, ...rest } = layer;
+  const out: SerializedLayer = { ...rest };
+  if (audioBuffer) {
+    out.sampleData = await audioBufferToBase64(audioBuffer, 16);
+    out.sampleMeta = {
       sampleRate: audioBuffer.sampleRate,
       channels: audioBuffer.numberOfChannels,
       length: audioBuffer.length,
-    },
-  };
+    };
+  }
+  if (velocityLayers && velocityLayers.length > 0) {
+    out.velocityLayers = await Promise.all(
+      velocityLayers.map(async (vl): Promise<SerializedVelocityLayer> => {
+        const { audioBuffer: vlBuffer, ...vlRest } = vl;
+        const sampleData = await audioBufferToBase64(vlBuffer, 16);
+        return {
+          ...vlRest,
+          sampleData,
+          sampleMeta: {
+            sampleRate: vlBuffer.sampleRate,
+            channels: vlBuffer.numberOfChannels,
+            length: vlBuffer.length,
+          },
+        };
+      })
+    );
+  }
+  return out;
 };
 
 /**
@@ -319,12 +347,23 @@ export async function deserializeProject(
 }
 
 async function rehydrateLayer(context: BaseAudioContext, layer: SerializedLayer): Promise<SoundLayer> {
-  const { sampleData, sampleMeta, ...rest } = layer;
-  if (!sampleData) {
-    return { ...(rest as SoundLayer) };
+  const { sampleData, sampleMeta, velocityLayers, ...rest } = layer;
+  const out = { ...(rest as SoundLayer) };
+  if (sampleData) {
+    out.audioBuffer = await base64ToAudioBuffer(context, sampleData);
   }
-  const audioBuffer = await base64ToAudioBuffer(context, sampleData);
-  return { ...(rest as SoundLayer), audioBuffer };
+  if (velocityLayers && velocityLayers.length > 0) {
+    const rehydrated = await Promise.all(
+      velocityLayers.map(async (vl): Promise<VelocityLayer | null> => {
+        const { sampleData: vlData, sampleMeta: _meta, ...vlRest } = vl;
+        if (!vlData) return null;
+        const audioBuffer = await base64ToAudioBuffer(context, vlData);
+        return { ...vlRest, audioBuffer };
+      })
+    );
+    out.velocityLayers = rehydrated.filter((v): v is VelocityLayer => v !== null);
+  }
+  return out;
 }
 
 function revivePattern(p: SerializedPattern): Pattern {

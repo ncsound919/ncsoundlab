@@ -208,9 +208,34 @@ async function mutateBuffer(
   sourceNode.start(0);
   
   const renderedBuffer = await offlineCtx.startRendering();
-  
+
+  // 'aliasing' is a non-linear, stateful effect (sample-rate reduction), so it
+  // is applied as a post-pass on the rendered buffer rather than a graph node.
+  // Zero-order hold at a low effective rate folds high frequencies back down
+  // as audible aliasing.
+  const aliased = routingPath.includes('aliasing')
+    ? sampleHoldReduce(renderedBuffer, Math.max(2, Math.round(4 + chaosLevel * 12)))
+    : renderedBuffer;
+
   // Final Pass: Peak Normalization
-  return normalizeBuffer(renderedBuffer);
+  return normalizeBuffer(aliased);
+}
+
+/**
+ * Zero-order-hold sample-rate reduction: hold each sample for `factor` output
+ * samples, producing the characteristic aliasing/downsampling artifacts.
+ */
+function sampleHoldReduce(buffer: AudioBuffer, factor: number): AudioBuffer {
+  const channels = buffer.numberOfChannels;
+  for (let c = 0; c < channels; c++) {
+    const data = buffer.getChannelData(c);
+    for (let i = 0; i < data.length; i += factor) {
+      const held = data[i];
+      const end = Math.min(i + factor, data.length);
+      for (let j = i + 1; j < end; j++) data[j] = held;
+    }
+  }
+  return buffer;
 }
 
 function normalizeBuffer(buffer: AudioBuffer): AudioBuffer {

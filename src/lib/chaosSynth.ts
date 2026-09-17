@@ -143,7 +143,12 @@ export function generateChaosSynthBuffer(
   const srChaos = Math.min(0.99, (settings.sampleRateChaos ?? 0) + macro * 0.5);
   const errInject = Math.min(0.1, (settings.errorInjection ?? 0) + macro * 0.05);
 
-  const baseFreq = settings.frequency || 220;
+  // `detune` (cents) is the global oscillator tuning; `slopAmount` adds a small
+  // per-render random pitch offset (analog voice slop). Both were previously
+  // exposed in the UI but never read by the synth.
+  const detuneCents = settings.detune ?? 0;
+  const slopCents = (settings.slopAmount ?? 0) * 15 * (Math.random() * 2 - 1);
+  const baseFreq = (settings.frequency || 220) * Math.pow(2, (detuneCents + slopCents) / 1200);
 
   // Vintage Macro & Voice Aging Setup
   const vintageMacro = settings.vintageMacro ?? 0;

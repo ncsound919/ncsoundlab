@@ -61,10 +61,6 @@ const audioState = vi.hoisted(() => ({
   ctx: { currentTime: 5 } as { currentTime: number } | null,
 }));
 
-const playerState = vi.hoisted(() => ({
-  playNote: vi.fn(),
-}));
-
 const captureState = vi.hoisted(() => {
   const fakeBuffer = {
     duration: 1.5,
@@ -184,14 +180,6 @@ vi.mock('../lib/db', () => {
   };
 });
 
-// Melodic step playback goes through the app's synth player; stub it so the
-// note/duration/velocity branch runs without real Tone voices in jsdom.
-vi.mock('../audio/SoundLayerPlayer', () => ({
-  SoundLayerPlayer: class {
-    playNote = playerState.playNote;
-  },
-}));
-
 // Mic capture + mixdown: stub the hardware boundary, keep the component logic.
 vi.mock('../audio/transport/audioCapture', () => ({
   createAudioCapture: vi.fn(() => ({
@@ -275,6 +263,7 @@ function renderSequencer(opts: RenderOpts = {}) {
     ...(opts.withUpdateLayer ? { onUpdateLayer: vi.fn() } : {}),
     onAddLayer: vi.fn((_b: AudioBuffer, _n?: string) => 'new-layer-id'),
     onAddSlicedLayers: vi.fn(),
+    onAddSynthLayer: vi.fn((_s: SoundLayer, name: string) => `pad-${name}`),
   };
   const utils = render(<StudioSequencer {...props} />);
   return { ...utils, props };
@@ -811,12 +800,15 @@ describe('StudioSequencer gap coverage: performance keys and piano', () => {
     expect(screen.queryByText('No notes held')).toBeNull();
     act(() => { getSequencerBridge()!.stopNote(60); });
     expect(screen.getByText('No notes held')).toBeTruthy();
-    // Synth rows voice through the player; selection is parent-owned, so
-    // remount with the synth selected.
+    // Synth rows voice through the engine's full FX chain with a target note;
+    // selection is parent-owned, so remount with the synth selected.
     unmount();
     renderSequencer({ selectedLayerId: 'l2' });
+    audioState.triggerLayer.mockClear();
     act(() => { getSequencerBridge()!.playNote(60, 1); });
-    expect(playerState.playNote).toHaveBeenCalled();
+    expect(audioState.triggerLayer).toHaveBeenCalled();
+    const synthCall = audioState.triggerLayer.mock.calls.at(-1) as unknown[];
+    expect((synthCall[4] as { note?: number }).note).toBe(60);
     expect(screen.queryByText('No notes held')).toBeNull();
   });
 
@@ -857,15 +849,17 @@ describe('StudioSequencer gap coverage: performance keys and piano', () => {
   });
 
   it('previews theory chords and voices progressions into the pattern', async () => {
-    const { container } = renderSequencer({ selectedLayerId: 'l2' });
+    const { container, props } = renderSequencer({ selectedLayerId: 'l2' });
     const panel = container.querySelector('[data-theory-panel]') as HTMLElement;
     // RecourseComposerPanel has its own Generate button; scope to Theory.
     fireEvent.click(panel.querySelector('button') as HTMLElement);
     fireEvent.click(screen.getByTitle('Voice the progression into the active pattern row'));
     const row = usePatternStore.getState().patterns.A.layerRows.l2;
-    expect(row.some((c) => c.on && c.note !== undefined)).toBe(true);
+    // Chords are written as voiced `notes` arrays (not bare roots).
+    expect(row.some((c) => c.on && (c.notes?.length ?? 0) > 0)).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: /roots/i }));
-    expect(playerState.playNote).toHaveBeenCalled();
+    // "Roots → Pads" now creates one synth pad layer per root.
+    expect(props.onAddSynthLayer).toHaveBeenCalled();
     const previews = screen.getAllByTitle(/^Preview /);
     fireEvent.click(previews[0]);
     // The 1.5s auto-stop timer drives the TheoryPanel onStopNote wrapper.
@@ -1116,14 +1110,19 @@ describe('StudioSequencer gap coverage: clock tick edge cases', () => {
     rand.mockRestore();
   });
 
-  it('routes melodic cells through the synth player with velocity and duration', () => {
+  it('routes melodic cells through the full FX engine with velocity and duration', () => {
     renderSequencer();
     setCell('l2', 0, { on: true, note: 64, velocity: 100, duration: 2 });
     vi.useFakeTimers();
     fireEvent.click(screen.getByLabelText('Tone Transport'));
     fireEvent.click(screen.getAllByLabelText('Play')[0]);
+    audioState.triggerLayer.mockClear();
     act(() => { vi.advanceTimersByTime(400); });
-    expect(playerState.playNote).toHaveBeenCalled();
+    expect(audioState.triggerLayer).toHaveBeenCalled();
+    const call = audioState.triggerLayer.mock.calls.at(-1) as unknown[];
+    expect((call[4] as { note?: number }).note).toBe(64);
+    // 2 steps at 120bpm = 2 * (60/120/4) = 0.25s.
+    expect(call[1] as number).toBeCloseTo(0.25, 3);
   });
 
   it('drives the Tone-sequence callback with groove, pocket and probability', async () => {

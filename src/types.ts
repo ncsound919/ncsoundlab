@@ -320,11 +320,25 @@ export interface LayerSends {
   delay?: number;
 }
 
+/**
+ * One sample inside a keygroup-style velocity layer stack. The engine picks
+ * the layer whose [minVelocity, maxVelocity] range contains the incoming
+ * trigger velocity, so a hard hit can play a different sample than a soft one.
+ */
+export interface VelocityLayer {
+  id: string;
+  /** Inclusive MIDI-style velocity bounds (1..127). */
+  minVelocity: number;
+  maxVelocity: number;
+  audioBuffer: AudioBuffer;
+  name?: string;
+  fileName?: string;
+}
+
 export interface SoundLayer {
   id: string;
   name: string;
-  type: LayerType;
-  enabled: boolean;
+  type: LayerType;  enabled: boolean;
   muted?: boolean;
   soloed?: boolean;
   polarityInvert?: boolean;
@@ -342,6 +356,13 @@ export interface SoundLayer {
   audioBuffer?: AudioBuffer;
   fileName?: string;
   analysis?: AudioAnalysisResult;
+
+  /**
+   * Keygroup velocity layers (optional). When present, a trigger's velocity
+   * selects which sample actually sounds; `audioBuffer` remains the fallback
+   * (and the sample shown in the waveform editor).
+   */
+  velocityLayers?: VelocityLayer[];
 
   // Playback start/stop and delay parameters
   playStartPct?: number;       // Crop start (0 to 1, default 0)
@@ -690,6 +711,13 @@ export interface VariantProfile {
 export interface PatternCell {
   on: boolean;
   note?: number;
+  /**
+   * Chord voicing: multiple MIDI notes triggered together on this step. When
+   * present it takes precedence over `note` (a single-note cell). Written by
+   * the theory panel's "Apply to Pattern" so a generated progression reaches
+   * the DAW as voiced chords rather than bare roots.
+   */
+  notes?: number[];
   velocity?: number;
   /** Length of the note in steps. 1 = one step (default). Used by melodic triggers. */
   duration?: number;

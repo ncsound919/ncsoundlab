@@ -36,3 +36,35 @@ export function msUntil(targetSec: number, nowSec: number): number {
 export function loopBars(stepLength: number): number {
   return Math.max(1, Math.round(stepLength / 16));
 }
+
+export interface ClipLaunchPlan {
+  /** Delay before the launch fires, in ms (0 = immediately). */
+  startDelayMs: number;
+  /** Slots the launch replaces when it fires (empty in legato mode). */
+  stopIndices: number[];
+}
+
+/**
+ * Decide when a clip launch fires and which playing clips it replaces.
+ *
+ * - Quantized launches fire at the next loop boundary; free launches fire now.
+ * - Legato keeps every playing clip alive (clips layer instead of replacing);
+ *   otherwise the launch replaces all other playing clips at the launch point
+ *   — not at press time — so a quantized launch never leaves a silent gap.
+ */
+export function planClipLaunch(opts: {
+  target: number;
+  playing: number[];
+  legato: boolean;
+  quantize: boolean;
+  positionSec: number;
+  loopLengthSec: number;
+}): ClipLaunchPlan {
+  const delay = opts.quantize
+    ? msUntil(nextLoopBoundarySec(opts.positionSec, opts.loopLengthSec), opts.positionSec)
+    : 0;
+  return {
+    startDelayMs: delay <= 1 ? 0 : delay,
+    stopIndices: opts.legato ? [] : opts.playing.filter((i) => i !== opts.target),
+  };
+}

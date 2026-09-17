@@ -982,6 +982,27 @@ export default function App() {
     return newLayer.id;
   };
 
+  /**
+   * Create a synth layer derived from `source` (same synth/FX/envelope),
+   * transposed by `semitones`. Used by the theory panel's "Roots → Pads" so
+   * each generated chord root becomes a playable pad layer instead of a
+   * throwaway preview.
+   */
+  const addSynthLayerFrom = (source: SoundLayer, name: string, semitones: number): string => {
+    const newLayer: SoundLayer = {
+      ...source,
+      id: crypto.randomUUID(),
+      name,
+      type: 'synth',
+      audioBuffer: undefined,
+      pitch: (source.pitch || 0) + semitones,
+      synth: { ...DEFAULT_SYNTH, ...(source.synth || {}) },
+      color: nextLayerColor(layers.length),
+    };
+    setLayers(prev => [...prev, newLayer]);
+    return newLayer.id;
+  };
+
   const handleAddLayerWithPreset = (preset: any) => {
     const layerData = preset.layerData || preset;
     const newLayer: SoundLayer = {
@@ -2155,6 +2176,26 @@ export default function App() {
                               }}
                               layerName={selectedLayer.name}
                               onApplyEffect={applyWaveformEdit}
+                              onParamChange={(param, value) => {
+                                // Persist sampler knob moves to the layer so they
+                                // affect sequenced playback, not just preview.
+                                updateLayer(selectedLayer.id, param === 'gain' ? { gain: value } : { pitch: value });
+                              }}
+                              onAudition={(semitones, velocity01) => {
+                                // Route auditions through the engine's full FX chain,
+                                // scaling gain by the pad velocity.
+                                audioEngine.triggerLayer(
+                                  { ...selectedLayer, gain: Math.max(0.02, (selectedLayer.gain || 1) * velocity01) },
+                                  0.6,
+                                  undefined,
+                                  undefined,
+                                  {
+                                    note: 60 + (selectedLayer.pitch || 0) + semitones,
+                                    respectDuration: true,
+                                    maxVoices: 4,
+                                  }
+                                );
+                              }}
                             />
                           </Suspense>
                           <div className="text-[9.5px] text-slate-500 font-mono flex justify-between items-center bg-[#070709] border border-[#1e293b]/40 px-3 py-1.5 rounded-lg">
@@ -2598,6 +2639,7 @@ export default function App() {
                     onAddSlicedLayers={(buffers: AudioBuffer[]) => {
                       buffers.forEach((b, i) => addLayer('sample', b, `Slice ${i + 1}`));
                     }}
+                    onAddSynthLayer={addSynthLayerFrom}
                   />
                 </Suspense>
                 {/* AAF / Pro Tools interchange (Phase 4.5, desktop-only) */}

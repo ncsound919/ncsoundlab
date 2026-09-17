@@ -297,8 +297,17 @@ export const saveProject = async (
 ): Promise<string> => {
   const projectId = id || crypto.randomUUID();
   const sanitizedLayers = (layers || []).map((layer) => {
-    const { audioBuffer, ...rest } = layer ?? {};
-    return rest;
+    const { audioBuffer, velocityLayers, ...rest } = layer ?? {};
+    if (!Array.isArray(velocityLayers)) return rest;
+    // Velocity layers carry AudioBuffers too — keep only their metadata so the
+    // legacy `soundProjects` row stays JSON-serializable.
+    return {
+      ...rest,
+      velocityLayers: velocityLayers.map((vl: { audioBuffer?: unknown }) => {
+        const { audioBuffer: _vlBuffer, ...vlRest } = vl;
+        return vlRest;
+      }),
+    };
   });
   const project: SavedSoundProject = {
     id: projectId,

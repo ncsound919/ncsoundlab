@@ -16,7 +16,7 @@ import { fetchLibrarySample, decodeLibrarySample } from '../lib/sampleLibrary';
 import { SAMPLE_DRAG_MIME } from './SampleBrowser';
 import { patternLoopLengthSec } from '../audio/transport/takesRecorder';
 import { stretchToDuration } from '../audio/dsp/TimeStretch';
-import { nextLoopBoundarySec, msUntil } from '../audio/transport/clipLauncher';
+import { planClipLaunch } from '../audio/transport/clipLauncher';
 import { getTransport } from '../audio/transport/transport';
 
 const SLOT_COUNT = 4;
@@ -40,27 +40,46 @@ interface ClipLauncherProps {
 export const ClipLauncher: React.FC<ClipLauncherProps> = ({ bpm, stepLength, onToast }) => {
   const [slots, setSlots] = useState<ClipSlot[]>(() => Array.from({ length: SLOT_COUNT }, emptySlot));
   const [quantize, setQuantize] = useState(true);
-  const [playingIdx, setPlayingIdx] = useState<number | null>(null);
-  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const launchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Legato: launching a clip layers it over the playing ones instead of replacing them. */
+  const [legato, setLegato] = useState(false);
+  const [playing, setPlaying] = useState<number[]>([]);
+  const sourcesRef = useRef<Map<number, AudioBufferSourceNode>>(new Map());
+  const timersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const slotsRef = useRef(slots);
   slotsRef.current = slots;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
   const loopSec = patternLoopLengthSec(stepLength, bpm);
 
-  const stopPlayback = (clearTimer = true) => {
-    if (clearTimer && launchTimerRef.current) {
-      clearTimeout(launchTimerRef.current);
-      launchTimerRef.current = null;
+  const stopSlot = (idx: number, fromTimer = false) => {
+    if (!fromTimer) {
+      const timer = timersRef.current.get(idx);
+      if (timer) {
+        clearTimeout(timer);
+        timersRef.current.delete(idx);
+      }
     }
-    if (sourceRef.current) {
-      try { sourceRef.current.onended = null; sourceRef.current.stop(); } catch { /* ignore */ }
-      try { sourceRef.current.disconnect(); } catch { /* ignore */ }
-      sourceRef.current = null;
+    const src = sourcesRef.current.get(idx);
+    if (src) {
+      try { src.onended = null; src.stop(); } catch { /* ignore */ }
+      try { src.disconnect(); } catch { /* ignore */ }
+      sourcesRef.current.delete(idx);
     }
-    setPlayingIdx(null);
+    setPlaying((prev) => prev.filter((i) => i !== idx));
   };
 
-  useEffect(() => stopPlayback, []);
+  const stopAll = () => {
+    for (const t of timersRef.current.values()) clearTimeout(t);
+    timersRef.current.clear();
+    for (const src of sourcesRef.current.values()) {
+      try { src.onended = null; src.stop(); } catch { /* ignore */ }
+      try { src.disconnect(); } catch { /* ignore */ }
+    }
+    sourcesRef.current.clear();
+    setPlaying([]);
+  };
+
+  useEffect(() => stopAll, []);
 
   const renderSlot = (source: AudioBuffer, seconds: number): AudioBuffer | null => {
     try {
@@ -103,55 +122,70 @@ export const ClipLauncher: React.FC<ClipLauncherProps> = ({ bpm, stepLength, onT
   };
 
   const clearSlot = (idx: number) => {
-    if (playingIdx === idx) stopPlayback();
+    stopSlot(idx);
     setSlots((prev) => prev.map((s, i) => (i === idx ? emptySlot() : s)));
   };
 
-  const startRendered = (rendered: AudioBuffer) => {
+  const startRendered = (idx: number, rendered: AudioBuffer, stopIndices: number[]) => {
     const ctx = audioEngine.getContext();
     if (!ctx) return;
-    stopPlayback();
+    // Replace the other playing clips exactly when this one starts, so a
+    // quantized launch never leaves a gap (legato mode passes no stop list).
+    for (const other of stopIndices) stopSlot(other, true);
     const src = ctx.createBufferSource();
     src.buffer = rendered;
     src.loop = true;
     const master = audioEngine.getMasterRackInput?.() ?? null;
     src.connect(master ?? ctx.destination);
+    src.onended = () => {
+      if (sourcesRef.current.get(idx) === src) {
+        sourcesRef.current.delete(idx);
+        setPlaying((prev) => prev.filter((i) => i !== idx));
+      }
+    };
     src.start(0);
-    sourceRef.current = src;
+    sourcesRef.current.set(idx, src);
+    setPlaying((prev) => (prev.includes(idx) ? prev : [...prev, idx]));
   };
 
   const toggleClip = (idx: number) => {
-    if (playingIdx === idx) {
-      stopPlayback();
+    if (playingRef.current.includes(idx)) {
+      stopSlot(idx);
       return;
     }
     const slot = slotsRef.current[idx];
     if (!slot?.rendered) return;
     const rendered = slot.rendered;
-    if (!quantize) {
-      startRendered(rendered);
-      setPlayingIdx(idx);
+
+    let positionSec = 0;
+    if (quantize) {
+      try {
+        positionSec = getTransport().getPosition();
+      } catch {
+        positionSec = 0;
+      }
+    }
+    const plan = planClipLaunch({
+      target: idx,
+      playing: playingRef.current,
+      legato,
+      quantize,
+      positionSec,
+      loopLengthSec: loopSec,
+    });
+
+    if (plan.startDelayMs <= 1) {
+      startRendered(idx, rendered, plan.stopIndices);
       return;
     }
-    // Quantized launch: start at the next loop boundary off the transport
-    // clock; fall back to immediate when the transport isn't running.
-    let delayMs = 0;
-    try {
-      const pos = getTransport().getPosition();
-      delayMs = msUntil(nextLoopBoundarySec(pos, loopSec), pos);
-    } catch {
-      delayMs = 0;
-    }
-    if (delayMs <= 1) {
-      startRendered(rendered);
-      setPlayingIdx(idx);
-      return;
-    }
-    setPlayingIdx(idx);
-    launchTimerRef.current = setTimeout(() => {
-      launchTimerRef.current = null;
-      startRendered(rendered);
-    }, delayMs);
+    // Show the slot as armed while it waits for the boundary.
+    setPlaying((prev) => (prev.includes(idx) ? prev : [...prev, idx]));
+    const timer = setTimeout(() => {
+      timersRef.current.delete(idx);
+      setPlaying((prev) => prev.filter((i) => i !== idx));
+      startRendered(idx, rendered, plan.stopIndices);
+    }, plan.startDelayMs);
+    timersRef.current.set(idx, timer);
   };
 
   return (
@@ -174,12 +208,26 @@ export const ClipLauncher: React.FC<ClipLauncherProps> = ({ bpm, stepLength, onT
           {quantize ? 'Quantized' : 'Free'}
         </button>
       </div>
+      <div className="flex items-center justify-between">
+        <span className="text-[8px] font-mono uppercase tracking-widest text-slate-500">Launch mode</span>
+        <button
+          type="button"
+          onClick={() => setLegato((l) => !l)}
+          title={legato ? 'Legato: new clips layer over the playing ones' : 'Replace: a new clip stops the others'}
+          className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border transition-all ${
+            legato ? 'bg-fuchsia-500/20 border-fuchsia-500/50 text-fuchsia-300' : 'bg-[#121215] border-[#1e293b] text-slate-400 hover:text-white'
+          }`}
+        >
+          {legato ? 'Legato' : 'Replace'}
+        </button>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
         {slots.map((slot, idx) => {
-          const isPlaying = playingIdx === idx;
+          const isPlaying = playing.includes(idx);
           return (
             <div
               key={idx}
+              data-clip-slot={idx}
               onDragOver={(e) => {
                 if (e.dataTransfer.types.includes(SAMPLE_DRAG_MIME)) {
                   e.preventDefault();

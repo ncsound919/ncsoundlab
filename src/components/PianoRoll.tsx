@@ -43,7 +43,7 @@ const ROW_PITCHES = [36, 38, 40, 41, 43, 45, 47, 48, 50, 52, 53, 55, 57, 59, 60,
 const resolveCellPitch = (rowIdx: number, note?: number): number =>
   note !== undefined && note >= LOW_PITCH && note <= HIGH_PITCH ? note : ROW_PITCHES[rowIdx % ROW_PITCHES.length];
 
-export type Pattern = Record<string, { on: boolean; note?: number }[]>;
+export type Pattern = Record<string, { on: boolean; note?: number; notes?: number[]; duration?: number }[]>;
 
 interface PianoRollProps {
   layers: SoundLayer[];
@@ -63,12 +63,21 @@ export function PianoRoll({ layers, pattern, currentStep, activeLayerId, onToggl
     resolveCellPitch(rowIdx, note);
 
   const notes = useMemo(() => {
-    const out: { layerId: string; step: number; pitch: number; color: string }[] = [];
+    const out: { layerId: string; step: number; pitch: number; color: string; duration: number }[] = [];
     enabled.forEach((layer, rowIdx) => {
       const row = pattern[layer.id] || [];
       row.forEach((cell, step) => {
-        if (cell?.on) {
-          out.push({ layerId: layer.id, step, pitch: cellPitch(layer, rowIdx, cell.note), color: PAD_COLORS[rowIdx % 16] });
+        if (!cell?.on) return;
+        // A voiced chord cell renders every note; a single note (or a drum
+        // cell with no pitch) renders one block. Multi-step cells stretch to
+        // their duration so sustained chords read correctly.
+        const duration = Math.max(1, cell.duration ?? 1);
+        const pitches = cell.notes && cell.notes.length > 0
+          ? cell.notes
+          : [cellPitch(layer, rowIdx, cell.note)];
+        for (const pitch of pitches) {
+          if (pitch < LOW_PITCH || pitch > HIGH_PITCH) continue;
+          out.push({ layerId: layer.id, step, pitch, color: PAD_COLORS[rowIdx % 16], duration });
         }
       });
     });
@@ -154,7 +163,7 @@ export function PianoRoll({ layers, pattern, currentStep, activeLayerId, onToggl
               style={{
                 left: `${(n.step / steps) * 100}%`,
                 top: (HIGH_PITCH - n.pitch) * ROW_H + 2,
-                width: `${100 / steps}%`,
+                width: `${(Math.min(n.duration, steps - n.step) / steps) * 100}%`,
                 height: ROW_H - 4,
               }}
             />

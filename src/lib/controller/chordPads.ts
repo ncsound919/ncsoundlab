@@ -14,7 +14,7 @@
  * matches the rest of the app.
  */
 
-import { midi, pitchClassOf, type ScaleType } from '../theory/pitch';
+import { midi, pitchClassOf, DIATONIC_QUALITIES, CHORD_QUALITIES, type DiatonicQualities, type ScaleType } from '../theory/pitch';
 import { resolveScaleType } from '../musicTheory';
 
 export interface ChordPadSettings {
@@ -57,50 +57,10 @@ const SCALE_INTERVALS: Record<ScaleType, number[]> = {
   locrian: [0, 1, 3, 5, 6, 8, 10],
 };
 
-interface DiatonicTables {
-  triads: string[];
-  sevenths: string[];
-}
-
-/** Roman-numeral correct diatonic quality per scale degree. */
-export const DIATONIC_TABLES: Record<ScaleType, DiatonicTables> = {
-  major: {
-    triads: ['', 'm', 'm', '', '', 'm', 'dim'],
-    sevenths: ['maj7', 'm7', 'm7', 'maj7', '7', 'm7', 'm7b5'],
-  },
-  natural_minor: {
-    triads: ['m', 'dim', '', 'm', 'm', '', ''],
-    sevenths: ['m7', 'm7b5', 'maj7', 'm7', 'm7', 'maj7', '7'],
-  },
-  harmonic_minor: {
-    triads: ['m', 'dim', 'aug', 'm', '', '', 'dim'],
-    sevenths: ['mMaj7', 'm7b5', 'maj7#5', 'm7', '7', 'maj7', 'dim7'],
-  },
-  melodic_minor: {
-    triads: ['m', 'm', 'aug', '', '', 'dim', 'dim'],
-    sevenths: ['mMaj7', 'm7', 'maj7#5', '7', '7', 'm7b5', 'm7b5'],
-  },
-  dorian: {
-    triads: ['m', 'm', '', '', 'm', 'dim', ''],
-    sevenths: ['m7', 'm7', 'maj7', '7', 'm7', 'm7b5', 'maj7'],
-  },
-  phrygian: {
-    triads: ['m', '', '', 'm', 'dim', '', 'm'],
-    sevenths: ['m7', 'maj7', '7', 'm7', 'm7b5', 'maj7', 'm7'],
-  },
-  lydian: {
-    triads: ['', '', 'm', 'dim', '', 'm', 'm'],
-    sevenths: ['maj7', '7', 'm7', 'm7b5', 'maj7', 'm7', 'm7'],
-  },
-  mixolydian: {
-    triads: ['', 'm', 'dim', '', 'm', 'm', ''],
-    sevenths: ['7', 'm7', 'm7b5', 'maj7', 'm7', 'm7', 'maj7'],
-  },
-  locrian: {
-    triads: ['dim', '', 'm', 'm', '', '', 'm'],
-    sevenths: ['m7b5', 'maj7', 'm7', 'm7', 'maj7', '7', 'm7'],
-  },
-};
+// Diatonic qualities now live in `theory/pitch.ts` (DIATONIC_QUALITIES) so the
+// progression generator and the chord pads cannot drift apart. Re-exported
+// under the original name for existing consumers/tests.
+export const DIATONIC_TABLES: Record<ScaleType, DiatonicQualities> = DIATONIC_QUALITIES;
 
 /** The seven diatonic chord qualities for a scale. */
 export function diatonicQualities(scale: string, seventh = false): string[] {
@@ -123,22 +83,10 @@ export interface ChordPad {
 
 const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-/** Chord-tone intervals (semitones) for a quality, falling back to a triad. */
-const CHORD_INTERVALS: Record<string, number[]> = {
-  '': [0, 4, 7],
-  m: [0, 3, 7],
-  dim: [0, 3, 6],
-  aug: [0, 4, 8],
-  maj7: [0, 4, 7, 11],
-  m7: [0, 3, 7, 10],
-  '7': [0, 4, 7, 10],
-  m7b5: [0, 3, 6, 10],
-  dim7: [0, 3, 6, 9],
-  mMaj7: [0, 3, 7, 11],
-  'maj7#5': [0, 4, 8, 11],
-};
-
-const intervalsFor = (quality: string): number[] => CHORD_INTERVALS[quality] ?? CHORD_INTERVALS[''];
+// Chord-tone intervals come straight from the shared CHORD_QUALITIES table so
+// the pads, voicings, and progression engine all spell chords identically.
+const intervalsFor = (quality: string): number[] =>
+  (CHORD_QUALITIES[quality] ?? CHORD_QUALITIES['']).intervals;
 
 /**
  * Build a chord pad. `padIndex` 0..15 walks the seven degrees then repeats an

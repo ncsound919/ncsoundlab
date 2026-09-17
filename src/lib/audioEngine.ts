@@ -11,6 +11,7 @@ import { createEqChain } from '../audio/eqBands';
 import { createSidechainDuck } from '../audio/masterDynamics';
 import { useMixerStore } from '../store/mixerStore';
 import { useMasterDynamicsStore } from '../store/masterDynamicsStore';
+import { usePatternStore } from '../store/patternStore';
 // Circular with ../audio/AudioEngine, but safe: SharedAudioEngine only reads
 // the base engine lazily (via a getter), and we only dereference this binding
 // inside methods at runtime — never at module-evaluation time.
@@ -70,6 +71,32 @@ export function isLayerAudibleInMix(layer: SoundLayer, allLayers: SoundLayer[]):
     return layer.soloed === true;
   }
   return true;
+}
+
+/** Equal-temperament frequency (Hz) for a MIDI note number (A4 = 440Hz = 69). */
+export function noteFrequency(midiNote: number): number {
+  return 440 * Math.pow(2, (midiNote - 69) / 12);
+}
+
+/**
+ * Return a copy of `layer` transposed to `note` (MIDI). Pure synth layers get
+ * their oscillator frequency set to the note; anything that plays a rendered
+ * buffer (sample layers, or synth layers with an edited audioBuffer) is
+ * transposed via its `pitch` field so the buffer is re-pitched by playbackRate.
+ * The layer `id` is preserved so voice limits / choke groups still key on it.
+ */
+export function withNoteTranspose(layer: SoundLayer, note: number): SoundLayer {
+  if (layer.type === 'synth' && !layer.audioBuffer) {
+    return {
+      ...layer,
+      synth: {
+        ...DEFAULT_SYNTH,
+        ...(layer.synth || {}),
+        frequency: noteFrequency(note),
+      },
+    };
+  }
+  return { ...layer, pitch: (layer.pitch || 0) + (note - 60) };
 }
 
 export class AudioEngine {
@@ -1137,9 +1164,24 @@ export class AudioEngine {
    * @param chokeKey when provided, stops any in-flight triggers that share the
    *   same key first (MPC choke/mute groups, e.g. open + closed hi-hat).
    */
-  triggerLayer(layer: SoundLayer, duration?: number, chokeKey?: string, when?: number, opts?: { maxVoices?: number }): void {
+  triggerLayer(
+    layer: SoundLayer,
+    duration?: number,
+    chokeKey?: string,
+    when?: number,
+    opts?: { maxVoices?: number; note?: number; respectDuration?: boolean }
+  ): void {
     if (!layer || !layer.enabled || layer.muted === true) return;
     this.resume();
+    // Melodic playback: when a target note is supplied, transpose a copy of
+    // the layer to that MIDI note and run it through the SAME full FX chain as
+    // drum/pad triggers. This is what lets sequenced synth/sample melody (and
+    // chord voicings) hear the layer's delay, chorus, reverb send, distortion,
+    // compressor, EQ, LFOs, sub-design, etc. — instead of the bare
+    // filter+envelope path SoundLayerPlayer used to provide.
+    if (opts?.note !== undefined) {
+      layer = withNoteTranspose(layer, opts.note);
+    }
     // Sample-accurate scheduling: callers may pass the Web Audio clock time
     // the hit should land at (e.g. a Tone transport step + swing offset).
     // When omitted we fire immediately, preserving existing behavior.
@@ -1158,12 +1200,12 @@ export class AudioEngine {
       }
     }
     let playDur = duration || 1.5;
-    if (layer.type === 'sample' && layer.audioBuffer) {
+    if (layer.type === 'sample' && layer.audioBuffer && !opts?.respectDuration) {
       const bufferDur = layer.audioBuffer.duration;
       const startPct = layer.playStartPct ?? 0;
       const endPct = layer.playEndPct ?? 1;
       playDur = Math.max(0.01, (endPct - startPct) * bufferDur);
-    } else if (layer.type === 'sample') {
+    } else if (layer.type === 'sample' && !layer.audioBuffer) {
       return; // sample layer with no buffer can't play
     }
     if (chokeKey) {
@@ -1458,7 +1500,7 @@ export class AudioEngine {
     const env = layer.envelope || DEFAULT_ENVELOPE;
     const safeRelease = Math.max(0.005, env.release ?? 0.1);
     
-    const chain = await this.createNodeChain(this.context, layer, baseStartTime, this.masterGain);
+    const chain = await this.createNodeChain(this.context, layer, baseStartTime, this.masterGain, playDur);
     const { source } = chain;
     let startOffset = 0;
     if (layer.type === 'sample' && layer.audioBuffer) {
@@ -1665,11 +1707,21 @@ export class AudioEngine {
     return rendered;
   }
 
-  private async createNodeChain(ctx: BaseAudioContext, layer: SoundLayer, startTime: number, destination: AudioNode) {
+  private async createNodeChain(
+    ctx: BaseAudioContext,
+    layer: SoundLayer,
+    startTime: number,
+    destination: AudioNode,
+    playDurOverride?: number
+  ) {
     const layerStartTime = startTime + (layer.startTimeOffset ?? 0);
     
-    let playDur = 1.5;
-    if (layer.type === 'sample' && layer.audioBuffer) {
+    // `playDurOverride` is supplied by note/duration-aware triggers (melodic
+    // steps, gated drum hits). It drives both the rendered synth length and the
+    // amplitude envelope so a note's release lands where the sequencer asked,
+    // instead of at the sample crop / fixed 1.5s default.
+    let playDur = playDurOverride ?? 1.5;
+    if (playDurOverride === undefined && layer.type === 'sample' && layer.audioBuffer) {
       const startPct = layer.playStartPct ?? 0;
       const endPct = layer.playEndPct ?? 1;
       playDur = Math.max(0.01, (endPct - startPct) * layer.audioBuffer.duration);
@@ -2062,7 +2114,10 @@ export class AudioEngine {
 
       // Calculate tempo sync LFO rate if enabled
       if (layer.fx.lfoSync && layer.fx.lfoDivision) {
-        const bpm = 120; // Default BPM baseline
+        // Use the live project tempo so tempo-synced LFOs actually lock to the
+        // transport instead of a hardcoded 120.
+        const patterns = usePatternStore.getState().patterns;
+        const bpm = patterns[usePatternStore.getState().activePatternId]?.bpm ?? 120;
         const divMap: Record<string, number> = {
           '1/4': (bpm / 60),
           '1/8': (bpm / 60) * 2,
@@ -2086,10 +2141,19 @@ export class AudioEngine {
           lfoGain.gain.setValueAtTime(lfoDepth * Math.min(cutoff * 0.9, 12000), layerStartTime);
           lfo.connect(lfoGain);
           lfoGain.connect(filter.frequency);
-        } else if (target === 'pitch' && source instanceof OscillatorNode) {
-          lfoGain.gain.setValueAtTime(lfoDepth * 100, layerStartTime); // cents
-          lfo.connect(lfoGain);
-          lfoGain.connect((source as OscillatorNode).detune);
+        } else if (target === 'pitch') {
+          // Oscillators take cents via detune; the engine's buffer sources
+          // (synth/sample) take a small playbackRate modulation instead. Both
+          // are reachable so the UI's "pitch" LFO target is no longer a no-op.
+          if (source instanceof OscillatorNode) {
+            lfoGain.gain.setValueAtTime(lfoDepth * 100, layerStartTime); // cents
+            lfo.connect(lfoGain);
+            lfoGain.connect(source.detune);
+          } else if (source instanceof AudioBufferSourceNode) {
+            lfoGain.gain.setValueAtTime(lfoDepth * 0.03, layerStartTime); // ~±50 cents
+            lfo.connect(lfoGain);
+            lfoGain.connect(source.playbackRate);
+          }
         } else if (target === 'pan') {
           lfoGain.gain.setValueAtTime(lfoDepth, layerStartTime);
           lfo.connect(lfoGain);
@@ -2596,12 +2660,23 @@ const subSaturation = ctx.createWaveShaper();
 subSaturation.oversample = '4x';
 
       
-      // Pitch tracking logic
-      let subFreq = 60; // Default C1-ish
-      if (sub.dynamicTracking && layer.type === 'sample' && layer.analysis?.peakDb) {
-        // Simple fallback freq if we don't have true pitch detection yet
-        subFreq = 55; // A1
+      // Pitch tracking: place the sub an octave below the layer's played
+      // fundamental when we know it (synth frequency, or the sample's root C4
+      // shifted by its tune), so "dynamic tracking" actually follows the note
+      // instead of a fixed 55 Hz.
+      const C4_HZ = 261.63;
+      let subFreq: number;
+      if (sub.dynamicTracking) {
+        if (layer.type === 'synth' && layer.synth?.frequency) {
+          subFreq = layer.synth.frequency / 2;
+        } else {
+          const semis = (layer.pitch || 0) + (layer.samplePitchCoarse || 0) + (layer.samplePitchFine || 0) / 100;
+          subFreq = (C4_HZ * Math.pow(2, semis / 12)) / 4;
+        }
+      } else {
+        subFreq = 55; // fixed A1 when tracking is off
       }
+      subFreq = Math.max(20, Math.min(200, subFreq));
       
       const desiredPhase = sub.phase || layer.phaseAngle || 0;
       if (desiredPhase > 0) {

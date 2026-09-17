@@ -129,6 +129,63 @@ export interface ChordQualityDef {
   essential: number[];    // indices into intervals that must be present in any voicing
 }
 
+/**
+ * Canonical diatonic chord qualities per scale degree (roman-numeral correct),
+ * triads and sevenths. This is the single source of truth shared by the
+ * progression generator (`theory/progression.ts`) and the controller chord
+ * pads (`lib/controller/chordPads.ts`) so the same scale yields the same
+ * chords everywhere. Every sevenths entry must be a key in CHORD_QUALITIES.
+ */
+export interface DiatonicQualities {
+  triads: string[];
+  sevenths: string[];
+}
+
+export const DIATONIC_QUALITIES: Record<ScaleType, DiatonicQualities> = {
+  major: {
+    triads: ['', 'm', 'm', '', '', 'm', 'dim'],
+    sevenths: ['maj7', 'm7', 'm7', 'maj7', '7', 'm7', 'm7b5'],
+  },
+  natural_minor: {
+    triads: ['m', 'dim', '', 'm', 'm', '', ''],
+    sevenths: ['m7', 'm7b5', 'maj7', 'm7', 'm7', 'maj7', '7'],
+  },
+  harmonic_minor: {
+    triads: ['m', 'dim', 'aug', 'm', '', '', 'dim'],
+    sevenths: ['mMaj7', 'm7b5', 'maj7#5', 'm7', '7', 'maj7', 'dim7'],
+  },
+  melodic_minor: {
+    triads: ['m', 'm', 'aug', '', '', 'dim', 'dim'],
+    sevenths: ['mMaj7', 'm7', 'maj7#5', '7', '7', 'm7b5', 'm7b5'],
+  },
+  dorian: {
+    triads: ['m', 'm', '', '', 'm', 'dim', ''],
+    sevenths: ['m7', 'm7', 'maj7', '7', 'm7', 'm7b5', 'maj7'],
+  },
+  phrygian: {
+    triads: ['m', '', '', 'm', 'dim', '', 'm'],
+    sevenths: ['m7', 'maj7', '7', 'm7', 'm7b5', 'maj7', 'm7'],
+  },
+  lydian: {
+    triads: ['', '', 'm', 'dim', '', 'm', 'm'],
+    sevenths: ['maj7', '7', 'm7', 'm7b5', 'maj7', 'm7', 'm7'],
+  },
+  mixolydian: {
+    triads: ['', 'm', 'dim', '', 'm', 'm', ''],
+    sevenths: ['7', 'm7', 'm7b5', 'maj7', 'm7', 'm7', 'maj7'],
+  },
+  locrian: {
+    triads: ['dim', '', 'm', 'm', '', '', 'm'],
+    sevenths: ['m7b5', 'maj7', 'm7', 'm7', 'maj7', '7', 'm7'],
+  },
+};
+
+/** The seven diatonic chord qualities for a scale (triads or sevenths). */
+export function diatonicChordQualities(scaleType: ScaleType, seventh = false): string[] {
+  const table = DIATONIC_QUALITIES[scaleType] ?? DIATONIC_QUALITIES.major;
+  return seventh ? table.sevenths : table.triads;
+}
+
 const Q = (intervals: number[], essential: number[]): ChordQualityDef => ({ intervals, essential });
 
 export const CHORD_QUALITIES: Record<string, ChordQualityDef> = {
@@ -150,6 +207,9 @@ export const CHORD_QUALITIES: Record<string, ChordQualityDef> = {
   'maj9':     Q([0, 4, 7, 11, 14],       [0, 1, 3, 4]),
   'maj13':    Q([0, 4, 7, 11, 14, 21],   [0, 1, 3, 5]),
   'maj7#11':  Q([0, 4, 7, 11, 18],       [0, 1, 3, 4]),
+  // Raised-fifth major 7th (III+ in harmonic/melodic minor). Without this key
+  // the diatonic minor tables silently fell back to a plain major triad.
+  'maj7#5':   Q([0, 4, 8, 11],           [0, 1, 3]),
 
   // Dominant 7ths & alterations
   '7':        Q([0, 4, 7, 10],           [0, 1, 3]),

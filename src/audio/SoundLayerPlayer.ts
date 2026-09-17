@@ -129,8 +129,9 @@ export class SoundLayerPlayer {
       // Calculate playback rate from MIDI note transposition (note 60 = 1x speed)
       const semitonesFromMiddleC = (noteNumber - 60) + (layer.pitch || 0);
       s.playbackRate.value = safeAudioValue(Math.pow(2, semitonesFromMiddleC / 12), 1);
-      // Honor the layer's crop (playStartPct/playEndPct are 0..1 fractions) so
-      // MIDI/note playback matches the edited region instead of the whole file.
+      // Honor the crop start (playStartPct is a 0..1 fraction) so note playback
+      // begins where the editor region does. The region end is bounded by the
+      // buffer itself; the note is gated by `safeDuration` at the stop below.
       const startPct = Math.max(0, Math.min(1, layer.playStartPct ?? 0));
       const endPct = Math.max(0, Math.min(1, layer.playEndPct ?? 1));
       const bufferDur = layer.audioBuffer.duration;

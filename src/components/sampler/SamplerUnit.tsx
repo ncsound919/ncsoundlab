@@ -26,6 +26,16 @@ interface SamplerUnitProps {
   layerName?: string;
   /** Run a destructive DSP edit on the current selection (reverse, crop, …). */
   onApplyEffect?: (type: string) => void;
+  /**
+   * Persist a sampler control change to the underlying layer (gain/pitch) so
+   * controller knob moves affect sequenced playback, not just the preview.
+   */
+  onParamChange?: (param: 'gain' | 'pitch', value: number) => void;
+  /**
+   * Audition through the app engine (full FX chain). When provided, preview and
+   * pad hits route through the live layer instead of a bare buffer source.
+   */
+  onAudition?: (semitones: number, velocity01: number) => void;
 }
 
 const PAD_TINTS = [
@@ -81,6 +91,8 @@ export const SamplerUnit: React.FC<SamplerUnitProps> = ({
   playbackTime = null,
   layerName,
   onApplyEffect,
+  onParamChange,
+  onAudition,
 }) => {
   const [zoom, setZoom] = useState(1);
   const [amp, setAmp] = useState(1);
@@ -88,8 +100,8 @@ export const SamplerUnit: React.FC<SamplerUnitProps> = ({
   const [gain, setGain] = useState(0.8);
 
   // Latest values/callbacks for the long-lived bridge closure.
-  const liveRef = useRef({ buffer, selectionStart, selectionEnd, pitch, gain, onApplyEffect, onSelectionChange });
-  liveRef.current = { buffer, selectionStart, selectionEnd, pitch, gain, onApplyEffect, onSelectionChange };
+  const liveRef = useRef({ buffer, selectionStart, selectionEnd, pitch, gain, onApplyEffect, onSelectionChange, onParamChange, onAudition });
+  liveRef.current = { buffer, selectionStart, selectionEnd, pitch, gain, onApplyEffect, onSelectionChange, onParamChange, onAudition };
 
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
 
@@ -99,6 +111,13 @@ export const SamplerUnit: React.FC<SamplerUnitProps> = ({
   const play = (semis: number, velocity01: number) => {
     const live = liveRef.current;
     if (!live.buffer) return;
+    // Prefer the app engine so the audition runs through the layer's full FX
+    // chain and matches sequenced playback. Falls back to a bare buffer source
+    // for hosts/tests that don't wire `onAudition`.
+    if (live.onAudition) {
+      live.onAudition(semis, velocity01);
+      return;
+    }
     try {
       const ctx = audioEngine.getContext();
       if (!ctx) return;
@@ -153,8 +172,18 @@ export const SamplerUnit: React.FC<SamplerUnitProps> = ({
         switch (param) {
           case 'zoom': setZoom(Math.max(0.5, Math.min(64, value))); break;
           case 'amp': setAmp(Math.max(1, Math.min(4, value))); break;
-          case 'pitch': setPitch(Math.max(-12, Math.min(12, value))); break;
-          case 'gain': setGain(clamp01(value)); break;
+          case 'pitch': {
+            const p = Math.max(-12, Math.min(12, value));
+            setPitch(p);
+            live.onParamChange?.('pitch', Math.round(p));
+            break;
+          }
+          case 'gain': {
+            const g = clamp01(value);
+            setGain(g);
+            live.onParamChange?.('gain', g);
+            break;
+          }
           case 'selStart': setSelection(value, Math.max(value + 0.01, live.selectionEnd)); break;
           case 'selEnd': setSelection(Math.min(live.selectionStart, value - 0.01), value); break;
           case 'selLength': setSelection(live.selectionStart, live.selectionStart + value); break;

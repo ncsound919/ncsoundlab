@@ -59,9 +59,11 @@ vi.mock('../audio/transport/transport', () => ({
   resetTransport: vi.fn(),
 }));
 
+const slotEl = (slotIdx: number) =>
+  document.querySelector(`[data-clip-slot="${slotIdx}"]`) as HTMLElement;
+
 const dropSample = (slotIdx: number) => {
-  const slots = document.querySelectorAll('[data-clip-launcher] > div.grid > div');
-  fireEvent.drop(slots[slotIdx], { dataTransfer: { getData: () => 's1' } });
+  fireEvent.drop(slotEl(slotIdx), { dataTransfer: { getData: () => 's1' } });
 };
 
 describe('ClipLauncher', () => {
@@ -82,7 +84,7 @@ describe('ClipLauncher', () => {
     dropSample(1);
     await waitFor(() => expect(screen.getByText('Funky Loop')).toBeDefined());
 
-    const slot = screen.getByText('Funky Loop').closest('div.rounded-lg') as HTMLElement;
+    const slot = slotEl(1);
     fireEvent.click(within(slot).getByTitle('Play clip'));
     expect(sources).toHaveLength(1);
     expect(sources[0].loop).toBe(true);
@@ -90,6 +92,30 @@ describe('ClipLauncher', () => {
 
     fireEvent.click(within(slot).getByTitle('Stop clip'));
     expect(sources[0].stop).toHaveBeenCalled();
+  });
+
+  it('replaces other clips by default and layers them in legato mode', async () => {
+    render(<ClipLauncher bpm={120} stepLength={16} />);
+    dropSample(0);
+    dropSample(1);
+    await waitFor(() => expect(screen.getAllByText('Funky Loop')).toHaveLength(2));
+    // Free launch so nothing waits on the transport clock.
+    fireEvent.click(screen.getByRole('button', { name: 'Quantized' }));
+
+    fireEvent.click(within(slotEl(0)).getByTitle('Play clip'));
+    fireEvent.click(within(slotEl(1)).getByTitle('Play clip'));
+    // Replace mode: launching slot 1 stopped slot 0.
+    expect(sources).toHaveLength(2);
+    expect(sources[0].stop).toHaveBeenCalled();
+    // Slot 0's tile is no longer marked playing.
+    expect(within(slotEl(0)).getByTitle('Play clip')).toBeDefined();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    fireEvent.click(within(slotEl(0)).getByTitle('Play clip'));
+    // Legato: the two clips now run together — no further stop on slot 1.
+    const stoppedBefore = (sources[1].stop as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(sources).toHaveLength(3);
+    expect((sources[1].stop as ReturnType<typeof vi.fn>).mock.calls.length).toBe(stoppedBefore);
   });
 
   it('toggles quantize and clears slots', async () => {
@@ -100,7 +126,7 @@ describe('ClipLauncher', () => {
 
     dropSample(2);
     await waitFor(() => expect(screen.getByText('Funky Loop')).toBeDefined());
-    const slot = screen.getByText('Funky Loop').closest('div.rounded-lg') as HTMLElement;
+    const slot = slotEl(2);
     fireEvent.click(within(slot).getByTitle('Clear clip'));
     expect(screen.queryByText('Funky Loop')).toBeNull();
   });
@@ -114,7 +140,7 @@ describe('ClipLauncher', () => {
       dropSample(0);
       // The drop handler is async — flush microtasks under fake timers.
       await act(async () => {});
-      const slot = screen.getByText('Funky Loop').closest('div.rounded-lg') as HTMLElement;
+      const slot = slotEl(0);
       fireEvent.click(within(slot).getByTitle('Play clip'));
       expect(sources).toHaveLength(0);
       vi.advanceTimersByTime(500);

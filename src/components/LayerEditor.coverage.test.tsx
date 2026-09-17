@@ -29,6 +29,7 @@ import {
   type SoundLayer,
   type SubDesignSettings,
   type SynthSettings,
+  type VelocityLayer,
 } from '../types';
 
 const fakeBuffer = (): AudioBuffer =>
@@ -919,6 +920,77 @@ describe('LayerEditor coverage', () => {
     } finally {
       (audioEngine.getContext as any).mockReset();
     }
+  });
+
+  it('builds a keygroup velocity layer stack', async () => {
+    const { audioEngine } = await import('../lib/audioEngine');
+    const fakeCtx = { decodeAudioData: vi.fn(async () => fakeBuffer()) };
+    (audioEngine.getContext as any).mockReturnValue(fakeCtx);
+    try {
+      const onUpdate = vi.fn();
+      const { container } = render(
+        <LayerEditor selectedLayer={sampleLayer()} onUpdate={onUpdate} onPlay={vi.fn()} />,
+      );
+      openDetails(container);
+
+      // Add the current sample → one full-range band.
+      fireEvent.click(screen.getByRole('button', { name: 'Add current sample' }));
+      let list = onUpdate.mock.calls.at(-1)![0].velocityLayers as VelocityLayer[];
+      expect(list).toHaveLength(1);
+      expect(list[0]).toMatchObject({ minVelocity: 1, maxVelocity: 127 });
+
+      // Add a file → decode → a velocity layer from the decoded buffer.
+      onUpdate.mockClear();
+      const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const file = new File([new Uint8Array([1, 2, 3])], 'hard.wav', { type: 'audio/wav' });
+      await act(async () => {
+        fireEvent.change(input, { target: { files: [file] } });
+      });
+      expect(fakeCtx.decodeAudioData).toHaveBeenCalled();
+      list = onUpdate.mock.calls.at(-1)![0].velocityLayers as VelocityLayer[];
+      expect(list).toHaveLength(1);
+      expect(list[0]).toMatchObject({ name: 'hard', fileName: 'hard.wav', minVelocity: 1, maxVelocity: 127 });
+    } finally {
+      (audioEngine.getContext as any).mockReset();
+    }
+  });
+
+  it('edits, evenly splits and removes velocity layers', () => {
+    const onUpdate = vi.fn();
+    const layer = sampleLayer({
+      velocityLayers: [
+        { id: 'a', minVelocity: 1, maxVelocity: 40, audioBuffer: fakeBuffer(), name: 'Soft' },
+        { id: 'b', minVelocity: 90, maxVelocity: 127, audioBuffer: fakeBuffer(), name: 'Hard' },
+      ],
+    });
+    const { container } = render(<LayerEditor selectedLayer={layer} onUpdate={onUpdate} onPlay={vi.fn()} />);
+    openDetails(container);
+
+    expect(container.querySelector('[data-velocity-layers]')).toBeTruthy();
+    expect(screen.getByText(/Soft \(v40\)/)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Velocity layer Soft min'), { target: { value: '10' } });
+    let list = onUpdate.mock.calls.at(-1)![0].velocityLayers as VelocityLayer[];
+    expect(list.find((l) => l.id === 'a')?.minVelocity).toBe(10);
+
+    onUpdate.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Even split' }));
+    list = onUpdate.mock.calls.at(-1)![0].velocityLayers as VelocityLayer[];
+    expect(list[0].minVelocity).toBe(1);
+    expect(list[1].maxVelocity).toBe(127);
+    expect(list[1].minVelocity).toBe(list[0].maxVelocity + 1);
+
+    onUpdate.mockClear();
+    fireEvent.click(screen.getByTitle('Remove Hard'));
+    list = onUpdate.mock.calls.at(-1)![0].velocityLayers as VelocityLayer[];
+    expect(list.map((l) => l.id)).toEqual(['a']);
+
+    // Appending the current sample re-splits the bands across all layers.
+    onUpdate.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Add current sample' }));
+    list = onUpdate.mock.calls.at(-1)![0].velocityLayers as VelocityLayer[];
+    expect(list).toHaveLength(3);
+    expect(list[2].maxVelocity).toBe(127);
   });
 
   it('covers both sides of the randomizer probability branches', () => {
