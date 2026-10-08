@@ -16,3 +16,5 @@ src-tauri/gen/schemas
 # Generated AAF validation samples (written by `cargo run --example write_aaf`)
 *.aaf
 aaf_samples/
+
+.vercel
