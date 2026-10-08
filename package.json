@@ -32,7 +32,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.546.0",
     "meyda": "^5.6.3",
-    "motion": "^12.23.24",
+    "motion": "^14.0.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-piano": "^3.1.3",
