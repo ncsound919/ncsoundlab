@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../lib/audioEngine';
+import { StudioMeterBar } from './studio/StudioControls';
 
 export function MasterMeter() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -110,11 +111,7 @@ export function MasterMeter() {
   
   // Format dB value
   const displayDb = holdDb <= -90 ? '-∞' : holdDb.toFixed(1);
-  
-  // Calculate meter bar height (0 to 100%)
-  const meterHeight = Math.max(0, Math.min(100, (peakDb + 60) / 60 * 100));
-  const holdHeight = Math.max(0, Math.min(100, (holdDb + 60) / 60 * 100));
-  
+    
   return (
     <div className="flex flex-col gap-2">
       <div className="flex justify-between items-center text-[10px] font-mono font-bold text-gray-500 uppercase">
@@ -148,26 +145,14 @@ export function MasterMeter() {
             aria-label="Reset clip indicator"
           />
           
-          {/* Peak Meter Bar with 1.5s Peak-Hold Line */}
-          <div className="w-4 flex-1 rounded-md border border-[#27272a] bg-[#0a0a0c] flex flex-col justify-end overflow-hidden relative">
-            <div className="absolute w-full border-t border-red-500/50 top-[0%]"></div>
-            <div className="absolute w-full border-t border-yellow-500/30 top-[20%]"></div>
-            <div className="absolute w-full border-t border-emerald-500/30 top-[50%]"></div>
-            
-            {/* Live Meter Bar */}
-            <div 
-              className="w-full bg-gradient-to-t from-emerald-500 via-yellow-400 to-red-500 transition-all duration-75"
-              style={{ height: `${meterHeight}%` }}
-            />
-
-            {/* Peak Hold Line */}
-            {holdHeight > 0 && (
-              <div
-                className="absolute w-full h-[2px] bg-white shadow-[0_0_6px_#ffffff] transition-all duration-75 z-10"
-                style={{ bottom: `${holdHeight}%` }}
-              />
-            )}
-          </div>
+          {/* Shared peak-hold meter: -20 dB reference, green/amber/red zones. */}
+          <StudioMeterBar
+            peakDb={peakDb}
+            holdDb={holdDb}
+            height={72}
+            className="flex-1"
+            label="Master peak level"
+          />
         </div>
       </div>
     </div>

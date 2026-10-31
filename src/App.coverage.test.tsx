@@ -324,7 +324,7 @@ describe('App global keyboard shortcuts', () => {
     (input as HTMLInputElement).focus();
     key('m');
     key('ArrowRight');
-    expect(screen.getAllByText(/Synth Layering & Samples/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Sound Design/i).length).toBeGreaterThan(0);
   });
 });
 
@@ -644,8 +644,8 @@ describe('App catalog + toast container', () => {
     fireEvent.click(within(catalogNav).getByRole('button', { name: 'Catalog' }));
     const load = await screen.findByRole('button', { name: /Load Kit into One-Shot Sound Lab/i }, { timeout: 60000 });
     fireEvent.click(load);
-    // handleLoadKitToSoundLab routes back to the Layering stage.
-    await waitFor(() => expect(screen.getAllByText(/Synth Layering & Samples/i).length).toBeGreaterThan(0));
+    // handleLoadKitToSoundLab routes back to the Sound Design stage.
+    await waitFor(() => expect(screen.getAllByText(/Sound Design/i).length).toBeGreaterThan(0));
   });
 
   it('dismisses a toast from the container', async () => {

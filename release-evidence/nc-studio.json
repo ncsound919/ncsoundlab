@@ -1,0 +1,51 @@
+{
+  "schema": "overlay.release_evidence.v1",
+  "generatedAt": "2026-10-28T17:14:53.835Z",
+  "slug": "nc-studio",
+  "name": "NC Studio",
+  "kind": "audio",
+  "version": "v1.3.0 (130)",
+  "lastClaim": "1.3.0 — 2026-10-28 — first verified test run",
+  "operability": {
+    "score": 91,
+    "breakdown": {
+      "stubs": 25,
+      "tests": 23,
+      "provability": 18,
+      "handoff": 12,
+      "phone": 9,
+      "visibility": 4
+    }
+  },
+  "measured": {
+    "sourceFiles": 113,
+    "sourceLoc": 31954,
+    "testFiles": 54,
+    "testLoc": 7841,
+    "modulesWithTests": 110,
+    "moduleCoveragePct": 97.3,
+    "deadControls": 0
+  },
+  "proven": [
+    "changelog",
+    "audit record",
+    "result/metrics record",
+    "security policy",
+    "readiness checklist",
+    "evidence dir (evidence)"
+  ],
+  "connectsTo": [
+    "export .ncbeat",
+    "deep links",
+    "import path"
+  ],
+  "surfaces": [
+    "android app"
+  ],
+  "safeClaims": [
+    "no dead controls found by automated sweep",
+    "54 test files, 97.3% of modules exercised",
+    "maintains a changelog"
+  ],
+  "unsafeClaims": []
+}

@@ -4,7 +4,12 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "rewrites": [
-    { "source": "/((?!assets/|fonts/|logo.png|manifest.json|robots.txt|favicon.ico).*)", "destination": "/index.html" }
+    { "source": "/field", "destination": "/field.html" },
+    { "source": "/ncsound", "destination": "/ncsound/index.html" },
+    {
+      "source": "/((?!assets/|fonts/|icons/|ncsound/|sw\\.js|workbox-.*\\.js|manifest\\.json|manifest\\.webmanifest|robots\\.txt|404\\.html|favicon\\.ico|logo\\.png|field\\.html).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
@@ -17,6 +22,34 @@
         { "key": "Permissions-Policy", "value": "camera=(), microphone=(self), geolocation=()" },
         { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self' blob:; connect-src 'self' http://localhost:3050 http://127.0.0.1:3050; object-src 'none'; frame-ancestors 'none'" }
       ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+    },
+    {
+      "source": "/sw.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    },
+    {
+      "source": "/workbox-(.*).js",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    },
+    {
+      "source": "/manifest.json",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    },
+    {
+      "source": "/index.html",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    },
+    {
+      "source": "/field.html",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    },
+    {
+      "source": "/ncsound/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
     }
   ]
 }

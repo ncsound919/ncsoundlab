@@ -1,0 +1,53 @@
+{
+  "schema": "overlay.release_evidence.v1",
+  "generatedAt": "2026-10-28T17:14:53.835Z",
+  "slug": "marketing",
+  "name": "Overlay Marketing",
+  "kind": "operations",
+  "version": "v0.1.0",
+  "lastClaim": "0.2.0 — 2026-10-28",
+  "operability": {
+    "score": 90,
+    "breakdown": {
+      "stubs": 25,
+      "tests": 25,
+      "provability": 20,
+      "handoff": 12,
+      "phone": 7,
+      "visibility": 1
+    }
+  },
+  "measured": {
+    "sourceFiles": 11,
+    "sourceLoc": 596,
+    "testFiles": 13,
+    "testLoc": 590,
+    "modulesWithTests": 11,
+    "moduleCoveragePct": 100,
+    "deadControls": 0
+  },
+  "proven": [
+    "changelog",
+    "audit record",
+    "result/metrics record",
+    "README",
+    "security policy",
+    "readiness checklist",
+    "license"
+  ],
+  "connectsTo": [
+    "API contract",
+    "registry entry",
+    "import path"
+  ],
+  "surfaces": [
+    "PWA manifest"
+  ],
+  "safeClaims": [
+    "no dead controls found by automated sweep",
+    "13 test files, 100% of modules exercised",
+    "maintains a changelog",
+    "open source"
+  ],
+  "unsafeClaims": []
+}

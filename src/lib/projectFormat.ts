@@ -202,8 +202,29 @@ export interface SerializeProjectInput {
 const PROJECT_MIME = 'application/json';
 
 const stripLayerForSerialization = async (layer: SoundLayer): Promise<SerializedLayer> => {
-  const { audioBuffer, analysis, velocityLayers, ...rest } = layer;
+  const { audioBuffer, analysis, velocityLayers, subDesign, ...rest } = layer;
   const out: SerializedLayer = { ...rest };
+  if (subDesign) {
+    // The custom 808 lives inside subDesign, so its AudioBuffer needs its own
+    // base64 pass; the top-level sampleData field only covers `audioBuffer`.
+    const { custom808, ...subRest } = subDesign;
+    out.subDesign = { ...subRest };
+    if (custom808) {
+      const { audioBuffer: customBuffer, sampleData: existing, ...customRest } = custom808;
+      const serializedCustom = { ...customRest } as typeof custom808;
+      if (customBuffer) {
+        serializedCustom.sampleData = await audioBufferToBase64(customBuffer, 16);
+        serializedCustom.sampleMeta = {
+          sampleRate: customBuffer.sampleRate,
+          channels: customBuffer.numberOfChannels,
+          length: customBuffer.length,
+        };
+      } else if (existing) {
+        serializedCustom.sampleData = existing;
+      }
+      out.subDesign.custom808 = serializedCustom;
+    }
+  }
   if (audioBuffer) {
     out.sampleData = await audioBufferToBase64(audioBuffer, 16);
     out.sampleMeta = {
@@ -351,6 +372,16 @@ async function rehydrateLayer(context: BaseAudioContext, layer: SerializedLayer)
   const out = { ...(rest as SoundLayer) };
   if (sampleData) {
     out.audioBuffer = await base64ToAudioBuffer(context, sampleData);
+  }
+  // A saved custom 808 is decoded back into an AudioBuffer so the engine can
+  // play it immediately on project load.
+  if (out.subDesign?.custom808?.sampleData) {
+    const custom = out.subDesign.custom808;
+    const decoded = await base64ToAudioBuffer(context, custom.sampleData);
+    out.subDesign = {
+      ...out.subDesign,
+      custom808: { ...custom, audioBuffer: decoded },
+    };
   }
   if (velocityLayers && velocityLayers.length > 0) {
     const rehydrated = await Promise.all(

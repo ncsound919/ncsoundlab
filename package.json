@@ -8,7 +8,8 @@
     "dev": "vite --port=3001 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "node -e \"const fs=require('fs');for(const p of ['dist']){try{fs.rmSync(p,{recursive:true,force:true});}catch{}}\"",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "icons": "node scripts/generate-pwa-icons.mjs",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -18,8 +19,12 @@
     "test:e2e:controller:hw": "node scripts/e2e-controller-hw.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "boundary:check": "tsx scripts/check-engine-boundary.ts",
+    "precache:check": "node scripts/check-precache.mjs",
+    "check": "npm run lint && npm run test && npm run boundary:check"
   },
+  "packageManager": "bun@1.4.3",
   "dependencies": {
     "@soundtouchjs/core": "^2.1.0",
     "@soundtouchjs/stretch-phase-vocoder": "^2.1.0",
@@ -53,10 +58,12 @@
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
     "jsdom": "^29.1.1",
+    "sharp": "^0.35.5",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
+    "vite-plugin-pwa": "^2.0.0",
     "vitest": "^4.1.10"
   }
 }

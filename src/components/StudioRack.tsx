@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Reorder } from 'motion/react';
 import { ModuleCard } from './ModuleCard';
+import { CombinatorPanel } from './CombinatorPanel';
 import { useRackStore } from '../store/rackStore';
+import { useCombinatorStore } from '../store/combinatorStore';
 import { PresetBrowser } from './PresetBrowser';
 import { ModuleType } from '../types';
 import { Fader } from './Fader';
@@ -35,6 +37,16 @@ const MODULE_OPTIONS: { type: ModuleType; label: string; desc: string }[] = [
   { type: 'phaser', label: 'Optical Phaser', desc: 'Multi-Stage Allpass Phase Sweeper' },
   { type: 'tremolo', label: 'LFO Tremolo', desc: 'Rhythmic Volume Modulation' },
   { type: 'imager', label: 'Stereo Imager', desc: 'Mid-Side Stereo Width Spreader' },
+  {
+    type: 'studio-suite',
+    label: 'NC Studio Suite',
+    desc: 'The studio rack: Neve, 1176, LA-2A, Pultec, tape, plate — identical in every NC app',
+  },
+  {
+    type: 'combinator',
+    label: 'Hex Combinator',
+    desc: 'Multi-effect modulation combinator: 6 slots, motion matrix, XY, presets, evolution',
+  },
 ];
 
 export const StudioRack: React.FC = () => {
@@ -61,6 +73,7 @@ export const StudioRack: React.FC = () => {
 
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
+  const [showCombinator, setShowCombinator] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [macroValues, setMacroValues] = useState<number[]>([50, 50, 50, 50]);
 
@@ -75,6 +88,14 @@ export const StudioRack: React.FC = () => {
     }, 100);
     return () => clearTimeout(t);
   }, [modules, zeroLatency]);
+
+  // Combinator state drives a real insert on the master bus, so push the
+  // current state on mount and every store change after that (a mount-only
+  // effect would hand the engine one stale snapshot and nothing would move).
+  useEffect(() => {
+    audioEngine.setCombinator(useCombinatorStore.getState());
+    return useCombinatorStore.subscribe((state) => audioEngine.setCombinator(state));
+  }, []);
 
   const handleMacroChange = (index: number, value: number) => {
     const updated = [...macroValues];
@@ -101,6 +122,7 @@ export const StudioRack: React.FC = () => {
   };
 
   return (
+    <>
     <div className={isFullscreen ? "fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl p-4 md:p-8 flex items-center justify-center overflow-auto" : ""}>
       <div className={`w-full mx-auto p-2 flex flex-col gap-6 text-[#E2E8F0] select-none ${isFullscreen ? 'max-w-7xl' : 'max-w-7xl'}`}>
         {/* Compact Studio Rack Toolbar */}
@@ -238,7 +260,20 @@ export const StudioRack: React.FC = () => {
               <Sparkles className="w-3.5 h-3.5" />
               Presets
             </button>
-            
+
+            {/* Combinator Toggle */}
+            <button
+              onClick={() => setShowCombinator(!showCombinator)}
+              className={`px-3.5 py-1.5 rounded-xl border text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+                showCombinator
+                  ? 'bg-blue-600 text-white border-blue-500'
+                  : 'bg-[#1A1A1E] border-[#2A2A2E] text-yellow-400 hover:border-yellow-500'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              Combinator
+            </button>
+
             {/* Fullscreen Toggle */}
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
@@ -365,5 +400,7 @@ export const StudioRack: React.FC = () => {
       )}
     </div>
     </div>
+    <CombinatorPanel isOpen={showCombinator} onClose={() => setShowCombinator(false)} />
+    </>
   );
 };

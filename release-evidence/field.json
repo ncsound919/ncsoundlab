@@ -1,0 +1,56 @@
+{
+  "schema": "overlay.release_evidence.v1",
+  "generatedAt": "2026-10-28T17:14:53.835Z",
+  "slug": "field",
+  "name": "NC Sound Lab / Field",
+  "kind": "audio",
+  "version": "v1.1.0",
+  "lastClaim": "1.1.0 — 2026-10-28 — verified baseline",
+  "operability": {
+    "score": 90,
+    "breakdown": {
+      "stubs": 25,
+      "tests": 21,
+      "provability": 15,
+      "handoff": 15,
+      "phone": 9,
+      "visibility": 5
+    }
+  },
+  "measured": {
+    "sourceFiles": 243,
+    "sourceLoc": 61116,
+    "testFiles": 245,
+    "testLoc": 36779,
+    "modulesWithTests": 185,
+    "moduleCoveragePct": 76.1,
+    "deadControls": 0
+  },
+  "proven": [
+    "changelog",
+    "README",
+    "readiness checklist",
+    "license",
+    "evidence dir (evidence)"
+  ],
+  "connectsTo": [
+    "export .ncbeat",
+    "AAF export/import",
+    "deep links",
+    "API contract",
+    "registry entry",
+    "import path"
+  ],
+  "surfaces": [
+    "separate phone entry",
+    "PWA manifest",
+    "desktop shell"
+  ],
+  "safeClaims": [
+    "no dead controls found by automated sweep",
+    "245 test files, 76.1% of modules exercised",
+    "maintains a changelog",
+    "open source"
+  ],
+  "unsafeClaims": []
+}

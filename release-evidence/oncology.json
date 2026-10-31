@@ -1,0 +1,53 @@
+{
+  "schema": "overlay.release_evidence.v1",
+  "generatedAt": "2026-10-28T17:14:53.835Z",
+  "slug": "oncology",
+  "name": "Oncology Ecosystem",
+  "kind": "research",
+  "version": "unversioned",
+  "lastClaim": "1.0.0 — 2026-10-28",
+  "operability": {
+    "score": 77,
+    "breakdown": {
+      "stubs": 25,
+      "tests": 9,
+      "provability": 20,
+      "handoff": 12,
+      "phone": 7,
+      "visibility": 4
+    }
+  },
+  "measured": {
+    "sourceFiles": 1574,
+    "sourceLoc": 242494,
+    "testFiles": 482,
+    "testLoc": 40488,
+    "modulesWithTests": 276,
+    "moduleCoveragePct": 17.5,
+    "deadControls": 23
+  },
+  "proven": [
+    "changelog",
+    "audit record",
+    "result/metrics record",
+    "README",
+    "security policy",
+    "readiness checklist",
+    "evidence dir (evidence, lens-readouts)"
+  ],
+  "connectsTo": [
+    "AAF export/import",
+    "registry entry",
+    "import path"
+  ],
+  "surfaces": [
+    "PWA manifest"
+  ],
+  "safeClaims": [
+    "482 test files, 17.5% of modules exercised",
+    "maintains a changelog"
+  ],
+  "unsafeClaims": [
+    "do not claim completeness: dead controls present"
+  ]
+}

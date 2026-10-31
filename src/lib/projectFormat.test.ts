@@ -659,3 +659,60 @@ describe('projectFormat — FX buses round-trip', () => {
     expect(hydrated.buses.delay.enabled).toBe(false);
   });
 });
+
+describe('projectFormat — custom 808 inside the sub designer', () => {
+  it('embeds the nested sample as base64 and rehydrates it', async () => {
+    const layer = makeSynthLayer('sub1');
+    layer.subDesign = {
+      subEnabled: true,
+      subLevel: 0.6,
+      subType: 'sine',
+      harmonicSaturation: 0.2,
+      xSubMix: 0.1,
+      drive: 0.15,
+      dynamicTracking: true,
+      custom808: {
+        name: 'my-808',
+        gain: 0.9,
+        tuneSemitones: -2,
+        startPct: 0.1,
+        endPct: 0.9,
+        highpassHz: 30,
+        audioBuffer: makeBuffer(1, 256),
+      },
+    };
+    const doc = await serializeProject({
+      title: 'Custom 808',
+      appVersion: '1.0.0',
+      layers: [layer],
+      patterns: { A: makePattern('A', ['sub1']), B: makePattern('B', ['sub1']), C: makePattern('C', ['sub1']), D: makePattern('D', ['sub1']) },
+      activePatternId: 'A',
+      songChain: { order: ['A'] },
+      programs: {
+        A: Array.from({ length: 16 }, () => null),
+        B: Array.from({ length: 16 }, () => null),
+        C: Array.from({ length: 16 }, () => null),
+        D: Array.from({ length: 16 }, () => null),
+      },
+      activeBank: 'A',
+      bpm: 120,
+      timeSignature: [4, 4],
+      masterLevel: 0.8,
+      masterRack: { modules: [] },
+    });
+
+    const serialized = doc.layers[0].subDesign?.custom808;
+    expect(serialized?.sampleData).toBeTruthy();
+    expect((serialized as { audioBuffer?: AudioBuffer }).audioBuffer).toBeUndefined();
+
+    const hydrated = await deserializeProject(new AudioContext(), doc);
+    const custom = hydrated.layers[0].subDesign?.custom808;
+    expect(custom?.name).toBe('my-808');
+    expect(custom?.gain).toBe(0.9);
+    expect(custom?.tuneSemitones).toBe(-2);
+    expect(custom?.startPct).toBe(0.1);
+    expect(custom?.endPct).toBe(0.9);
+    expect(custom?.highpassHz).toBe(30);
+    expect(custom?.audioBuffer).toBeDefined();
+  });
+});

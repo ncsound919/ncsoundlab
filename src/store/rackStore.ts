@@ -65,6 +65,12 @@ const getDefaultSettings = (type: ModuleType) => {
       return { rate: 4, depth: 60, shape: 'sine' };
     case 'imager':
       return { width: 130, midGain: 0, sideGain: 0 };
+    case 'studio-suite':
+      // Empty by design: the panel ships the NC Studio module picker, not a
+      // guessed generic chain.
+      return { chain: [], bpm: 120 };
+    case 'combinator':
+      return { state: null };
     default:
       return {};
   }

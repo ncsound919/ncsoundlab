@@ -1,0 +1,53 @@
+{
+  "schema": "overlay.release_evidence.v1",
+  "generatedAt": "2026-10-28T17:14:53.835Z",
+  "slug": "sieve",
+  "name": "Sieve mobile",
+  "kind": "companion",
+  "version": "v0.1.0",
+  "lastClaim": "0.1.0 — 2026-10-28 — verification baseline",
+  "operability": {
+    "score": 90,
+    "breakdown": {
+      "stubs": 25,
+      "tests": 16,
+      "provability": 20,
+      "handoff": 15,
+      "phone": 9,
+      "visibility": 5
+    }
+  },
+  "measured": {
+    "sourceFiles": 36,
+    "sourceLoc": 2359,
+    "testFiles": 16,
+    "testLoc": 946,
+    "modulesWithTests": 16,
+    "moduleCoveragePct": 44.4,
+    "deadControls": 0
+  },
+  "proven": [
+    "changelog",
+    "audit record",
+    "result/metrics record",
+    "README",
+    "security policy",
+    "readiness checklist",
+    "evidence dir (evidence)"
+  ],
+  "connectsTo": [
+    "deep links",
+    "API contract",
+    "registry entry",
+    "import path"
+  ],
+  "surfaces": [
+    "expo (cloud-buildable)"
+  ],
+  "safeClaims": [
+    "no dead controls found by automated sweep",
+    "16 test files, 44.4% of modules exercised",
+    "maintains a changelog"
+  ],
+  "unsafeClaims": []
+}

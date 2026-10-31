@@ -1,0 +1,53 @@
+{
+  "schema": "overlay.release_evidence.v1",
+  "generatedAt": "2026-10-28T17:14:53.835Z",
+  "slug": "wiring",
+  "name": "Wiring layer",
+  "kind": "operations",
+  "version": "v1.0.0",
+  "lastClaim": "1.1.0 — 2026-10-28",
+  "operability": {
+    "score": 92,
+    "breakdown": {
+      "stubs": 25,
+      "tests": 25,
+      "provability": 20,
+      "handoff": 15,
+      "phone": 2,
+      "visibility": 5
+    }
+  },
+  "measured": {
+    "sourceFiles": 12,
+    "sourceLoc": 2460,
+    "testFiles": 12,
+    "testLoc": 1033,
+    "modulesWithTests": 12,
+    "moduleCoveragePct": 100,
+    "deadControls": 0
+  },
+  "proven": [
+    "changelog",
+    "audit record",
+    "result/metrics record",
+    "README",
+    "security policy",
+    "readiness checklist",
+    "evidence dir (reports)"
+  ],
+  "connectsTo": [
+    "deep links",
+    "API contract",
+    "registry entry",
+    "import path"
+  ],
+  "surfaces": [
+    "web page"
+  ],
+  "safeClaims": [
+    "no dead controls found by automated sweep",
+    "12 test files, 100% of modules exercised",
+    "maintains a changelog"
+  ],
+  "unsafeClaims": []
+}

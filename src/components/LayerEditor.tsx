@@ -557,6 +557,76 @@ const Sub808Visualizer: React.FC<{ subDesign?: SoundLayer['subDesign'] }> = ({ s
   );
 };
 
+/** Peak preview of the producer's own 808, with the crop region shaded. */
+const Custom808Waveform: React.FC<{
+  buffer?: AudioBuffer;
+  startPct: number;
+  endPct: number;
+  accent: string;
+  enabled: boolean;
+}> = ({ buffer, startPct, endPct, accent, enabled }) => {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#050507';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#27272a';
+    ctx.beginPath();
+    ctx.moveTo(0, h / 2);
+    ctx.lineTo(w, h / 2);
+    ctx.stroke();
+
+    if (buffer) {
+      const data = buffer.getChannelData(0);
+      const cols = Math.max(1, Math.floor(w / 3));
+      const step = Math.max(1, Math.floor(data.length / cols));
+      ctx.fillStyle = accent;
+      for (let c = 0; c < cols; c++) {
+        let hi = 0;
+        const from = c * step;
+        const to = Math.min(data.length, from + step);
+        for (let i = from; i < to; i++) {
+          const v = Math.abs(data[i]);
+          if (v > hi) hi = v;
+        }
+        const bar = Math.max(1, hi * (h * 0.86));
+        ctx.globalAlpha = enabled ? 0.9 : 0.35;
+        ctx.fillRect(c * 3 + 1, h / 2 - bar / 2, 2, bar);
+      }
+      ctx.globalAlpha = 1;
+
+      // Shade the trimmed head and tail.
+      const a = Math.min(Math.max(0, startPct), 1) * w;
+      const b = Math.min(Math.max(a, endPct), 1) * w;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, a, h);
+      ctx.fillRect(b, 0, w - b, h);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(a, 0);
+      ctx.lineTo(a, h);
+      ctx.moveTo(b, 0);
+      ctx.lineTo(b, h);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = '#52525b';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('NO 808 LOADED', w / 2, h / 2 + 4);
+    }
+  }, [buffer, startPct, endPct, accent, enabled]);
+
+  return <canvas ref={ref} width={600} height={64} className="w-full h-16 rounded-lg border border-[#27272a]" />;
+};
+
 export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounceLayer }: LayerEditorProps) {
   const [activeTab, setActiveTab] = useState<'synth' | 'layerfx'>('synth');
   const [customPresets, setCustomPresets] = useState<SynthPreset[]>([]);
@@ -568,6 +638,54 @@ export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounc
   const [isRandomizerOpen, setIsRandomizerOpen] = useState(false);
   const [xfadeSec, setXfadeSec] = useState(0.02);
   const velocityFileRef = useRef<HTMLInputElement | null>(null);
+  const custom808FileRef = useRef<HTMLInputElement | null>(null);
+
+  // ----- Custom 808 sample + synth sub -----
+
+  /** Ensures a full subDesign exists before a patch is merged into it. */
+  const subBase = (): NonNullable<SoundLayer['subDesign']> =>
+    selectedLayer.subDesign || {
+      subEnabled: false,
+      subLevel: 0.5,
+      subType: 'sine',
+      harmonicSaturation: 0,
+      xSubMix: 0,
+      drive: 0,
+      dynamicTracking: true,
+    };
+
+  const patchSub = (patch: Partial<NonNullable<SoundLayer['subDesign']>>) => {
+    onUpdate({ subDesign: { ...subBase(), ...patch } });
+  };
+
+  const patchCustom808 = (patch: Partial<NonNullable<NonNullable<SoundLayer['subDesign']>['custom808']>>) => {
+    const base = subBase();
+    const current = base.custom808;
+    if (!current) return;
+    patchSub({ custom808: { ...current, ...patch } });
+  };
+
+  const handleCustom808File = async (file: File) => {
+    const ctx = audioEngine.getContext();
+    if (!ctx) return;
+    try {
+      const buffer = await ctx.decodeAudioData(await file.arrayBuffer());
+      const base = subBase();
+      patchSub({
+        custom808: {
+          name: file.name.replace(/\.[^.]+$/, ''),
+          gain: base.custom808?.gain ?? 0.85,
+          tuneSemitones: base.custom808?.tuneSemitones ?? 0,
+          startPct: 0,
+          endPct: 1,
+          highpassHz: base.custom808?.highpassHz ?? 0,
+          audioBuffer: buffer,
+        },
+      });
+    } catch (e) {
+      console.warn('Custom 808 decode failed', e);
+    }
+  };
 
   // ----- Keygroup velocity layers -----
 
@@ -3228,7 +3346,7 @@ export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounc
                       ))}
                     </div>
                     <Knob 
-                      label="Sub Level" 
+                      label="App Sub Level" 
                       value={selectedLayer.subDesign?.subLevel || 0.5} 
                       min={0} max={1.5} step={0.01}
                       color="#ef4444"
@@ -3308,6 +3426,128 @@ export function LayerEditor({ selectedLayer, onUpdate, onPlay, onEvolve, onBounc
                    <Sub808Visualizer subDesign={selectedLayer.subDesign} />
                   </div>
                </div>
+
+              {/* YOUR 808 × APP SUB: the producer's sample and the synth sub
+                  are two independent voices, mixed here. */}
+              <div className="mt-6 rounded-xl border border-emerald-500/25 bg-[#0a0a0c] p-4 space-y-3" data-custom-808>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-[11px] font-black uppercase tracking-widest text-emerald-300 block">Your 808 × App Sub</span>
+                    <span className="text-[9px] text-gray-500">Load your own 808, then blend it with the synth sub instead of choosing one.</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      ref={custom808FileRef}
+                      type="file"
+                      accept=".wav,.mp3,.ogg,.flac,.aiff,.m4a"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = '';
+                        if (f) void handleCustom808File(f);
+                      }}
+                    />
+                    <button
+                      onClick={() => custom808FileRef.current?.click()}
+                      className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-emerald-600/20 border border-emerald-500/50 text-emerald-300 hover:bg-emerald-600/30 transition-all"
+                    >
+                      {selectedLayer.subDesign?.custom808 ? 'Replace 808…' : 'Load your 808…'}
+                    </button>
+                    {selectedLayer.subDesign?.custom808 && (
+                      <button
+                        onClick={() => patchSub({ custom808: undefined })}
+                        className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-[#16161a] border border-[#2A2A2E] text-gray-400 hover:text-rose-300 transition-all"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <Custom808Waveform
+                  buffer={selectedLayer.subDesign?.custom808?.audioBuffer}
+                  startPct={selectedLayer.subDesign?.custom808?.startPct ?? 0}
+                  endPct={selectedLayer.subDesign?.custom808?.endPct ?? 1}
+                  accent="#34d399"
+                  enabled={selectedLayer.subDesign?.subEnabled ?? false}
+                />
+
+                {selectedLayer.subDesign?.custom808 ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 items-start">
+                    <Knob
+                      label="Your 808"
+                      value={selectedLayer.subDesign.custom808.gain}
+                      min={0} max={1.5} step={0.01}
+                      color="#34d399"
+                      onChange={(v) => patchCustom808({ gain: v })}
+                    />
+                    <Knob
+                      label="808 Tune"
+                      value={selectedLayer.subDesign.custom808.tuneSemitones}
+                      min={-24} max={24} step={1}
+                      unit="st"
+                      color="#34d399"
+                      onChange={(v) => patchCustom808({ tuneSemitones: v })}
+                    />
+                    <Knob
+                      label="808 Hi-Pass"
+                      value={selectedLayer.subDesign.custom808.highpassHz}
+                      min={0} max={200} step={1}
+                      unit="Hz"
+                      color="#34d399"
+                      onChange={(v) => patchCustom808({ highpassHz: v })}
+                    />
+                    <div className="space-y-2 pt-1">
+                      <div className="text-[9px] font-mono uppercase text-gray-500">Crop</div>
+                      <label className="flex items-center gap-2 text-[9px] font-mono text-gray-400">
+                        <span className="w-8">START</span>
+                        <input
+                          type="range" min={0} max={99} step={1}
+                          value={Math.round((selectedLayer.subDesign.custom808.startPct ?? 0) * 100)}
+                          onChange={(e) => {
+                            const start = Number(e.target.value) / 100;
+                            const end = selectedLayer.subDesign?.custom808?.endPct ?? 1;
+                            patchCustom808({ startPct: Math.min(start, end - 0.01) });
+                          }}
+                          className="flex-1 accent-emerald-400"
+                        />
+                      </label>
+                      <label className="flex items-center gap-2 text-[9px] font-mono text-gray-400">
+                        <span className="w-8">END</span>
+                        <input
+                          type="range" min={1} max={100} step={1}
+                          value={Math.round((selectedLayer.subDesign.custom808.endPct ?? 1) * 100)}
+                          onChange={(e) => {
+                            const end = Number(e.target.value) / 100;
+                            const start = selectedLayer.subDesign?.custom808?.startPct ?? 0;
+                            patchCustom808({ endPct: Math.max(end, start + 0.01) });
+                          }}
+                          className="flex-1 accent-emerald-400"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-gray-500">
+                    No custom 808 yet — the synth sub plays alone. Load a sample to layer the two.
+                  </p>
+                )}
+
+                <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-[#1f1f23] text-[9px] font-mono uppercase">
+                  <span className={selectedLayer.subDesign?.subEnabled ? 'text-red-300' : 'text-gray-600'}>
+                    App sub {Math.round((selectedLayer.subDesign?.subLevel ?? 0.5) * 100)}%
+                  </span>
+                  <span className="text-gray-600">+</span>
+                  <span className={selectedLayer.subDesign?.custom808 ? 'text-emerald-300' : 'text-gray-600'}>
+                    Your 808 {Math.round((selectedLayer.subDesign?.custom808?.gain ?? 0) * 100)}%
+                  </span>
+                  <span className="text-gray-500 normal-case">
+                    {selectedLayer.subDesign?.subEnabled
+                      ? 'both voices sum into the layer; set either to zero to use only the other'
+                      : 'power the 808 designer on to hear either voice'}
+                  </span>
+                </div>
+              </div>
              </div>
           </div>
           </details>

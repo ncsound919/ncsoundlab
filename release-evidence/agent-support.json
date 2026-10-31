@@ -1,0 +1,52 @@
+{
+  "schema": "overlay.release_evidence.v1",
+  "generatedAt": "2026-10-28T17:14:53.835Z",
+  "slug": "agent-support",
+  "name": "Agent Support",
+  "kind": "companion",
+  "version": "v1.0 (1)",
+  "lastClaim": "1.0 — 2026-10-28 — unit suite made runnable, audit records no longer overwrite each other",
+  "operability": {
+    "score": 93,
+    "breakdown": {
+      "stubs": 25,
+      "tests": 22,
+      "provability": 20,
+      "handoff": 12,
+      "phone": 9,
+      "visibility": 5
+    }
+  },
+  "measured": {
+    "sourceFiles": 85,
+    "sourceLoc": 13007,
+    "testFiles": 26,
+    "testLoc": 2899,
+    "modulesWithTests": 85,
+    "moduleCoveragePct": 100,
+    "deadControls": 0
+  },
+  "proven": [
+    "changelog",
+    "audit record",
+    "result/metrics record",
+    "README",
+    "security policy",
+    "readiness checklist",
+    "evidence dir (evidence)"
+  ],
+  "connectsTo": [
+    "deep links",
+    "API contract",
+    "import path"
+  ],
+  "surfaces": [
+    "android app"
+  ],
+  "safeClaims": [
+    "no dead controls found by automated sweep",
+    "26 test files, 100% of modules exercised",
+    "maintains a changelog"
+  ],
+  "unsafeClaims": []
+}

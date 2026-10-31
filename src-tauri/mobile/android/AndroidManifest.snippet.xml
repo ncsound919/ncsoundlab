@@ -1,0 +1,27 @@
+<!--
+  Android Manifest snippet for NC Field Sound Lab Capture Service.
+  Enforces Android 14+ foreground service types and hardware audio routing rules.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Audio permissions -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Android 14 (API 34+) Foreground Service Permissions -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Offline enforcement: release build omits android.permission.INTERNET -->
+
+    <application>
+        <!-- Declare CaptureService with microphone and dataSync foreground service types -->
+        <service
+            android:name="com.ncsonic.soundlab.field.CaptureService"
+            android:foregroundServiceType="microphone|dataSync"
+            android:exported="false" />
+    </application>
+
+</manifest>

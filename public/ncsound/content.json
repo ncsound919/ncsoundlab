@@ -1,0 +1,176 @@
+{
+  "updated": "2026-10-28",
+  "brand": {
+    "label": "NC Sound",
+    "tagline": "Albums, audio apps, sound kits and media from the NC Sound / Overlay 365 studio.",
+    "email": "tap4500@gmail.com"
+  },
+  "apps": [
+    {
+      "name": "NC Sound Lab",
+      "sub": "Field",
+      "kind": "Workstation",
+      "status": "live",
+      "platform": "Web + Windows",
+      "blurb": "Procedural beatmaker and sound-design workstation. Chaos-synth DSP, 13-module studio rack, EBU R128 compare engine, AAF export straight into Pro Tools.",
+      "url": "https://site-edd3acae594c4dcda6d0a106f3c22541.freebuff.page/",
+      "cta": "Open the lab",
+      "notes": ["Runs offline as a PWA", "Desktop build is self-contained"]
+    },
+    {
+      "name": "Field Studio",
+      "sub": "phone entry",
+      "kind": "Recorder",
+      "status": "live",
+      "platform": "Android Chrome",
+      "blurb": "The phone half of NC Sound Lab. Pre-roll capture so you catch the take before you hit record, onset slicing, YIN tuning, seeded evolution, .ncbeat export.",
+      "url": "https://site-edd3acae594c4dcda6d0a106f3c22541.freebuff.page/field",
+      "cta": "Open Field",
+      "notes": ["Install to home screen", "Works with no signal"]
+    },
+    {
+      "name": "NC Phone Beat",
+      "sub": "Mobile MPC",
+      "kind": "Drum machine",
+      "status": "beta",
+      "platform": "Android",
+      "blurb": "16-pad MPC-style sampler with a C++17 real-time engine. Per-step ratchet, probability and swing; four synths onboard; projects export as .ncbeat into NC Studio.",
+      "url": null,
+      "cta": "Not listed yet",
+      "notes": ["Engine audited under ASan / TSan", "0 allocations on the audio thread"]
+    },
+    {
+      "name": "NC Studio",
+      "sub": "Pulse DAW",
+      "kind": "DAW",
+      "status": "beta",
+      "platform": "Android",
+      "blurb": "16-track mobile DAW with clip timeline, per-track DSP and an AI mix assistant. Imports .ncbeat sessions from Phone Beat and Field.",
+      "url": null,
+      "cta": "Not listed yet",
+      "notes": ["135 unit tests green", "Theme + accessibility pass done"]
+    },
+    {
+      "name": "Concordance",
+      "sub": "oncology adjudication",
+      "kind": "Research",
+      "status": "beta",
+      "platform": "Android",
+      "blurb": "Evidence adjudication client: anchors, claims, a deterministic Referee audit and a research agent, all synced to the hub. The audit is reproducible by content hash.",
+      "url": "https://concordance-web.tap4500.workers.dev/",
+      "cta": "Visit the hub",
+      "notes": ["Store listing and screenshots ready", "Supabase sync with conflict resolution"]
+    },
+    {
+      "name": "Overlay Radio",
+      "sub": "NCSound Radio",
+      "kind": "Radio",
+      "status": "soon",
+      "platform": "Web",
+      "blurb": "A continuous online station for the catalogue — shows, unreleased beats and guest mixes. Built and waiting on a host.",
+      "url": "https://github.com/ncsound919/NCSound-Radio",
+      "cta": "Source",
+      "notes": ["Deployment pending"]
+    },
+    {
+      "name": "Math X",
+      "sub": "symbolic workbench",
+      "kind": "Research",
+      "status": "live",
+      "platform": "Web",
+      "blurb": "Computer-algebra workbench with a proof verifier, export panel and step-by-step derivation. 28 components, built for research notes that need to be checkable.",
+      "url": "https://github.com/ncsound919/math-x",
+      "cta": "Source",
+      "notes": ["In the Overlay marketplace", "Proof verifier under test"]
+    },
+    {
+      "name": "AetherDesk",
+      "sub": "call center + CRM",
+      "kind": "Operations",
+      "status": "live",
+      "platform": "Web + Android",
+      "blurb": "Inbound leads, partner outreach, support triage and campaign attribution in one desk. Consumes signed research signals; emits subscription and partner events.",
+      "url": "https://api.overlay365.online/docs",
+      "cta": "API docs",
+      "notes": ["Running on AWS EC2", "HMAC-signed signal intake"]
+    },
+    {
+      "name": "Sieve",
+      "sub": "telemetry spine",
+      "kind": "Companion",
+      "status": "alpha",
+      "platform": "Android",
+      "blurb": "One dashboard for what every surface is doing: health, recall over the memory spine, and a 24-hour ecosystem summary. Refuses PHI at the edge.",
+      "url": "https://concordance-web.tap4500.workers.dev/",
+      "cta": "Visit the hub",
+      "notes": ["Verified App Links", "Signed in with the hub account"]
+    },
+    {
+      "name": "Recourse",
+      "sub": "research memory",
+      "kind": "Companion",
+      "status": "alpha",
+      "platform": "Android",
+      "blurb": "Durable research memory and an idea forge, plus Kaggle job monitoring so long-running compute is visible from the phone.",
+      "url": "https://concordance-web.tap4500.workers.dev/",
+      "cta": "Visit the hub",
+      "notes": ["Same account as the hub", "Jobs polled through the mobile gateway"]
+    },
+    {
+      "name": "OpenHub",
+      "sub": "coding harness",
+      "kind": "Developer",
+      "status": "beta",
+      "platform": "Web + phone",
+      "blurb": "Code from the phone: opencode with a set of MCP servers wired in, sessions shared with the desktop, and the ecosystem registry in one place.",
+      "url": "https://concordance-web.tap4500.workers.dev/",
+      "cta": "Visit the hub",
+      "notes": ["MCP tooling", "Shares the hub identity"]
+    }
+  ],
+  "kits": [
+    {
+      "name": "Drum Kits",
+      "detail": "Kick, snare, hat and perc sets rendered from the chaos-synth engine. Round-robin ready, 24-bit WAV.",
+      "tags": ["drums", "wav"],
+      "status": "soon"
+    },
+    {
+      "name": "808 & Sub",
+      "detail": "Tuned sub packs with glide, drive and x-sub layers, keyed for trap, drill and slow R&B.",
+      "tags": ["bass", "808"],
+      "status": "soon"
+    },
+    {
+      "name": "Leads & Stabs",
+      "detail": "Hard-sync and wavefolded leads with the ladder filter printed in, plus dry versions for your own chain.",
+      "tags": ["synth", "lead"],
+      "status": "soon"
+    },
+    {
+      "name": "Pads & Textures",
+      "detail": "Granular scatter beds, tape-saturated drones and evolving atmospheres for intros and breakdowns.",
+      "tags": ["pad", "ambient"],
+      "status": "soon"
+    },
+    {
+      "name": "Chaos FX",
+      "detail": "Risers, impacts and circuit-bent one-shots from the bitcrush and granular stages.",
+      "tags": ["fx", "one-shot"],
+      "status": "soon"
+    },
+    {
+      "name": "Field Recordings",
+      "detail": "Room tone, machines, rain and street takes captured on the Field Studio and cleaned with its denoise chain.",
+      "tags": ["field", "texture"],
+      "status": "soon"
+    }
+  ],
+  "albums": [],
+  "media": [],
+  "links": [
+    { "label": "GitHub", "url": "https://github.com/ncsound919" },
+    { "label": "NC Sound Lab source", "url": "https://github.com/ncsound919/ncsoundlab" },
+    { "label": "Concordance hub", "url": "https://concordance-web.tap4500.workers.dev/" }
+  ]
+}

@@ -42,6 +42,10 @@ export default defineConfig({
         '**/*.spec.ts',
         '**/*.spec.tsx',
         'src/vite-env.d.ts',
+        // HTML entry points: createRoot + service-worker registration, with no
+        // unit-testable statements. Both surfaces are covered by Playwright.
+        'src/main.tsx',
+        'src/field.tsx',
       ],
       // Modest global floor so the suite as a whole can't regress. The real
       // gate for new/changed code is scripts/check-new-code-coverage.mjs (90%).

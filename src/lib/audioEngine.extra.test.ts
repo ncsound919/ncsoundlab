@@ -841,3 +841,75 @@ describe('createNodeChain branch coverage', () => {
     await trigger(makeLayer({ playStartPct: 0, playEndPct: 0.002, gain: 0, envelope: { attack: 1, decay: 0.2, sustain: 0.8, release: 0.1 } }));
   });
 });
+
+describe('Hex Combinator insert on the master bus', () => {
+  const activeState = () => ({
+    slots: [
+      {
+        id: 's1',
+        moduleId: 'TRIM',
+        enabled: true,
+        mix: 1,
+        preGainDb: 0,
+        postGainDb: 0,
+        polarity: false,
+        bands: { low: true, mid: true, high: true },
+        crossovers: [200, 2000],
+        params: { gainDb: 6 },
+        motion: 'macro',
+        motionParams: { depth: 0, macro: 0.5 },
+        locked: false,
+      },
+    ],
+    routes: [],
+    masterMix: 1,
+    bpm: 120,
+    tightMode: true,
+    xyAssign: { x: '', y: '' },
+    morphAmount: 0,
+  });
+
+  it('inserts, updates in place and removes the node', () => {
+    const eng = audioEngine as any;
+    const original = ctx.createScriptProcessor;
+    ctx.createScriptProcessor = vi.fn(() => makeNode());
+    try {
+      eng.setCombinator(null);
+      expect(eng.combinatorHandle).toBeNull();
+
+      eng.setCombinator(activeState());
+      const handle = eng.combinatorHandle;
+      expect(handle).not.toBeNull();
+      // The rack input is rewired through the insert.
+      expect(eng.masterRackInput.connect).toHaveBeenCalledWith(handle.node);
+
+      // A parameter-only update must not rebuild the node: rebuilding would
+      // re-create DSP state and click on every knob move.
+      eng.setCombinator({ ...activeState(), masterMix: 0.8 });
+      expect(eng.combinatorHandle).toBe(handle);
+
+      eng.setCombinator({ ...activeState(), slots: [] });
+      expect(eng.combinatorHandle).toBeNull();
+    } finally {
+      ctx.createScriptProcessor = original;
+      eng.setCombinator(null);
+    }
+  });
+
+  it('still renders an offline export while the insert is active', async () => {
+    const eng = audioEngine as any;
+    const original = ctx.createScriptProcessor;
+    ctx.createScriptProcessor = vi.fn(() => makeNode());
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      eng.setCombinator(activeState());
+      const buf = await audioEngine.exportWav([makeLayer()], 0.5);
+      expect(buf).toBeTruthy();
+      expect(buf.length).toBeGreaterThan(0);
+    } finally {
+      warn.mockRestore();
+      ctx.createScriptProcessor = original;
+      eng.setCombinator(null);
+    }
+  });
+});

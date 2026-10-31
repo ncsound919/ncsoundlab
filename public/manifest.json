@@ -1,21 +1,49 @@
 {
-  "name": "NC Sound Lab",
-  "short_name": "SoundLab",
-  "description": "A web-based beatmaker and sound design workstation",
-  "start_url": "/",
+  "name": "NC Sound Lab Field",
+  "short_name": "NC Field",
+  "description": "Offline field recording studio: capture takes, slice onsets, clean them up, evolve variants and export a kit.",
+  "id": "/",
+  "start_url": "/field.html",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#1e3a8a",
+  "display_override": ["standalone"],
+  "orientation": "portrait-primary",
+  "background_color": "#05070f",
+  "theme_color": "#05070f",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["music", "audio", "productivity"],
+  "prefer_related_applications": false,
   "icons": [
     {
-      "src": "/logo.png",
+      "src": "/icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "/logo.png",
+      "src": "/icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Field Studio",
+      "url": "/field.html",
+      "description": "Capture field recordings, slice onsets, and evolve kits"
+    },
+    {
+      "name": "Beat Station",
+      "url": "/",
+      "description": "Desktop beatmaker workstation"
     }
   ]
 }

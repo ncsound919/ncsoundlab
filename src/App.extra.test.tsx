@@ -31,6 +31,28 @@ vi.mock('./lib/db', () => ({
   deleteProject: vi.fn(async () => undefined),
 }));
 
+// Beat Studio (StudioSequencer) constructs a real Tone.js context on mount;
+// jsdom has no Web Audio, so stub the same surface the sequencer suites use.
+vi.mock('tone', () => ({
+  Sequence: vi.fn(function () {
+    return { loop: false, start: vi.fn(), dispose: vi.fn() };
+  }),
+  Draw: { schedule: vi.fn((fn: () => void) => fn()) },
+  Transport: {
+    bpm: { value: 120 },
+    swing: 0,
+    swingSubdivision: '16n',
+    timeSignature: 4,
+    seconds: 0,
+    start: vi.fn(),
+    stop: vi.fn(),
+    pause: vi.fn(),
+    clear: vi.fn(),
+    scheduleRepeat: vi.fn(() => 1),
+  },
+  setContext: vi.fn(),
+}));
+
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: vi.fn().mockImplementation((query) => ({
@@ -77,7 +99,7 @@ describe('App dashboard', () => {
     fireEvent.click(next);
     expect(screen.getAllByText(/Beat Studio & Sequencer/i).length).toBeGreaterThan(0);
     fireEvent.click(prev);
-    expect(screen.getAllByText(/Synth Layering & Samples/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Sound Design/i).length).toBeGreaterThan(0);
   });
 
   it('deep-links directly to a stage via #stage= hash on load', async () => {
@@ -95,7 +117,7 @@ describe('App dashboard', () => {
   it('ignores unknown stage ids in the hash and stays on the default stage', async () => {
     window.history.replaceState(null, '', '#stage=not-a-real-stage');
     renderDashboard();
-    await waitFor(() => expect(screen.getAllByText(/Synth Layering & Samples/i).length).toBeGreaterThan(0), { timeout: 5000 });
+    await waitFor(() => expect(screen.getAllByText(/Sound Design/i).length).toBeGreaterThan(0), { timeout: 5000 });
     expect(window.location.hash).toContain('#stage=design');
   });
 

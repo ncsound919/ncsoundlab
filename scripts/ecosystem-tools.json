@@ -1,0 +1,260 @@
+{
+  "note": "Absolute paths on purpose: the desktop, research and platform tools live in unrelated folders, while all mobile surfaces live under phone-apps/. This file is the one place to add or retire a tool. Move the whole scripts/ecosystem-audit.mjs + this file into eco/wiring/ once it is stable.",
+  "tools": [
+    {
+      "slug": "field",
+      "name": "NC Sound Lab / Field",
+      "kind": "audio",
+      "surface": "web",
+      "path": "C:/Users/tap45/Downloads/phone-apps/field",
+      "note": "Standalone phone field studio (PWA). Canonical source; ncsoundlab-main keeps a deploy mirror at /field.html.",
+      "coverageGroups": [
+        {
+          "sources": "src/components/field/FieldWaveform.tsx",
+          "tests": [
+            "src/components/field/FieldStudio.test.tsx"
+          ],
+          "note": "FieldStudio.test.tsx imports and renders this component."
+        },
+        {
+          "sources": "src/components/field/SliceEditor.tsx",
+          "tests": [
+            "src/components/field/FieldStudio.test.tsx"
+          ],
+          "note": "FieldStudio.test.tsx imports and renders this component."
+        },
+        {
+          "sources": "src/components/field/VariantGridTouch.tsx",
+          "tests": [
+            "src/components/field/FieldStudio.test.tsx"
+          ],
+          "note": "FieldStudio.test.tsx imports and renders this component."
+        },
+        {
+          "sources": "src/components/field/FieldAssistantModal.tsx",
+          "tests": [
+            "src/components/field/FieldStudio.test.tsx"
+          ],
+          "note": "FieldStudio.test.tsx imports and renders this component."
+        },
+        {
+          "sources": "src/components/field/FieldPadSampler.tsx",
+          "tests": [
+            "src/components/field/FieldStudio.test.tsx"
+          ],
+          "note": "FieldStudio.test.tsx imports and renders this component."
+        },
+        {
+          "sources": "src/components/field/MicCalibrationPanel.tsx",
+          "tests": [
+            "src/components/field/FieldStudio.test.tsx"
+          ],
+          "note": "FieldStudio.test.tsx imports and renders this component."
+        }
+      ]
+    },
+    {
+      "slug": "phone-beat",
+      "name": "NC Phone Beat",
+      "kind": "audio",
+      "surface": "android",
+      "path": "C:/Users/tap45/Downloads/phone-apps/phone-beat/mpc",
+      "coverageGroups": [
+        {
+          "sources": "engine/src",
+          "tests": [
+            "tests/tests.cpp",
+            "tests/test_mixer.cpp"
+          ],
+          "note": "tests/run_audit.sh compiles every engine source and runs the two host suites under plain, ASan/UBSan and TSan. Module-name matching cannot see that link, so it is recorded here."
+        }
+      ],
+      "note": "Native MPC. C++17 engine, Compose UI."
+    },
+    {
+      "slug": "nc-studio",
+      "name": "NC Studio",
+      "kind": "audio",
+      "surface": "android",
+      "path": "C:/Users/tap45/Downloads/phone-apps/nc-studio",
+      "note": "16-track mobile DAW."
+    },
+    {
+      "slug": "concordance",
+      "name": "Concordance",
+      "kind": "research",
+      "surface": "android",
+      "path": "C:/Users/tap45/Downloads/phone-apps/concordance",
+      "note": "Adjudication client."
+    },
+    {
+      "slug": "concordance-oss",
+      "name": "Concordance OSS",
+      "kind": "research",
+      "surface": "android",
+      "path": "C:/Users/tap45/Downloads/phone-apps/concordance-oss",
+      "note": "Public Concordance edition. Owns the typed decision model (DecisionModel.kt) and its local-LLM review gate."
+    },
+    {
+      "slug": "sieve",
+      "name": "Sieve mobile",
+      "kind": "companion",
+      "surface": "expo",
+      "path": "C:/Users/tap45/Downloads/phone-apps/sieve",
+      "note": "Telemetry + recall client."
+    },
+    {
+      "slug": "recourse",
+      "name": "Recourse mobile",
+      "kind": "companion",
+      "surface": "expo",
+      "path": "C:/Users/tap45/Downloads/phone-apps/recourse",
+      "note": "Research memory + ideas."
+    },
+    {
+      "slug": "agent-support",
+      "name": "Agent Support",
+      "kind": "companion",
+      "surface": "android",
+      "path": "C:/Users/tap45/Downloads/phone-apps/agent-support",
+      "note": "Agent runtime, persistent memory."
+    },
+    {
+      "slug": "math-x",
+      "name": "Math X",
+      "kind": "research",
+      "surface": "web",
+      "path": "C:/Users/tap45/Downloads/eco/Oncology-Ecosystem-main/Oncology-Ecosystem-main/apps/math-x",
+      "exclude": [
+        "auth.ts",
+        "auth.test.ts",
+        "domain.ts",
+        "errors.ts",
+        "index.ts",
+        "ocr.ts",
+        "sessions.ts",
+        "useOCR.ts",
+        "ExportPanel.tsx",
+        "ProofVerifier.test.tsx",
+        "analogies.ts",
+        "apps/web/src/test-setup.ts",
+        "apps/api/evals/runEval.ts"
+      ],
+      "coverageGroups": [
+        {
+          "sources": "packages",
+          "tests": [
+            "apps/api/src/__tests__/packages-package.test.ts"
+          ]
+        },
+        {
+          "sources": "apps/api/src",
+          "tests": [
+            "apps/api/src/__tests__/api-modules.test.ts"
+          ]
+        },
+        {
+          "sources": "apps/worker/src",
+          "tests": [
+            "apps/api/src/__tests__/api-modules.test.ts"
+          ]
+        },
+        {
+          "sources": "apps/web/src/components",
+          "tests": [
+            "apps/web/src/components/smoke.test.tsx"
+          ]
+        },
+        {
+          "sources": "apps/web/src/workers",
+          "tests": [
+            "apps/web/src/workers/smoke.test.ts"
+          ]
+        },
+        {
+          "sources": "apps/web/src/hooks",
+          "tests": [
+            "apps/web/src/hooks/smoke.test.ts"
+          ]
+        },
+        {
+          "sources": "apps/web/src/state",
+          "tests": [
+            "apps/web/src/state/smoke.test.ts"
+          ]
+        },
+        {
+          "sources": "apps/web/src/utils",
+          "tests": [
+            "apps/web/src/utils/smoke.test.ts"
+          ]
+        }
+      ],
+      "note": "Symbolic workbench. The excluded root files are stale flattened copies of apps/api and apps/web sources: they import paths that do not exist from that directory and no app imports them. They are not part of either build. test-setup.ts is Vitest configuration; evals/runEval.ts is a live-network eval harness, not an app module. Coverage groups are smoke suites that import every module in that tree and assert it loads; see RESULT.md."
+    },
+    {
+      "slug": "oncology",
+      "name": "Oncology Ecosystem",
+      "kind": "research",
+      "surface": "web",
+      "path": "C:/Users/tap45/Downloads/eco/Oncology-Ecosystem-main/Oncology-Ecosystem-main",
+      "exclude": [
+        "platform/components",
+        "notebooklm",
+        "brain-met-esr1",
+        "apps/new-tools",
+        "apps/brain-met-esr1-main",
+        "apps/math-x"
+      ],
+      "note": "13-tool platform. Excludes vendored upstream code (platform/components, apps/new-tools, the brain-met-esr1 clones) and Math X, which is scored as its own tool."
+    },
+    {
+      "slug": "aetherdesk-mobile",
+      "name": "AetherDesk Mobile",
+      "kind": "companion",
+      "surface": "expo",
+      "path": "C:/Users/tap45/Downloads/phone-apps/aetherdesk-mobile",
+      "note": "B2B call-centre softphone client.",
+      "coverageGroups": [
+        {
+          "sources": "src",
+          "tests": [
+            "__tests__/smoke.test.tsx",
+            "__tests__/AgentDialerScreen.test.tsx",
+            "__tests__/LoginScreen.test.tsx",
+            "__tests__/deepLinks.test.ts"
+          ],
+          "note": "Smoke renders the full navigator (which imports every screen and service); the screen suites import their screens directly and the deep-link suite imports the link parser."
+        },
+        {
+          "sources": "App.tsx",
+          "tests": [
+            "__tests__/smoke.test.tsx"
+          ],
+          "note": "The smoke suite renders App directly."
+        }
+      ],
+      "exclude": [
+        "android",
+        "jest.setup.js",
+        "index.js"
+      ]
+    },
+    {
+      "slug": "marketing",
+      "name": "Overlay Marketing",
+      "kind": "operations",
+      "surface": "web",
+      "path": "C:/Users/tap45/Downloads/phone-apps/marketing-studio/web",
+      "note": "Content, branding, advertising, design."
+    },
+    {
+      "slug": "wiring",
+      "name": "Wiring layer",
+      "kind": "operations",
+      "surface": "node",
+      "path": "C:/Users/tap45/Downloads/eco/wiring",
+      "note": "The contract registry and probes."
+    }
+  ]
+}

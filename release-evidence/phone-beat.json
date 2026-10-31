@@ -1,0 +1,53 @@
+{
+  "schema": "overlay.release_evidence.v1",
+  "generatedAt": "2026-10-28T17:14:53.835Z",
+  "slug": "phone-beat",
+  "name": "NC Phone Beat",
+  "kind": "audio",
+  "version": "v0.3.0 (3)",
+  "lastClaim": "0.3.0 — 2026-10-28 — first verified test run",
+  "operability": {
+    "score": 92,
+    "breakdown": {
+      "stubs": 25,
+      "tests": 18,
+      "provability": 20,
+      "handoff": 15,
+      "phone": 9,
+      "visibility": 5
+    }
+  },
+  "measured": {
+    "sourceFiles": 56,
+    "sourceLoc": 9303,
+    "testFiles": 19,
+    "testLoc": 4428,
+    "modulesWithTests": 30,
+    "moduleCoveragePct": 53.6,
+    "deadControls": 0
+  },
+  "proven": [
+    "changelog",
+    "audit record",
+    "result/metrics record",
+    "README",
+    "security policy",
+    "readiness checklist",
+    "evidence dir (evidence)"
+  ],
+  "connectsTo": [
+    "export .ncbeat",
+    "deep links",
+    "registry entry",
+    "import path"
+  ],
+  "surfaces": [
+    "android app"
+  ],
+  "safeClaims": [
+    "no dead controls found by automated sweep",
+    "19 test files, 53.6% of modules exercised",
+    "maintains a changelog"
+  ],
+  "unsafeClaims": []
+}

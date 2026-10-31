@@ -36,7 +36,7 @@ async function boot(page: Page) {
     localStorage.removeItem('soundlab-controller-v1');
   });
   await page.goto('/');
-  await expect(page.getByRole('main').getByRole('heading', { name: /Synth Layering/i })).toBeVisible();
+  await expect(page.getByRole('main').getByRole('heading', { name: /Layers & Samples/i })).toBeVisible();
   // A recovered autosave banner appears asynchronously and, being a sibling
   // before the controller dock, can remount it. Dismiss it deterministically.
   const discard = page.getByRole('button', { name: /^Discard$/i });

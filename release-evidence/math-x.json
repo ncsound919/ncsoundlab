@@ -1,0 +1,54 @@
+{
+  "schema": "overlay.release_evidence.v1",
+  "generatedAt": "2026-10-28T17:14:53.835Z",
+  "slug": "math-x",
+  "name": "Math X",
+  "kind": "research",
+  "version": "v0.5.0",
+  "lastClaim": "0.5.0 — 2026-10-28",
+  "operability": {
+    "score": 92,
+    "breakdown": {
+      "stubs": 25,
+      "tests": 22,
+      "provability": 20,
+      "handoff": 15,
+      "phone": 7,
+      "visibility": 3
+    }
+  },
+  "measured": {
+    "sourceFiles": 92,
+    "sourceLoc": 9856,
+    "testFiles": 28,
+    "testLoc": 1482,
+    "modulesWithTests": 92,
+    "moduleCoveragePct": 100,
+    "deadControls": 0
+  },
+  "proven": [
+    "changelog",
+    "audit record",
+    "result/metrics record",
+    "README",
+    "security policy",
+    "readiness checklist",
+    "license"
+  ],
+  "connectsTo": [
+    "deep links",
+    "API contract",
+    "registry entry",
+    "import path"
+  ],
+  "surfaces": [
+    "PWA manifest"
+  ],
+  "safeClaims": [
+    "no dead controls found by automated sweep",
+    "28 test files, 100% of modules exercised",
+    "maintains a changelog",
+    "open source"
+  ],
+  "unsafeClaims": []
+}

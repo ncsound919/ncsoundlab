@@ -16,6 +16,14 @@ import { usePatternStore } from '../store/patternStore';
 // the base engine lazily (via a getter), and we only dereference this binding
 // inside methods at runtime — never at module-evaluation time.
 import { audioEngine as sharedAudioEngine } from '../audio/AudioEngine';
+import { createStudioFxNode, loadStudioFxWorklet, type StudioFxHandle } from '../audio/studioFx/studioFxNode';
+import {
+  combinatorBpm,
+  combinatorIsActive,
+  createCombinatorNode,
+  loadCombinatorWorklet,
+  type CombinatorHandle,
+} from '../audio/combinator/combinatorNode';
 
 /** One live voice for MPC-style voice-limit / gate / toggle handling. */
 interface LayerVoice {
@@ -132,6 +140,13 @@ export class AudioEngine {
   private masterRackOutput: GainNode | null = null;
   private masterRackChainTarget: AudioNode | null = null;
   private masterRackNodes: AudioNode[] = [];
+  private studioFxHandles: StudioFxHandle[] = [];
+  private studioFxWorkletReady = false;
+
+  // Hex Combinator insert — a CombinatorProcessor node wired between the rack
+  // input and the rack modules, so it shares the master bus position live.
+  private combinatorHandle: CombinatorHandle | null = null;
+  private combinatorWorkletReady = false;
 
   // Phase 3.3 — FX send/return buses (reverb, delay). Built lazily on the live
   // context; each bus taps layer sends → bus input → shared effect → return
@@ -169,6 +184,23 @@ export class AudioEngine {
     this.masterMakeupGain = chain.makeupGain;
 
     this.analyserNode.connect(this.context.destination);
+
+    // Load the shared studio-FX AudioWorklet once; the master rack falls back to
+    // a ScriptProcessor with the same DSP until it is registered.
+    void loadStudioFxWorklet(this.context).then((ready) => {
+      this.studioFxWorkletReady = ready;
+      if (ready && this.lastRackModules.length > 0) this.setMasterRack(this.lastRackModules);
+    });
+
+    // Same preload for the Combinator worklet: if its node was built on the
+    // ScriptProcessor fallback, rebuild it on the worklet once registered.
+    void loadCombinatorWorklet(this.context).then((ready) => {
+      this.combinatorWorkletReady = ready;
+      if (!ready || !this.combinatorHandle) return;
+      this.combinatorHandle.dispose();
+      this.combinatorHandle = null;
+      this.setMasterRack(this.lastRackModules);
+    });
 
     // Enhancement 1: Seamless AudioContext Auto-Resume & Resilient Lifecycle Guard
     const resumeContext = () => {
@@ -562,6 +594,44 @@ export class AudioEngine {
    * pass-through (identical to previous behaviour). All node creation is
    * wrapped so a bad module can never break audio — it degrades to passthrough.
    */
+  private lastCombinatorState: any = null;
+
+  /**
+   * Pushes Combinator state from the store. Creating or removing the insert
+   * changes the graph shape, so the rack is rewired; a parameter move only
+   * updates the node's state and never disturbs the rack modules.
+   */
+  setCombinator(state: any): void {
+    this.lastCombinatorState = state;
+    const active = combinatorIsActive(state);
+    const present = this.combinatorHandle !== null;
+    if (active && !present) {
+      this.combinatorHandle = this.buildCombinatorNode();
+      this.setMasterRack(this.lastRackModules);
+    } else if (!active && present) {
+      this.combinatorHandle?.dispose();
+      this.combinatorHandle = null;
+      this.setMasterRack(this.lastRackModules);
+    } else if (active) {
+      this.combinatorHandle?.setState(state, combinatorBpm(state));
+    }
+  }
+
+  private buildCombinatorNode(): CombinatorHandle | null {
+    if (!this.context) return null;
+    try {
+      return createCombinatorNode(
+        this.context,
+        this.lastCombinatorState,
+        combinatorBpm(this.lastCombinatorState),
+        this.combinatorWorkletReady,
+      );
+    } catch (error) {
+      console.warn('Combinator insert unavailable:', error);
+      return null;
+    }
+  }
+
   setMasterRack(modules: RackModule[]): void {
     const ctx = this.context;
     const input = this.masterRackInput;
@@ -572,14 +642,40 @@ export class AudioEngine {
 
     try {
       // Tear down previous rack chain
+      this.studioFxHandles.forEach((handle) => handle.dispose());
+      this.studioFxHandles = [];
       this.masterRackNodes.forEach((n) => {
         try { n.disconnect(); } catch { /* ignore */ }
       });
-      this.masterRackNodes = [];
-      try { input.disconnect(); } catch { /* ignore */ }
-      try { output.disconnect(); } catch { /* ignore */ }
+      this.masterRackNodes = [];      try {
+        input.disconnect();
+      } catch {
+        /* ignore */
+      }
+      try {
+        output.disconnect();
+      } catch {
+        /* ignore */
+      }
+      // The Combinator insert sits between the rack input and the first module.
+      try {
+        this.combinatorHandle?.node.disconnect();
+      } catch {
+        /* ignore */
+      }
+      if (!this.combinatorHandle && combinatorIsActive(this.lastCombinatorState)) {
+        this.combinatorHandle = this.buildCombinatorNode();
+      }
 
       let cursor: AudioNode = input;
+      if (this.combinatorHandle) {
+        try {
+          cursor.connect(this.combinatorHandle.node);
+          cursor = this.combinatorHandle.node;
+        } catch {
+          /* keep the rack running without the insert */
+        }
+      }
       for (const mod of modules) {
         if (!mod || mod.enabled === false) continue;
         const built = this.buildMasterRackModule(ctx, mod);
@@ -623,6 +719,18 @@ export class AudioEngine {
 
     try {
       switch (mod.type) {
+        case 'studio-suite': {
+          // The canonical NC Studio rack, rendered by the shared TypeScript DSP
+          // so a chain exported from the studio or Phone Beat sounds identical
+          // here. settings.chain is an nc.studiofx.v1 slot array.
+          const chain = Array.isArray(s.chain) ? s.chain : [];
+          const handle = createStudioFxNode(ctx, chain, num(s.bpm, 120), this.studioFxWorkletReady);
+          entry.connect(handle.node);
+          handle.node.connect(out);
+          nodes.push(handle.node);
+          this.studioFxHandles.push(handle);
+          break;
+        }
         case 'eq': {
           let cursor: AudioNode = entry;
           const bands: EqBandShape[] = Array.isArray(s.bands) ? s.bands : [];
@@ -1551,6 +1659,27 @@ export class AudioEngine {
         cursor = built.node;
       }
       rackOut = cursor;
+    }
+    // The Combinator runs at this exact point live (rack → combinator → fixed
+    // master chain), so exports render it too instead of silently dropping it.
+    if (combinatorIsActive(this.lastCombinatorState)) {
+      try {
+        const combinatorReady = await loadCombinatorWorklet(offlineCtx);
+        if (combinatorReady) {
+          const insert = createCombinatorNode(
+            offlineCtx,
+            this.lastCombinatorState,
+            combinatorBpm(this.lastCombinatorState),
+            true,
+          );
+          rackOut.connect(insert.node);
+          rackOut = insert.node;
+        } else {
+          console.warn('Combinator worklet unavailable offline; export omits the Combinator.');
+        }
+      } catch (error) {
+        console.warn('Combinator offline insert failed; export omits it:', error);
+      }
     }
     const masterChain = this.createMasterFXChain(offlineCtx, rackOut, offlineCtx.destination);
     // Match the live audition: the fixed chain uses hardcoded limiter defaults
@@ -2756,6 +2885,44 @@ subSaturation.oversample = '4x';
       subOsc.start(layerStartTime);
       subOsc.connect(subGain);
       this.trackHelper(ctx, subOsc, layerStartTime + playDur + env.release);
+
+      // The producer's own 808, mixed under/with the synth sub. This is a
+      // separate voice with its own gain, tune and crop so the app sub can
+      // reinforce it without replacing the character of the sample.
+      const custom = sub.custom808;
+      if (custom?.audioBuffer && custom.gain > 0.0001) {
+        const cBuf = custom.audioBuffer;
+        const cSrc = ctx.createBufferSource();
+        cSrc.buffer = cBuf;
+        const rate = Math.min(4, Math.max(0.25, Math.pow(2, (custom.tuneSemitones || 0) / 12)));
+        cSrc.playbackRate.setValueAtTime(rate, layerStartTime);
+        const startPct = Math.min(Math.max(0, custom.startPct ?? 0), 1);
+        const endPct = Math.min(Math.max(startPct + 0.001, custom.endPct ?? 1), 1);
+        const offset = startPct * cBuf.duration;
+        const cropDur = Math.max(0.001, (endPct - startPct) * cBuf.duration);
+        const naturalDur = cropDur / rate;
+        const releaseStart = layerStartTime + naturalDur;
+
+        const cGain = ctx.createGain();
+        cGain.gain.setValueAtTime(0, layerStartTime);
+        cGain.gain.linearRampToValueAtTime(custom.gain, layerStartTime + 0.005);
+        cGain.gain.setValueAtTime(custom.gain, Math.max(layerStartTime + 0.005, releaseStart - 0.012));
+        cGain.gain.linearRampToValueAtTime(0, releaseStart);
+
+        let tail: AudioNode = cGain;
+        if ((custom.highpassHz || 0) > 0) {
+          const hp = ctx.createBiquadFilter();
+          hp.type = 'highpass';
+          hp.frequency.setValueAtTime(Math.min(400, Math.max(20, custom.highpassHz)), layerStartTime);
+          cGain.connect(hp);
+          tail = hp;
+        }
+        tail.connect(destination);
+        terminals.push(cGain);
+        if (tail !== cGain) terminals.push(tail);
+        cSrc.start(layerStartTime, offset, cropDur);
+        this.trackHelper(ctx, cSrc, releaseStart + 0.02);
+      }
     }
 
     if (ctx === this.context && source) {

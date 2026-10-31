@@ -289,6 +289,24 @@ export interface SynthSettings {
   phaseRetrigger?: boolean;    // If true, reset phase to 0 on trigger for punchy consistency
 }
 
+/**
+ * A user's own 808 sample layered under the synth sub. The sample is the
+ * producer's sound; the app sub is the reinforcement. Both have independent
+ * levels so either can carry the low end. Persisted as base64 WAV, exactly like
+ * a layer sample (see `projectFormat.ts`).
+ */
+export interface Custom808Sample {
+  name: string;
+  gain: number;              // 0..1.5 sample layer level
+  tuneSemitones: number;     // -24..+24
+  startPct: number;          // crop start, 0..1
+  endPct: number;            // crop end, 0..1
+  highpassHz: number;        // 0 = off, otherwise 20..200 Hz
+  audioBuffer?: AudioBuffer; // runtime only
+  sampleData?: string;       // base64 16-bit WAV on disk
+  sampleMeta?: { sampleRate: number; channels: number; length: number };
+}
+
 export interface SubDesignSettings {
   subEnabled: boolean;
   subLevel: number;
@@ -300,6 +318,8 @@ export interface SubDesignSettings {
   drive: number;
   dynamicTracking: boolean; // Tracks the sample's pitch
   phase?: number;           // Phase alignment (0 to 360 degrees)
+  /** Optional custom 808 sample, mixed with the synth sub. */
+  custom808?: Custom808Sample;
 }
 
 export interface FXPreset {
@@ -536,7 +556,11 @@ export type ModuleType =
   | 'flanger'
   | 'phaser'
   | 'tremolo'
-  | 'imager';
+  | 'imager'
+  // The shared NC Studio insert suite (chain stored in settings.chain).
+  | 'studio-suite'
+  // Multi-effect modulation combinator (Hex/ShaperBox/Transit-style).
+  | 'combinator';
 
 export interface RackModule {
   id: string;
@@ -548,6 +572,62 @@ export interface RackModule {
   parallelPan?: number;
   parallelMute?: boolean;
   parallelSolo?: boolean;
+}
+
+// --- Combinator (multi-effect modulation) Types ---
+export type CombinatorMotionSource =
+  | 'macro'
+  | 'lfo'
+  | 'follower'
+  | 'sidechain'
+  | 'gate'
+  | 'sequencer'
+  | 'xy'
+  | 'evolution';
+
+export interface CombinatorLfoShape {
+  points: { t: number; v: number }[];
+  interp: 'linear' | 'smooth' | 'step' | 'spline';
+}
+
+export interface CombinatorSlot {
+  id: string;
+  moduleId: string;
+  enabled: boolean;
+  mix: number;
+  preGainDb: number;
+  postGainDb: number;
+  polarity: boolean;
+  bands: { low: boolean; mid: boolean; high: boolean };
+  crossovers: [number, number];
+  params: Record<string, number>;
+  motion: CombinatorMotionSource;
+  motionParams: Record<string, number>;
+  lfoShape?: CombinatorLfoShape;
+  locked: boolean;
+}
+
+export interface ModRoute {
+  id: string;
+  src: string;
+  dst: string;
+  amount: number;
+  polarity: boolean;
+  curve: 'linear' | 'exp' | 'log';
+}
+
+export interface CombinatorState {
+  slots: CombinatorSlot[];
+  routes: ModRoute[];
+  masterMix: number;
+  bpm: number;
+  tightMode: boolean;
+  xyAssign: { x: string; y: string; x2?: string; y2?: string };
+  /** Live XY-pad position (0..1 per axis). Absent = pad centred at 0.5. */
+  xyPos?: { x: number; y: number };
+  presetId?: string;
+  morphTargetPresetId?: string;
+  morphAmount: number;
 }
 
 // --- Compare Engine Types ---

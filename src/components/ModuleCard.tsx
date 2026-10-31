@@ -18,6 +18,7 @@ import { ImagerEditor } from './editors/ImagerEditor';
 import { ClipperEditor } from './editors/ClipperEditor';
 import { LimiterEditor } from './editors/LimiterEditor';
 import { ExciterEditor } from './editors/ExciterEditor';
+import { StudioSuiteEditor } from './editors/StudioSuiteEditor';
 
 const PARAM_DEFS: Record<string, Record<string, { min: number; max: number; step?: number; label: string }>> = {
   eq: {
@@ -337,8 +338,11 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
           {module.type === 'exciter' && (
             <ExciterEditor settings={module.settings} onChange={(s) => module.onUpdate?.(module.id, { settings: s })} />
           )}
+          {module.type === 'studio-suite' && (
+            <StudioSuiteEditor settings={module.settings} onChange={(s) => module.onUpdate?.(module.id, { settings: s })} />
+          )}
 
-          {!['eq', 'compressor', 'tremolo', 'reverb', 'delay', 'tape', 'chorus', 'flanger', 'phaser', 'saturator', 'imager', 'clipper', 'limiter', 'exciter'].includes(module.type) && (
+          {!['eq', 'compressor', 'tremolo', 'reverb', 'delay', 'tape', 'chorus', 'flanger', 'phaser', 'saturator', 'imager', 'clipper', 'limiter', 'exciter', 'studio-suite'].includes(module.type) && (
             <div className="flex flex-wrap gap-4 justify-start">
               {renderParamKnobs()}
             </div>

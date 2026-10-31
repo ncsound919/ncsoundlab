@@ -4,15 +4,17 @@
  *
  * Phase 5.3 — onset detection for automatic sample slicing.
  *
- * Computes a spectral-flux curve over the buffer (FFT-based, via the radix-2
- * FFT shipped with @soundtouchjs/stretch-phase-vocoder) and returns onset times
- * where the flux rises sharply above an adaptive threshold. This is the
+ * Computes a spectral-flux curve over the buffer (FFT-based) and returns onset
+ * times where the flux rises sharply above an adaptive threshold. This is the
  * "energy/onset detector, not silence-only" the roadmap asks for — it splits on
  * transients (kick hits, snare cracks, vocal chops) rather than on gaps of
  * silence.
+ *
+ * The DSP lives in `src/audio/dsp/spectralFlux.ts` so the mobile field slicer
+ * runs the identical detector on raw Float32 samples.
  */
 
-import { fft } from '@soundtouchjs/stretch-phase-vocoder';
+import { computeFluxCurve, pickFluxOnsets } from './dsp/spectralFlux';
 
 export interface OnsetOptions {
   /** FFT window size (power of two, 512..4096). Larger = better low-freq. */
@@ -47,93 +49,13 @@ export interface OnsetHit {
  * implicitly implied by the slice model (first slice always starts at 0).
  */
 export function detectOnsets(buffer: AudioBuffer, options: OnsetOptions = {}): OnsetHit[] {
-  const {
-    frameSize = 1024,
-    sensitivity = 1.0,
-    minGapSec = 0.02,
-    maxOnsets = 0,
-    minStrength = 0,
-    channel = 0,
-  } = options;
+  const { frameSize = 1024, channel = 0 } = options;
 
-  const sr = buffer.sampleRate;
   // getChannelData throws IndexSizeError for out-of-range channels — it never
-  // returns undefined, so the `?? fallback` below would be dead. Clamp instead.
+  // returns undefined, so a `?? fallback` would be dead. Clamp instead.
   const safeChannel = Math.max(0, Math.min(buffer.numberOfChannels - 1, channel));
   const data = buffer.getChannelData(safeChannel);
-  const hop = frameSize / 2; // 50% overlap for a smooth flux curve
-  const bins = frameSize / 2;
 
-  // Spectral flux: positive half-wave difference of spectral magnitude between
-  // consecutive FFT frames.
-  const flux: number[] = [];
-  const prevMag = new Float32Array(bins);
-  const re = new Float32Array(frameSize);
-  const im = new Float32Array(frameSize);
-
-  for (let offset = 0; offset + frameSize <= data.length; offset += hop) {
-    re.fill(0);
-    im.fill(0);
-    for (let i = 0; i < frameSize; i++) re[i] = data[offset + i];
-    fft(re, im);
-    let f = 0;
-    for (let b = 0; b < bins; b++) {
-      const mag = Math.sqrt(re[b] * re[b] + im[b] * im[b]);
-      const d = mag - prevMag[b];
-      if (d > 0) f += d * d;
-      prevMag[b] = mag;
-    }
-    flux.push(f);
-  }
-
-  if (flux.length < 3) return [];
-
-  // Adaptive threshold: mean + k * std-dev. Sharp transients exceed it.
-  const mean = flux.reduce((a, b) => a + b, 0) / flux.length;
-  let variance = 0;
-  for (const f of flux) variance += (f - mean) * (f - mean);
-  variance /= flux.length;
-  const std = Math.sqrt(variance);
-  const threshold = mean + sensitivity * std;
-
-  // Find peaks (local maxima) above the threshold.
-  const hits: OnsetHit[] = [];
-  for (let i = 1; i < flux.length - 1; i++) {
-    const v = flux[i];
-    if (v <= threshold) continue;
-    if (v < flux[i - 1] || v <= flux[i + 1]) continue; // not a local max
-    const sampleIndex = i * hop;
-    hits.push({ time: sampleIndex / sr, strength: 0, sampleIndex });
-  }
-
-  if (hits.length === 0) return [];
-
-  // Normalize strength relative to peak flux. Iterate instead of
-  // `Math.max(...flux)` — on long reference audio `flux` can exceed the
-  // engine's argument-count limit and throw "Maximum call stack size exceeded".
-  let peakFlux = 0;
-  for (const f of flux) if (f > peakFlux) peakFlux = f;
-  for (const h of hits) {
-    h.strength = peakFlux > 0 ? flux[h.sampleIndex / hop] / peakFlux : 0;
-  }
-
-  // Enforce min gap + optional strength floor.
-  hits.sort((a, b) => a.time - b.time);
-  const filtered: OnsetHit[] = [];
-  let lastTime = -Infinity;
-  for (const h of hits) {
-    if (h.time - lastTime < minGapSec) continue;
-    if (h.strength < minStrength) continue;
-    filtered.push(h);
-    lastTime = h.time;
-  }
-
-  if (maxOnsets > 0 && filtered.length > maxOnsets) {
-    // Keep the strongest maxOnsets.
-    return [...filtered]
-      .sort((a, b) => b.strength - a.strength)
-      .slice(0, maxOnsets)
-      .sort((a, b) => a.time - b.time);
-  }
-  return filtered;
+  const curve = computeFluxCurve(data, { frameSize, hopSize: frameSize / 2 });
+  return pickFluxOnsets(curve, buffer.sampleRate, options);
 }

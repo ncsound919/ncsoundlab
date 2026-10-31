@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Play, 
@@ -51,6 +51,13 @@ import { useControllerStore } from './store/controllerStore';
 import { synthLayerFor, patternFor, isRecoursePiece } from './lib/recourseBridge';
 import { audioEngine as sharedAudioEngine } from './audio/AudioEngine';
 import { audioBufferToWav } from './lib/audioUtils';
+import {
+  audioBufferToInterleaved,
+  concatSpans,
+  interleavedToAudioBuffer,
+  keepSpans,
+  nearestZeroCrossing,
+} from './lib/sampleEdit';
 const SamplerUnit = lazy(() => import('./components/sampler/SamplerUnit').then(m => ({ default: m.SamplerUnit })));
 import { Knob } from './components/Knob';
 
@@ -887,7 +894,7 @@ export default function App() {
     }
   };
 
-  const applyWaveformEdit = (operation: 'reverse' | 'normalize' | 'crop' | 'fadein' | 'fadeout' | 'invert' | 'glitch' | 'gain') => {
+  const applyWaveformEdit = (operation: 'reverse' | 'normalize' | 'crop' | 'stripsilence' | 'fadein' | 'fadeout' | 'invert' | 'glitch' | 'gain') => {
     if (!selectedLayer) return;
     const ctx = audioEngine.getContext();
     if (!ctx) return;
@@ -909,12 +916,58 @@ export default function App() {
       case 'normalize':
         edited = normalizeBuffer(ctx, currentBuffer);
         break;
-      case 'crop':
-        edited = trimBuffer(ctx, currentBuffer, selectionStart, selectionEnd);
+      case 'crop': {
+        // Snap both crop edges to the nearest zero crossing, matching the Phone
+        // Beat trim handles, so a crop cannot leave a click at the cut.
+        const channels = currentBuffer.numberOfChannels;
+        const interleaved = audioBufferToInterleaved(currentBuffer);
+        const startFrame = nearestZeroCrossing(
+          interleaved,
+          channels,
+          Math.round(selectionStart * currentBuffer.length),
+          256
+        );
+        const endFrame = nearestZeroCrossing(
+          interleaved,
+          channels,
+          Math.round(selectionEnd * currentBuffer.length),
+          256
+        );
+        if (endFrame - startFrame < 8) {
+          addToast('Crop is shorter than 8 frames', 'warn');
+          return;
+        }
+        edited = interleavedToAudioBuffer(
+          ctx,
+          interleaved.subarray(startFrame * channels, endFrame * channels),
+          channels,
+          currentBuffer.sampleRate
+        );
         // Reset selection range after crop
         setSelectionStart(0);
         setSelectionEnd(1);
         break;
+      }
+      case 'stripsilence': {
+        const channels = currentBuffer.numberOfChannels;
+        const interleaved = audioBufferToInterleaved(currentBuffer);
+        const spans = keepSpans(interleaved, channels, currentBuffer.sampleRate);
+        if (spans.length === 0) {
+          addToast('Strip Silence: no audio above -45 dB', 'info');
+          return;
+        }
+        const kept = concatSpans(interleaved, channels, spans);
+        if (kept.length === 0) {
+          addToast('Strip Silence: nothing left to keep', 'warn');
+          return;
+        }
+        edited = interleavedToAudioBuffer(ctx, kept, channels, currentBuffer.sampleRate);
+        const removed = currentBuffer.duration - kept.length / channels / currentBuffer.sampleRate;
+        addToast(`Strip Silence: ${spans.length} region(s), ${removed.toFixed(2)}s removed`, 'success');
+        setSelectionStart(0);
+        setSelectionEnd(1);
+        break;
+      }
       case 'fadein':
         edited = fadeInBuffer(ctx, currentBuffer, fadeDuration);
         break;
@@ -2057,7 +2110,7 @@ export default function App() {
                   <div>
                     <h2 className="text-xl font-black text-white uppercase tracking-wider flex items-center gap-2">
                       <Layers className="w-5 h-5 text-blue-400" />
-                      Synth Layering & Samples
+                      Layers & Samples
                     </h2>
                     <p className="text-xs text-slate-400 mt-1">
                       Manage sound layers, upload samples, and render waveforms. Open the Tweaking stage for the full synth & FX editor.
@@ -2266,9 +2319,16 @@ export default function App() {
                                 onClick={() => applyWaveformEdit('crop')} 
                                 disabled={selectionStart >= selectionEnd || (selectionStart === 0 && selectionEnd === 1)}
                                 className="py-2 px-3 bg-[#121215] border border-[#1e293b] hover:border-yellow-400/40 hover:bg-[#1a1a24] rounded-lg text-[9.5px] uppercase font-extrabold text-slate-300 transition-all disabled:opacity-20 disabled:pointer-events-none flex items-center justify-center gap-1.5 cursor-pointer"
-                                title="Crop selected range and discard everything outside it"
+                                title="Crop selected range (zero-crossing snapped) and discard everything outside it"
                               >
                                 ✂️ Crop Sel
+                              </button>
+                              <button
+                                onClick={() => applyWaveformEdit('stripsilence')}
+                                className="py-2 px-3 bg-[#121215] border border-emerald-500/40 hover:bg-emerald-500/20 rounded-lg text-[9.5px] uppercase font-extrabold text-emerald-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                title="Pro Tools-style Strip Silence: one button, shared detector with Phone Beat"
+                              >
+                                🔇 Strip Silence
                               </button>
                             </div>
 

@@ -18,6 +18,85 @@ A web-based beatmaker and sound design workstation built with React, Vite, and t
 - **Smart Randomizer** & **Evolution Engine** — generate mutations of any sample.
 - **Local persistence** — kits, projects, and favorites stored in IndexedDB via Dexie. No server.
 
+## Phone field app
+
+The phone app is a **separate HTML entry** (`field.html` → `src/field.tsx`), not a
+responsive mode of the workstation. Opening the root on a phone redirects there
+automatically; a desktop browser stays on the workstation. The field studio is a
+field recorder and variant lab, and its bundle never imports `App.tsx`, Tone or
+the MIDI service.
+
+```bash
+npm run dev
+# phone:   http://<lan-ip>:3001/           (auto-routes to /field.html)
+# direct:  http://<lan-ip>:3001/field.html
+# desktop: http://localhost:3001/
+```
+
+A phone can still force the full workstation with `?surface=desktop` or `#/studio`.
+Old `/#/field` bookmarks redirect to the field entry.
+
+- **Capture** — `AudioWorklet` (with a `ScriptProcessor` fallback) behind a 1.2 s
+  pre-roll ring, so the audio *before* the Record tap is part of the take. Mic-profile
+  compensation (rumble-cut high-pass + presence), input trim, anti-clip limiter, and a
+  screen wake lock for the length of the take.
+- **Slice & clean** — spectral-flux onsets, YIN pitch with tune-to-root, DC block, low cut,
+  de-click, spectral denoise, gate, fades and peak normalise.
+- **Evolve** — seeded genomes, eight variants per round, swipe right/left to keep/trash,
+  two-parent and whole-pool breeding, gene freezes and evolution targets. Keeps survive a
+  new round so the breeding pool is not lost.
+- **Kit** — round-robin manifest, `.zip` export, and `.ncbeat` export for NC Phone Beat.
+- **Storage** — metadata in Dexie and WAV audio in IndexedDB for the web build; the native
+  Android build keeps audio on the app filesystem through the same injected interfaces.
+
+The engine (`src/audio/mobile`, `src/lib/mobile`) takes its context and storage by
+injection; `npm run boundary:check` enforces that it never imports React, Tauri or state.
+
+### Offline / install (PWA)
+
+`vite-plugin-pwa` (Workbox) precaches the production build, so the installed app opens with
+no signal. Install icons are generated from the logo — the source art is 1408×768, so it is
+letterboxed onto square canvases instead of being declared as a square icon:
+
+```bash
+npm run icons   # public/icons/{icon-192,icon-512,maskable-512,apple-touch-icon}.png
+```
+
+## Catalogue site (`/ncsound`)
+
+A static catalogue for the studio — apps, sound kits, albums and media — ships in
+`public/ncsound/` and is served at **`/ncsound`**.
+
+- `content.json` is the only file you edit to add an album, kit or video. It is
+  served `no-cache`, so changes appear on the next load without a rebuild.
+- No build step, no dependencies: plain HTML/CSS/JS that can be copied to any host.
+- Excluded from the app service worker's precache, so the app shell never answers
+  a catalogue URL.
+- Routed by both hosts — `vercel.json` rewrite and `sites/worker.mjs`.
+
+Ecosystem documents live in [`docs/ecosystem/`](docs/ecosystem/):
+**[master plan](docs/ecosystem/MASTER-PLAN.md)** ·
+[operability scorecard](docs/ecosystem/READINESS.md) ·
+[beta pipeline](docs/ecosystem/PIPELINE.md) ·
+[cron and scheduling plan](docs/ecosystem/CRONS.md) ·
+[Kaggle training status](docs/ecosystem/KAGGLE.md) ·
+[the map](docs/ecosystem/ECOSYSTEM.md).
+
+### Ecosystem audit
+
+Operability is measured, not asserted:
+
+```bash
+node scripts/ecosystem-audit.mjs --verbose     # findings you act on
+node scripts/ecosystem-audit.mjs --export=audit-report.json --evidence=release-evidence
+```
+
+It reports dead controls, module-level test depth, proof artifacts, workflow
+handoff, phone operability and failure visibility for every tool in
+[`scripts/ecosystem-tools.json`](scripts/ecosystem-tools.json), and writes one
+`release-evidence/<tool>.json` per tool — the only permitted source for release
+marketing claims.
+
 ## Tech stack
 
 - **React 19** + **Vite 6** + **TypeScript 5.8**
@@ -90,7 +169,7 @@ can't silently regress; the new-code gate is where the real requirement lives.
 ### Clean
 
 ```bash
-npm run clean        # cross-platform: removes ./dist and ./server.js
+npm run clean        # cross-platform: removes ./dist
 ```
 
 ## Configuration
@@ -103,6 +182,10 @@ No environment variables are required. The app is fully local-first:
 The optional `CONSTRAINED_ENV=1` env var is only used to skip the OS-sensitive test described above.
 
 ## Deployment
+
+Before publishing, run the go/no-go checklist in
+[docs/DEPLOY-READINESS.md](docs/DEPLOY-READINESS.md) — it covers the test gate, host
+configuration, PWA/HTTP checks, device acceptance and rollback.
 
 NC Sound Lab is a static SPA that ships in two forms:
 
@@ -186,15 +269,23 @@ All fonts are self-hosted in `public/fonts/` — no external CDN dependency.
 ```
 src/
   audio/           # AudioEngine, CompareEngine, SoundLayerPlayer, dsp/ (AnalogEngineDSP, TapeDelayDSP, ConvolutionReverbDSP, AdvancedCompressor, AdvancedParametricEQ)
-  components/       # React UI
+  audio/mobile/     # Field engine: capture spec, pre-roll, WAV codec, onset slicer, cleanup DSP, YIN pitch, genome render
+  components/       # React UI (workstation)
+  components/field/ # Phone field UI (entry: field.html → src/field.tsx)
   lib/              # Audio utils, Dexie DB, batch audio processor, chaos synth, evolution engine, sound presets
+  lib/mobile/       # Genomes, variant grid, kit manifest, field metadata, storage adapter, .ncbeat bridge
   store/            # Zustand stores (rack, compare engine)
   tests/            # vitest setup (jsdom mocks for AudioContext)
   types.ts          # All shared TypeScript types
 public/
   logo.png          # Brand logo (used in sidebar + top header)
+  icons/            # Generated PWA install icons (npm run icons)
+  manifest.json     # PWA manifest (start_url is /field.html)
   fonts/
     fast-blaze.otf  # Brand display font (`.font-fastblaze` utility)
+scripts/
+  generate-pwa-icons.mjs # Square/maskable icons from the landscape logo
+  check-engine-boundary.ts # Engine portability rule
 e2e/                # Playwright e2e specs
 ```
 
@@ -204,6 +295,7 @@ The app's display font and logo are local-first too:
 
 - `public/fonts/fast-blaze.otf` → exposed as the CSS font `Fast Blaze`, used via the `font-fastblaze` Tailwind utility (`src/index.css`).
 - `public/logo.png` → referenced as the favicon (`index.html`) and as the brand mark in the sidebar and workspace header (`src/App.tsx`).
+- `public/icons/` → install icons derived from the logo by `npm run icons` (square 192/512, a maskable 512, and the iOS touch icon).
 
 ## License
 
