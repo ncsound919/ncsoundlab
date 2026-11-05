@@ -12,6 +12,21 @@
 
 import type { Arrangement } from '../types';
 import { clampBpm } from '../lib/controlRanges';
+import { detectTempoAubio } from './aubioBackend';
+
+/** Mono mixdown of an AudioBuffer for the aubio tempo tracker. */
+function audioBufferToMono(buffer: AudioBuffer): Float32Array {
+  const channels = buffer.numberOfChannels;
+  if (channels <= 1) return buffer.getChannelData(0);
+  const frames = buffer.length;
+  const mono = new Float32Array(frames);
+  for (let c = 0; c < channels; c++) {
+    const data = buffer.getChannelData(c);
+    for (let i = 0; i < frames; i++) mono[i] += data[i];
+  }
+  for (let i = 0; i < frames; i++) mono[i] /= channels;
+  return mono;
+}
 
 export interface BPMDetection {
   /** Most likely tempo in BPM (60..200 range). */
@@ -155,6 +170,22 @@ export const detectBpm = (
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const maxBpm = opts.maxBpm;
   const minBpm = opts.minBpm;
+
+  // aubio's tempo tracker is the primary detector. The hand-rolled
+  // autocorrelation below stays as a fallback for short buffers or when the
+  // tracker rejects the result out of range, and is still covered by tests.
+  const aubio = detectTempoAubio(audioBufferToMono(buffer), buffer.sampleRate, {
+    minBpm,
+    maxBpm,
+  });
+  if (aubio.bpm > 0 && aubio.confidence >= 0.05) {
+    return {
+      bpm: Math.round(aubio.bpm * 10) / 10,
+      confidence: Math.max(0, Math.min(1, aubio.confidence)),
+      candidates: [Math.round(aubio.bpm * 10) / 10],
+    };
+  }
+
   const windowSize = opts.windowSize;
   const env = computeEnergyEnvelope(buffer, windowSize);
   const onset = onsetStrength(env);

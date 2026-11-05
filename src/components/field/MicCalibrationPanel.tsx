@@ -77,28 +77,46 @@ export default function MicCalibrationPanel({
   const [batteryPct, setBatteryPct] = useState<number | null>(null);
   const [storageEstimateMb, setStorageEstimateMb] = useState<number | null>(null);
 
-  // Read Battery API & Storage API if available on device
+  // Read Battery API & Storage API if available on device. Both are cleaned up:
+  // BatteryManager outlives this component, so an anonymous listener leaked on
+  // every mount and called setState after unmount.
   useEffect(() => {
-    // Battery check
+    let cancelled = false;
+    let batteryRef: { level: number; addEventListener: (t: string, cb: () => void) => void; removeEventListener?: (t: string, cb: () => void) => void } | null = null;
+    const onLevel = () => {
+      if (!cancelled && batteryRef) setBatteryPct(Math.round(batteryRef.level * 100));
+    };
+
     if (typeof navigator !== 'undefined' && 'getBattery' in navigator) {
-      (navigator as unknown as { getBattery: () => Promise<{ level: number; addEventListener: (t: string, cb: () => void) => void }> })
+      (navigator as unknown as { getBattery: () => Promise<typeof batteryRef> })
         .getBattery()
         .then((battery) => {
+          if (cancelled || !battery) return;
+          batteryRef = battery;
           setBatteryPct(Math.round(battery.level * 100));
-          battery.addEventListener('levelchange', () => setBatteryPct(Math.round(battery.level * 100)));
+          battery.addEventListener('levelchange', onLevel);
         })
         .catch(() => undefined);
     }
 
-    // Storage quota check
     if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
       navigator.storage.estimate().then((est) => {
+        if (cancelled) return;
         if (est.quota !== undefined && est.usage !== undefined) {
           const freeBytes = est.quota - est.usage;
           setStorageEstimateMb(Math.round(freeBytes / (1024 * 1024)));
         }
       }).catch(() => undefined);
     }
+
+    return () => {
+      cancelled = true;
+      try {
+        batteryRef?.removeEventListener?.('levelchange', onLevel);
+      } catch {
+        /* older BatteryManager implementations have no removeEventListener */
+      }
+    };
   }, []);
 
   const activeProfile = MIC_PROFILES.find((p) => p.id === selectedProfile) ?? MIC_PROFILES[0];

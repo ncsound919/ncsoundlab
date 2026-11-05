@@ -100,7 +100,9 @@ export function audioBufferToWav(buffer: AudioBuffer, bitDepth: 16 | 24 | 32 = 3
         // tails and fades don't get a grainy, breathing noise floor.
         sample = sample < 0 ? sample * 0x800000 : sample * 0x7FFFFF;
         sample += Math.random() + Math.random() - 1; // triangular PDF, ±1 LSB
-        const intSample = Math.round(sample);
+        // Dither can push a full-scale positive sample one LSB over the
+        // container and wrap it to the negative rail (an audible click).
+        const intSample = Math.max(-0x800000, Math.min(0x7FFFFF, Math.round(sample)));
         view.setUint8(offset + index, intSample & 0xFF);
         view.setUint8(offset + index + 1, (intSample >> 8) & 0xFF);
         view.setUint8(offset + index + 2, (intSample >> 16) & 0xFF);
@@ -108,7 +110,8 @@ export function audioBufferToWav(buffer: AudioBuffer, bitDepth: 16 | 24 | 32 = 3
         // 16-bit PCM (with TPDF dither).
         sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
         sample += Math.random() + Math.random() - 1; // triangular PDF, ±1 LSB
-        view.setInt16(offset + index, Math.round(sample), true);
+        const intSample = Math.max(-32768, Math.min(32767, Math.round(sample)));
+        view.setInt16(offset + index, intSample, true);
       }
       
       index += bytesPerSample;

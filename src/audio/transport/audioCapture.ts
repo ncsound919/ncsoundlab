@@ -22,6 +22,8 @@ export interface AudioCapture {
   isSupported(): boolean;
   start(opts?: CaptureStartOptions): Promise<MediaStream>;
   stop(_stream?: MediaStream): Promise<Blob>;
+  /** Abort a start that is still waiting (e.g. for the threshold) and free the mic. */
+  cancel(): void;
   decodeBlobToBuffer(blob: Blob, ctx: BaseAudioContext): Promise<AudioBuffer>;
   dispose(): void;
   /**
@@ -61,6 +63,8 @@ export interface CaptureStartOptions {
   waitMs?: (ms: number) => Promise<void>;
 }
 
+export { isAudioWorkletSupported, createWorkletRecorder } from './workletRecorder';
+
 export function isMediaRecorderSupported(): boolean {
   return typeof window !== 'undefined' && typeof window.MediaRecorder !== 'undefined';
 }
@@ -85,6 +89,8 @@ export function createAudioCapture(): AudioCapture {
   let activeRecorder: MediaRecorder | null = null;
   let monitorPref: { context: AudioContext; level: number } | null = null;
   let monitorChain: MonitorChain | null = null;
+  // Bumped by cancel() so an in-flight start() can see it was abandoned.
+  let generation = 0;
 
   const teardownMonitorChain = (): void => {
     const chain = monitorChain;
@@ -128,11 +134,13 @@ export function createAudioCapture(): AudioCapture {
     thresholdDb: number,
     timeoutMs: number,
     sampleLevelDb?: () => number | null,
-    waitMs?: (ms: number) => Promise<void>
+    waitMs?: (ms: number) => Promise<void>,
+    cancelled?: () => boolean
   ): Promise<void> => {
     const wait = waitMs ?? ((ms: number) => new Promise<void>((res) => setTimeout(res, ms)));
     const deadline = Date.now() + Math.max(0, timeoutMs);
     for (;;) {
+      if (cancelled?.()) return;
       const level = sampleLevelDb ? sampleLevelDb() : getInputLevelDb();
       if (meetsThreshold(level, thresholdDb)) return;
       if (Date.now() >= deadline) return;
@@ -145,7 +153,12 @@ export function createAudioCapture(): AudioCapture {
 
     async start(opts: CaptureStartOptions = {}) {
       if (!isMediaRecorderSupported()) throw new Error('MediaRecorder not available');
+      const token = ++generation;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (token !== generation) {
+        for (const track of stream.getTracks()) track.stop();
+        return stream;
+      }
       activeStream = stream;
 
       // Monitor preference: explicit per-take options win, otherwise reuse a
@@ -170,8 +183,17 @@ export function createAudioCapture(): AudioCapture {
           opts.thresholdDb,
           opts.thresholdTimeoutMs ?? DEFAULT_THRESHOLD_TIMEOUT_MS,
           opts.sampleLevelDb,
-          opts.waitMs
+          opts.waitMs,
+          () => token !== generation
         );
+      }
+      // Stop pressed during the threshold wait: do not create a recorder that
+      // nobody will stop, and release the microphone now.
+      if (token !== generation) {
+        teardownMonitorChain();
+        for (const track of stream.getTracks()) track.stop();
+        if (activeStream === stream) activeStream = null;
+        return stream;
       }
 
       const rec = new MediaRecorder(stream);
@@ -236,6 +258,24 @@ export function createAudioCapture(): AudioCapture {
         activeStream = null;
       }
       activeRecorder = null;
+    },
+
+    cancel() {
+      generation++;
+      const recorder = activeRecorder;
+      activeRecorder = null;
+      if (recorder && recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+        } catch {
+          /* already stopping */
+        }
+      }
+      teardownMonitorChain();
+      if (activeStream) {
+        for (const t of activeStream.getTracks()) t.stop();
+        activeStream = null;
+      }
     },
 
     enableMonitor(context: AudioContext, level = 0.5) {

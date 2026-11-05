@@ -37,7 +37,7 @@ const SKIP_DIRS = new Set([
   'node_modules', '.git', '.gradle', '.venv', 'venv', '__pycache__', 'dist',
   'build', 'out', 'target', '.next', '.turbo', 'coverage', 'test-results',
   'playwright-report', 'Pods', '.idea', '.cache', 'third_party', 'unsloth_compiled_cache',
-  '.expo', 'android/app/build', 'output', 'output2', 'output_v2', 'output_v3',
+  '.expo', '.cxx', 'android/app/build', 'output', 'output2', 'output_v2', 'output_v3',
   // Wrangler writes bundled Workers here; they are build output, not source.
   '.wrangler', '.pytest_cache',
 ]);

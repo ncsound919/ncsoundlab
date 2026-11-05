@@ -67,6 +67,14 @@
             "tests/test_mixer.cpp"
           ],
           "note": "tests/run_audit.sh compiles every engine source and runs the two host suites under plain, ASan/UBSan and TSan. Module-name matching cannot see that link, so it is recorded here."
+        },
+        {
+          "sources": "engine/include",
+          "tests": [
+            "tests/tests.cpp",
+            "tests/test_mixer.cpp"
+          ],
+          "note": "Headers are included by the engine sources linked into both host suites. A header has no sibling test file, so without this group the audit counts every one as untested."
         }
       ],
       "note": "Native MPC. C++17 engine, Compose UI."

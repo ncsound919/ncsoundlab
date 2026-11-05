@@ -72,6 +72,11 @@ export const createSidechainDuck = (
   // Doing it this way avoids the Web Audio limitation that AnalyserNode
   // time-domain data isn't accessible from AudioWorklets / setValueAtTime.
   let cancelled = false;
+  let lastPeak = 0;
+  // NOTE: rAF pauses when the tab is hidden, so the duck freezes instead of
+  // following the audio. The engine keeps playback running; treat the duck as
+  // best-effort UI-rate control, not sample-accurate sidechain.
+  let timer = 0;
   const tick = () => {
     if (cancelled) return;
     analyser.getFloatTimeDomainData(buffer);
@@ -80,12 +85,16 @@ export const createSidechainDuck = (
       const a = buffer[i] < 0 ? -buffer[i] : buffer[i];
       if (a > peak) peak = a;
     }
-    const target = Math.max(0, 1 - amount * Math.min(1, peak));
-    const smoothing = peak > output.gain.value ? attackSec : releaseSec;
+    // Output is added to the bus gain (which is 1), so the control signal
+    // must be negative to duck. The old target was 0..1, which *boosted* a
+    // quiet bus by up to +6 dB instead of reducing a loud one.
+    const target = -amount * Math.min(1, peak);
+    const smoothing = peak > lastPeak ? attackSec : releaseSec;
+    lastPeak = peak;
     output.gain.setTargetAtTime(target, ctx.currentTime, Math.max(0.001, smoothing));
     timer = requestAnimationFrame(tick);
   };
-  let timer = requestAnimationFrame(tick);
+  timer = requestAnimationFrame(tick);
 
   const dispose = () => {
     cancelled = true;
@@ -105,7 +114,11 @@ export const createSidechainDuck = (
   return {
     input: analyser,
     output,
-    envelopeTimer: 0,
+    // Report the live rAF id so callers/tests can see the follower is
+    // running; it is refreshed every frame and cancelled on dispose.
+    get envelopeTimer() {
+      return timer;
+    },
     dispose,
   };
 };

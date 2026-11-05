@@ -150,6 +150,7 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
       });
     } catch (e) {
       recordingRef.current = false;
+      captureRef.current?.cancel?.();
       onToast?.('Mic permission denied or unavailable', 'error');
       setIsRecording(false);
       setPhase('idle');
@@ -157,8 +158,9 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
     }
     setPhase('recording');
     // The user may have pressed Stop during the threshold wait — don't roll
-    // the take for a recording nobody wants.
+    // the take for a recording nobody wants, and release the microphone.
     if (!recordingRef.current) {
+      captureRef.current?.cancel?.();
       setPhase('idle');
       return;
     }
@@ -200,6 +202,7 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
     if (cycleTimerRef.current) { clearInterval(cycleTimerRef.current); cycleTimerRef.current = null; }
     const ctx = audioEngine.getContext();
     if (!ctx || !captureRef.current) {
+      captureRef.current?.cancel?.();
       setTakes([]);
       return;
     }
@@ -226,6 +229,9 @@ export const TakesRecorder: React.FC<TakesRecorderProps> = ({
       setTakes(newTakes);
       onToast?.(`Captured ${newTakes.length} take${newTakes.length === 1 ? '' : 's'}`, 'success');
     } catch (e) {
+      // "No active recorder" means stop was pressed while start() was still
+      // waiting on the threshold. Cancel it so the mic does not stay open.
+      captureRef.current?.cancel?.();
       console.warn('Stop recording failed', e);
       onToast?.('Recording stop failed', 'error');
     }

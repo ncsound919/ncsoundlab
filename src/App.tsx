@@ -1442,9 +1442,12 @@ export default function App() {
       
       const cleanName = exportFilename.trim().replace(/[^a-zA-Z0-9_\-]/g, '') || 'custom_oneshot';
       a.download = `${cleanName}.wav`;
-      
+      // Some browsers start the download asynchronously; revoking in the same
+      // tick can cancel it. Attach the anchor and revoke on a delay.
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
       addToast(`Exported "${cleanName}.wav"`, 'success');
     } catch (e) {
       console.error('Export failed', e);

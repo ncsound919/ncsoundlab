@@ -314,17 +314,22 @@ class CompareEngine {
       }
     }
 
+    // Stereo correlation/width need a splitter + two analysers per bus.
+    // The current graph has one analyser per bus, so there is no real
+    // L/R measurement here. Return NaN (the panel already renders that as
+    // "—") instead of a plausible-looking constant that would mislead a
+    // mix decision.
     return {
       refPeak,
       refRms,
       refLufs,
-      refCorr: 0.92,
-      refWidth: 100,
+      refCorr: Number.NaN,
+      refWidth: Number.NaN,
       mixPeak,
       mixRms,
       mixLufs,
-      mixCorr: 0.88,
-      mixWidth: 100,
+      mixCorr: Number.NaN,
+      mixWidth: Number.NaN,
     };
   }
 }

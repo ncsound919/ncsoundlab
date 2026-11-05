@@ -1,5 +1,35 @@
 @import "tailwindcss";
 
+/* Overlay365 brand chrome (brand/tokens + marketing-studio DESIGN-KIT).
+   Studio surfaces keep the shared studio-ui ramp (see
+   src/components/studio/tokens.ts); these tokens are for app chrome,
+   headers and cross-app identity. */
+:root {
+  --brand-midnight: #05060a;
+  --brand-graphite: #0e1117;
+  --brand-slate: #141924;
+  --brand-cyan-elec: #22d3ee;
+  --brand-gold: #f5c451;
+  --brand-gold-soft: #f7d983;
+  --brand-soft-white: #f6f7f9;
+  --brand-font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+  --brand-font-body: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --brand-font-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+}
+
+@theme {
+  --color-brand-midnight: #05060a;
+  --color-brand-graphite: #0e1117;
+  --color-brand-slate: #141924;
+  --color-brand-cyan: #22d3ee;
+  --color-brand-gold: #f5c451;
+  --color-brand-gold-soft: #f7d983;
+  --color-brand-soft-white: #f6f7f9;
+  --font-brand-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+  --font-brand-body: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-brand-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+}
+
 /* Local brand display font (FAST BLAZE) served from /fonts */
 @font-face {
   font-family: 'Fast Blaze';

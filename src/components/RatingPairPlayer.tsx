@@ -151,6 +151,9 @@ export function RatingPairPlayer({
   const [pendingChoice, setPendingChoice] = useState<null | 'A' | 'B'>(null);
   const trackerRef = useRef(createListenTracker());
   const pairStartRef = useRef(Date.now());
+  const [gate, setGate] = useState(() =>
+    hasMetListenGate(0, 0, loopDurationSec * 1000),
+  );
 
   useEffect(() => {
     trackerRef.current.reset(performance.now());
@@ -167,22 +170,30 @@ export function RatingPairPlayer({
     };
   }, [pairId]);
 
-  // RAF loop: accumulate listen time.
+  // RAF loop: accumulate listen time AND publish the gate. The tracker is a
+  // ref, so computing the gate only during a render meant React never saw it
+  // change: the progress bars stayed at 0% and "Choose" stayed disabled even
+  // after the full listen gate had been met.
   useEffect(() => {
     let raf = 0;
+    let lastKey = '';
     const loop = (t: number) => {
       trackerRef.current.tick(t);
+      const next = hasMetListenGate(
+        trackerRef.current.msA(),
+        trackerRef.current.msB(),
+        loopDurationSec * 1000,
+      );
+      const key = `${next.ready}|${Math.round(next.pctA * 100)}|${Math.round(next.pctB * 100)}`;
+      if (key !== lastKey) {
+        lastKey = key;
+        setGate(next);
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, []);
-
-  const gate = hasMetListenGate(
-    trackerRef.current.msA(),
-    trackerRef.current.msB(),
-    loopDurationSec * 1000,
-  );
+  }, [loopDurationSec]);
 
   const playSide = useCallback((side: Side) => {
     if (activeSide === side && isPlaying) {

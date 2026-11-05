@@ -1390,8 +1390,10 @@ export function StudioSequencer({ layers, selectedLayerId, onSelectLayer, onUpda
       const a = document.createElement('a');
       a.href = url;
       a.download = `mixdown-${Date.now()}.wav`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (e) {
       console.warn('Mixdown failed', e);
     } finally {

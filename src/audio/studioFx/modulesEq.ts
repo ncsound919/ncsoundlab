@@ -91,7 +91,8 @@ export class FilterModule implements StudioModule {
       this.hpL.bypass();
       this.hpR.bypass();
     }
-    if (lp > 1000 && lp < this.sampleRate * 0.44) {
+    // 0 is off; every other value is a real cutoff (the biquad clamps itself).
+    if (lp > 0) {
       this.lpL.setSecondOrderLowPass(lp);
       this.lpR.setSecondOrderLowPass(lp);
     } else {

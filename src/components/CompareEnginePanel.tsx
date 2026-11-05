@@ -54,17 +54,19 @@ export const CompareEnginePanel = ({ isVisible = true }: { isVisible?: boolean }
 
   const meterAnimationFrame = useRef<number | null>(null);
   
+  // Correlation/width start unknown (NaN renders as "—"); never show a
+  // fake 0 (which reads as hard-panned/mono) before the first meter read.
   const [meters, setMeters] = useState({
     refPeak: -100,
     refRms: -100,
     refLufs: -100,
-    refCorr: 0,
-    refWidth: 0,
+    refCorr: Number.NaN,
+    refWidth: Number.NaN,
     mixPeak: -100,
     mixRms: -100,
     mixLufs: -100,
-    mixCorr: 0,
-    mixWidth: 0,
+    mixCorr: Number.NaN,
+    mixWidth: Number.NaN,
   });
 
   const refWaveformCanvasRef = useRef<HTMLCanvasElement | null>(null);

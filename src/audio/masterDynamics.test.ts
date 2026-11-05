@@ -221,7 +221,9 @@ describe('masterDynamics — sidechain envelope follower', () => {
       expect(getFloatTimeDomainData).toHaveBeenCalled();
       expect(setTargetAtTime).toHaveBeenCalled();
       // Full amount with peak 0.8 → target gain 0.2.
-      expect(setTargetAtTime.mock.calls[0][0]).toBeCloseTo(0.2, 5);
+      // Control is added to the bus gain (base 1): full amount at peak 0.8
+      // must be -0.8 so the bus ends at 0.2, not +1.8.
+      expect(setTargetAtTime.mock.calls[0][0]).toBeCloseTo(-0.8, 5);
 
       duck.dispose();
       expect(cancel).toHaveBeenCalledWith(7);

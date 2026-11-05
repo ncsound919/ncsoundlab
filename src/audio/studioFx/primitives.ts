@@ -78,6 +78,17 @@ export class Biquad {
     const y = f(f(this.b0 * x) + this.z1);
     this.z1 = f(f(f(this.b1 * x) - f(this.a1 * y)) + this.z2);
     this.z2 = f(f(this.b2 * x) - f(this.a2 * y));
+    // Match Kotlin: recover from a non-finite sample and flush denormals
+    // instead of carrying poisoned state for the rest of the session.
+    if (!Number.isFinite(y)) {
+      this.reset();
+      return 0;
+    }
+    if (Math.abs(y) < 1e-30) {
+      this.z1 = 0;
+      this.z2 = 0;
+      return 0;
+    }
     return y;
   }
 
@@ -144,6 +155,23 @@ export class Biquad {
     this.a2 = f((1 - alpha / a) / a0);
   }
 
+  /**
+   * First-order high pass, used as the real pole of the 3rd-order console HPF.
+   * Bilinear transform of H(s) = s / (s + w0): 18 dB/oct needs one 1st-order
+   * section, not a second 2nd-order one (that gives 24 dB/oct and a notch).
+   */
+  setFirstOrderHighPass(freq: number): void {
+    const sr = this.sampleRate;
+    const fr = Math.min(Math.max(freq, 5), sr * 0.45);
+    const k = Math.tan((Math.PI * fr) / sr);
+    const norm = f(1 / (1 + k));
+    this.b0 = norm;
+    this.b1 = f(-norm);
+    this.b2 = 0;
+    this.a1 = f(f(k - 1) * norm);
+    this.a2 = 0;
+  }
+
   setHighPass(freq: number, q: number): void {
     const sr = this.sampleRate;
     const fr = Math.min(Math.max(freq, 5), sr * 0.45);
@@ -206,8 +234,11 @@ export class BiquadCascade {
   }
 
   setThirdOrderHighPass(freq: number): void {
-    if (this.filters.length > 0) this.filters[0].setHighPass(freq, 1);
-    if (this.filters.length > 1) this.filters[1].setHighPass(freq, 0.5);
+    // Butterworth 3rd order: one real pole plus one complex pair at Q = 1.
+    // Cascading two biquads (Q=1 and Q=0.5) would be 4th order with a 6 dB
+    // notch at the dialled frequency, which is what this method used to do.
+    if (this.filters.length > 0) this.filters[0].setFirstOrderHighPass(freq);
+    if (this.filters.length > 1) this.filters[1].setHighPass(freq, 1);
     for (let i = 2; i < this.filters.length; i++) this.filters[i].setBypass();
   }
 

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import fixtures from './__fixtures__/parity-fixtures.json';
 import { decodeChain, encodeChain, makeSlot, sanitizeParams, kindSpec } from './catalog';
-import { renderChain, StudioFxChainProcessor } from './chain';
+import { renderChain, StudioFxChainProcessor, UNIMPLEMENTED_KINDS } from './chain';
 import catalog from './catalog.json';
 
 const SAMPLE_RATE = fixtures.sampleRate;
@@ -16,8 +16,13 @@ const SAMPLE_RATE = fixtures.sampleRate;
 describe('studio FX parity with the shared Kotlin engine', () => {
   const input = Float32Array.from(fixtures.input);
 
-  it('has one case per module plus a full chain', () => {
-    expect(fixtures.cases.length).toBe(catalog.kinds.length + 1);
+  it('has one case per implemented module plus a full chain', () => {
+    // The Kotlin engine ships two newer vocal modules that the TS port has not
+    // implemented; `FxParityFixtureTest` deliberately omits them from the
+    // vectors until it does. This shares the same set the picker filters on, so
+    // adding a port fails here until a vector is emitted for it.
+    const implemented = catalog.kinds.filter((kind) => !UNIMPLEMENTED_KINDS.has(kind.id));
+    expect(fixtures.cases.length).toBe(implemented.length + 1);
   });
 
   for (const testCase of fixtures.cases) {

@@ -110,6 +110,8 @@ export function withNoteTranspose(layer: SoundLayer, note: number): SoundLayer {
 export class AudioEngine {
   private context: AudioContext;
   private masterGain: GainNode;
+  /** Last level the user asked for, so stop() can fade back to it. */
+  private masterLevel = 0.8;
   private masterPan: StereoPannerNode;
   private analyserNode: AnalyserNode;
   private masterLimiter: DynamicsCompressorNode;
@@ -182,6 +184,12 @@ export class AudioEngine {
     const chain = this.createMasterFXChain(this.context, this.masterPan, this.analyserNode);
     this.masterLimiter = chain.limiter;
     this.masterMakeupGain = chain.makeupGain;
+    // Only the live chain may publish these handles. Offline export builds the
+    // same chain in its own context and must not replace them (cross-context
+    // connect() throws, and live rack edits would stop reaching the audio).
+    this.masterRackInput = chain.rackInput;
+    this.masterRackOutput = chain.rackOutput;
+    this.masterRackChainTarget = chain.rackTarget;
 
     this.analyserNode.connect(this.context.destination);
 
@@ -385,12 +393,12 @@ export class AudioEngine {
 
     // Master Rack (StudioRack) insert point — rack modules run between the
     // master input and the fixed master processing (rumble → EQ → clipper → limiter).
-    this.masterRackInput = ctx.createGain();
-    this.masterRackOutput = ctx.createGain();
-    this.masterRackInput.connect(this.masterRackOutput);
-    this.masterRackChainTarget = r1;
-    input.connect(this.masterRackInput);
-    this.masterRackOutput.connect(r1);
+    const rackInput = ctx.createGain();
+    const rackOutput = ctx.createGain();
+    rackInput.connect(rackOutput);
+    const rackTarget = r1;
+    input.connect(rackInput);
+    rackOutput.connect(r1);
 
     // Connect rest of the master DSP pipeline in series
     r1.connect(r2);
@@ -425,6 +433,9 @@ export class AudioEngine {
       clipper,
       msMerger,
       makeupGain,
+      rackInput,
+      rackOutput,
+      rackTarget,
     };
   }
 
@@ -481,7 +492,8 @@ export class AudioEngine {
   }
 
   setMasterLevel(level: number) {
-    this.masterGain.gain.setTargetAtTime(safeAudioValue(level, 0.8), this.context.currentTime, 0.05);
+    this.masterLevel = safeAudioValue(level, 0.8);
+    this.masterGain.gain.setTargetAtTime(this.masterLevel, this.context.currentTime, 0.05);
   }
 
   setMasterPan(pan: number) {
@@ -1129,9 +1141,10 @@ export class AudioEngine {
         }
       }
       try {
-        // Exponential restore (no hard setValueAtTime jump back to 1.0).
+        // Exponential restore to the user's master level, not unity: stop()
+        // used to silently reset the master fader to 1.0 on every play.
         this.masterGain.gain.cancelScheduledValues(this.context.currentTime);
-        this.masterGain.gain.setTargetAtTime(1.0, this.context.currentTime, 0.02);
+        this.masterGain.gain.setTargetAtTime(this.masterLevel, this.context.currentTime, 0.02);
       } catch (e) {}
       this.restoreTimer = null;
     }, 12);
@@ -1548,7 +1561,13 @@ export class AudioEngine {
    * gain feeding the bus input. Called from createNodeChain for both live and
    * offline renders.
    */
-  private tapLayerSends(layer: SoundLayer, output: AudioNode, ctx: BaseAudioContext, startTime: number): void {
+  private tapLayerSends(
+    layer: SoundLayer,
+    output: AudioNode,
+    ctx: BaseAudioContext,
+    startTime: number,
+    returnTarget?: AudioNode,
+  ): void {
     const sends: LayerSends = {
       ...(layer.sends ?? {}),
       ...(useMixerStore.getState().layerSends[layer.id] ?? {}),
@@ -1568,8 +1587,11 @@ export class AudioEngine {
         output.connect(tap);
         tap.connect(bus.input);
       } else {
-        // Offline export: build a self-contained bus for this context.
-        const masterIn = this.masterRackInput ?? (ctx as BaseAudioContext).destination;
+        // Offline export: build a self-contained bus for this context. Never
+        // use this.masterRackInput here — it belongs to the live AudioContext,
+        // and connect() across contexts throws InvalidAccessError, which made
+        // every stem with a send fail.
+        const masterIn = returnTarget ?? (ctx as BaseAudioContext).destination;
         const input = ctx.createGain();
         const returnGain = ctx.createGain();
         const pan = ctx.createStereoPanner();
@@ -2164,7 +2186,7 @@ export class AudioEngine {
       panNode.connect(gainNode);
       gainNode.connect(destination);
       this.tapLayerMeter(layer.id, gainNode, ctx);
-      this.tapLayerSends(layer, gainNode, ctx, layerStartTime);
+      this.tapLayerSends(layer, gainNode, ctx, layerStartTime, destination);
       if (ctx === this.context && source) {
         this.registerTriggerCleanup(source, () => {
           for (const t of terminals) { try { t.disconnect(); } catch {} }
@@ -2457,7 +2479,7 @@ export class AudioEngine {
     compressor.connect(destination);
     terminals.push(compressor);
     this.tapLayerMeter(layer.id, compressor, ctx);
-    this.tapLayerSends(layer, compressor, ctx, layerStartTime);
+    this.tapLayerSends(layer, compressor, ctx, layerStartTime, destination);
 
     // FX: Unified Reverb (Single high-fidelity spatial & layer Schroeder Moorer diffusion reverb)
     if (layer.fx.reverbMix > 0 && layer.fx.reverbEnabled !== false) {

@@ -230,8 +230,12 @@ describe('render stages', () => {
     const shifted = Float32Array.from(input);
     pitchShift(shifted, 1200);
     expect(shifted.length).toBe(input.length);
-    const analysis = analyseSamples(shifted, SR);
+    // An upward shift is half as long; the rest is silence (not a DC plateau).
+    // Measure the region that actually carries the shifted material.
+    const valid = Math.floor(input.length / 2);
+    const analysis = analyseSamples(shifted.subarray(0, valid), SR);
     expect(Math.abs(analysis.centroidHz - 880)).toBeLessThan(120);
+    expect(shifted[shifted.length - 1]).toBe(0);
   });
 
   it('pitch shift at zero cents is a no-op', () => {

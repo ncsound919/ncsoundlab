@@ -76,9 +76,9 @@ export class LadderFilterModule implements StudioModule {
 
     const sr = this.sampleRate > 0 ? this.sampleRate : 44100;
     const fc = Math.min(Math.max(this.cutoffHz, 1), sr * 0.45);
+    // w0 is radians per sample, so the pre-warped coefficient is tan(w0 / 2).
     const w0 = f(f(TWO_PI * fc) / sr);
-    // Pre-warped ZDF g, capped where the 4-pole recursion stops decaying.
-    this.g = Math.min(f(Math.tan(f(f(w0 * 0.5) / sr))), 0.95);
+    this.g = Math.min(f(Math.tan(f(w0 * 0.5))), 0.95);
     const bigG = f(this.g / f(1 + this.g));
     this.g4 = f(f(f(bigG * bigG) * bigG) * bigG);
 
@@ -98,9 +98,12 @@ export class LadderFilterModule implements StudioModule {
     const driven = f(Math.tanh(f(x * f(1 + f(f(this.drive / 10) * this.driveScale)))));
 
     const oneMinus = f(1 - bigG);
-    const left = f(f(f(s0 * oneMinus) + s1) * bigG2);
-    const right = f(f(f(s2 * oneMinus) + s3) * bigG);
-    const sum = f(left + right);
+    // y4 at u = 0: G^3(1-G)s0 + G^2(1-G)s1 + G(1-G)s2 + (1-G)s3.
+    const s0Term = f(f(f(s0 * oneMinus) * bigG2) * bigG);
+    const s1Term = f(f(s1 * oneMinus) * bigG2);
+    const s2Term = f(f(s2 * oneMinus) * bigG);
+    const s3Term = f(s3 * oneMinus);
+    const sum = f(f(s0Term + s1Term) + f(s2Term + s3Term));
     const u = f(f(driven - f(this.k * sum)) / f(1 + f(this.k * this.g4)));
 
     const v0 = f((u - s0) * bigG);
@@ -119,8 +122,13 @@ export class LadderFilterModule implements StudioModule {
     const y3 = f(v3 + s3);
     state[3] = f(y3 + v3);
 
-    // One non-finite sample would poison every later stage.
-    return Number.isFinite(y3) ? y3 : 0;
+    // One non-finite sample would poison every later stage; clear the stages
+    // so the filter recovers instead of staying silent forever.
+    if (!Number.isFinite(y3)) {
+      state.fill(0);
+      return 0;
+    }
+    return y3;
   }
 
   processSampleInto(inL: number, inR: number, out: Float32Array): void {
@@ -320,10 +328,15 @@ export class PhoneMicEmulationModule implements StudioModule {
   private selfNoiseAmount = 0.5;
   private dynamicRangeExpansion = 0.5;
 
-  private readonly lowShelf: Biquad;
-  private readonly peak2k5: Biquad;
-  private readonly highShelf: Biquad;
-  private readonly highPass: Biquad;
+  // One filter per channel: sharing a Biquad makes R continue from L's state.
+  private readonly lowShelfL: Biquad;
+  private readonly lowShelfR: Biquad;
+  private readonly peak2k5L: Biquad;
+  private readonly peak2k5R: Biquad;
+  private readonly highShelfL: Biquad;
+  private readonly highShelfR: Biquad;
+  private readonly highPassL: Biquad;
+  private readonly highPassR: Biquad;
   private readonly inMeter = new PeakMeter();
   private readonly outMeter = new PeakMeter();
   private readonly noise = makeNoiseSource();
@@ -337,30 +350,28 @@ export class PhoneMicEmulationModule implements StudioModule {
   }
 
   constructor(private readonly sampleRate: number) {
-    this.lowShelf = new Biquad(sampleRate);
-    this.peak2k5 = new Biquad(sampleRate);
-    this.highShelf = new Biquad(sampleRate);
-    this.highPass = new Biquad(sampleRate);
+    this.lowShelfL = new Biquad(sampleRate);
+    this.lowShelfR = new Biquad(sampleRate);
+    this.peak2k5L = new Biquad(sampleRate);
+    this.peak2k5R = new Biquad(sampleRate);
+    this.highShelfL = new Biquad(sampleRate);
+    this.highShelfR = new Biquad(sampleRate);
+    this.highPassL = new Biquad(sampleRate);
+    this.highPassR = new Biquad(sampleRate);
     this.configureFilters();
   }
 
   private configureFilters(): void {
-    if (this.targetMic === 1) {
-      this.lowShelf.setLowShelf(80, 4, 0.7);
-      this.peak2k5.setPeaking(2500, -3, 1.5);
-      this.highShelf.setHighShelf(6000, -4, 0.7);
-      this.highPass.setHighPass(50, 0.7071);
-    } else if (this.targetMic === 2) {
-      this.lowShelf.setLowShelf(100, 2, 0.7);
-      this.peak2k5.setPeaking(2500, -1, 1.5);
-      this.highShelf.setHighShelf(10000, -1, 0.7);
-      this.highPass.setHighPass(80, 0.7071);
-    } else {
-      this.lowShelf.setLowShelf(100, 3, 0.7);
-      this.peak2k5.setPeaking(2500, -2, 1.5);
-      this.highShelf.setHighShelf(8000, -3, 0.7);
-      this.highPass.setHighPass(80, 0.7071);
-    }
+    const [shelfFreq, shelfGain, peakGain, airFreq, airGain, hp] =
+      this.targetMic === 1
+        ? [80, 4, -3, 6000, -4, 50]
+        : this.targetMic === 2
+          ? [100, 2, -1, 10000, -1, 80]
+          : [100, 3, -2, 8000, -3, 80];
+    for (const filter of [this.lowShelfL, this.lowShelfR]) filter.setLowShelf(shelfFreq, shelfGain, 0.7);
+    for (const filter of [this.peak2k5L, this.peak2k5R]) filter.setPeaking(2500, peakGain, 1.5);
+    for (const filter of [this.highShelfL, this.highShelfR]) filter.setHighShelf(airFreq, airGain, 0.7);
+    for (const filter of [this.highPassL, this.highPassR]) filter.setHighPass(hp, 0.7071);
   }
 
   configure(slot: FxSlot): void {
@@ -382,14 +393,14 @@ export class PhoneMicEmulationModule implements StudioModule {
 
   processSampleInto(inL: number, inR: number, out: Float32Array): void {
     this.inMeter.update(inL, inR);
-    let l = this.highPass.process(inL);
-    let r = this.highPass.process(inR);
-    l = this.lowShelf.process(l);
-    r = this.lowShelf.process(r);
-    l = this.peak2k5.process(l);
-    r = this.peak2k5.process(r);
-    l = this.highShelf.process(l);
-    r = this.highShelf.process(r);
+    let l = this.highPassL.process(inL);
+    let r = this.highPassR.process(inR);
+    l = this.lowShelfL.process(l);
+    r = this.lowShelfR.process(r);
+    l = this.peak2k5L.process(l);
+    r = this.peak2k5R.process(r);
+    l = this.highShelfL.process(l);
+    r = this.highShelfR.process(r);
 
     const proximityBoost =
       this.distanceMeters > 0
@@ -413,10 +424,12 @@ export class PhoneMicEmulationModule implements StudioModule {
   }
 
   reset(): void {
-    this.lowShelf.reset();
-    this.peak2k5.reset();
-    this.highShelf.reset();
-    this.highPass.reset();
+    for (const filter of [
+      this.lowShelfL, this.lowShelfR, this.peak2k5L, this.peak2k5R,
+      this.highShelfL, this.highShelfR, this.highPassL, this.highPassR,
+    ]) {
+      filter.reset();
+    }
     this.inMeter.reset();
     this.outMeter.reset();
     this.noise.reset();

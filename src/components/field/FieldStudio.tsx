@@ -192,6 +192,10 @@ interface CaptureGraph {
   ready: Promise<void>;
   /** Input-conditioning nodes, exposed so a profile change applies live. */
   filters?: { highPass: BiquadFilterNode; presence: BiquadFilterNode };
+  /** Disconnects the capture graph and stops every microphone track. */
+  teardown?: () => void;
+  /** Set on unmount so a pending getUserMedia does not attach a stream. */
+  cancelled?: boolean;
 }
 
 export default function FieldStudio(): React.ReactElement {
@@ -301,8 +305,22 @@ export default function FieldStudio(): React.ReactElement {
         }
       }
       voicesRef.current.clear();
-      graphRef.current?.ready.catch(() => undefined);
-      void graphRef.current?.ctx.close().catch(() => undefined);
+      const graph = graphRef.current;
+      graphRef.current = null;
+      if (graph) {
+        // Closing the AudioContext does not stop a MediaStream: without this
+        // the microphone stayed live (and the browser indicator stayed on)
+        // after leaving the Field tab, and a getUserMedia that resolved after
+        // unmount was never tracked at all.
+        graph.cancelled = true;
+        try {
+          graph.teardown?.();
+        } catch {
+          /* nodes may already be disconnected */
+        }
+        void graph.ready.catch(() => undefined);
+        void graph.ctx.close().catch(() => undefined);
+      }
     };
   }, [refreshStorage]);
 
@@ -461,7 +479,7 @@ export default function FieldStudio(): React.ReactElement {
       }
       const preRoll = new PreRollBuffer(ctx.sampleRate, { windowMs: 1200 });
       const assembler = new TakeAssembler(preRoll, ctx.sampleRate, { maxSeconds: 15 * 60 });
-      const graph: CaptureGraph = { ctx, preRoll, assembler, ready: Promise.resolve() };
+      const graph: CaptureGraph = { ctx, preRoll, assembler, ready: Promise.resolve(), cancelled: false };
       graphRef.current = graph;
 
       graph.ready = (async () => {
@@ -473,6 +491,11 @@ export default function FieldStudio(): React.ReactElement {
             autoGainControl: false,
           },
         });
+        if (graph.cancelled || ctx.state === 'closed') {
+          for (const track of stream.getTracks()) track.stop();
+          if (graphRef.current === graph) graphRef.current = null;
+          return;
+        }
         let node: AudioNode;
         let teardown: () => void;
         const onChunk = (chunk: Float32Array) => {
@@ -554,7 +577,7 @@ export default function FieldStudio(): React.ReactElement {
             stream.getTracks().forEach((track) => track.stop());
           };
         })();
-        (graph as CaptureGraph & { teardown?: () => void }).teardown = teardown;
+        graph.teardown = teardown;
       })();
 
       try {
@@ -936,12 +959,19 @@ export default function FieldStudio(): React.ReactElement {
       log('kit is empty');
       return;
     }
+    // A new take clears `renders` but not the kit. Never substitute the new
+    // take's audio for an old slice: that exports the wrong sound.
+    const missing = kit.slices.filter((entry) => renders[entry.genomeId] === undefined);
+    if (missing.length > 0) {
+      log(`cannot export: ${missing.length} kit slice(s) have no audio for this take — rebuild the kit`);
+      return;
+    }
     try {
       setIsBusy(true);
       const zip = new JSZip();
       zip.file('manifest.json', kitManifestJson(kit));
       for (const [index, entry] of kit.slices.entries()) {
-        const samples = renders[entry.genomeId] ?? working ?? take.samples;
+        const samples = renders[entry.genomeId]!;
         zip.file(`audio/${sliceFileName(entry, index)}`, encodeWavMono(samples, take.sampleRate));
       }
       const blob = await zip.generateAsync({ type: 'blob' });
@@ -960,12 +990,15 @@ export default function FieldStudio(): React.ReactElement {
       log('kit is empty');
       return;
     }
+    const missing = kit.slices.filter((entry) => renders[entry.genomeId] === undefined);
+    if (missing.length > 0) {
+      log(`cannot export: ${missing.length} kit slice(s) have no audio for this take — rebuild the kit`);
+      return;
+    }
     try {
       setIsBusy(true);
       const zip = new JSZip();
-      const sliceAudio = kit.slices.map(
-        (entry) => renders[entry.genomeId] ?? working ?? take.samples
-      );
+      const sliceAudio = kit.slices.map((entry) => renders[entry.genomeId]!);
       const files = buildNcbeatPackage(kit, sliceAudio, take.sampleRate, {
         patternName: kit.name,
       });

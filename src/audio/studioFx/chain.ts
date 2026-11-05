@@ -35,6 +35,17 @@ import {
   PhoneNoiseReductionModule,
 } from './modulesLadder';
 
+/**
+ * Catalog modules the Kotlin engine ships but the TS port has not implemented.
+ * The picker must not offer them: `createModule` returns null, so a selected
+ * slot would silently do nothing. The parity fixture omits them for the same
+ * reason until a port lands.
+ */
+export const UNIMPLEMENTED_KINDS: ReadonlySet<string> = new Set([
+  'VOCAL_RIDER',
+  'RESONANCE_SMOOTHER',
+]);
+
 export function createModule(kind: string, sampleRate: number): StudioModule | null {
   switch (kind) {
     case 'TRIM': return new TrimModule(sampleRate);

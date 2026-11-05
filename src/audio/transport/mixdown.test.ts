@@ -52,9 +52,18 @@ describe('renderMixdown', () => {
     const buf = await renderMixdown({
       patterns: { A: p, B: p, C: p, D: p },
       chain: { order: ['A'] },
+      tailSec: 0,
     });
     expect(buf).toBeTruthy();
     expect(buf.duration).toBeCloseTo(2.0, 1);
+
+    // Default render includes a release/sample tail: the last step's decay used
+    // to be cut off exactly at the loop boundary.
+    const tailed = await renderMixdown({
+      patterns: { A: p, B: p, C: p, D: p },
+      chain: { order: ['A'] },
+    });
+    expect(tailed.duration).toBeGreaterThanOrEqual(2.9);
   }, 15000);
 });
 

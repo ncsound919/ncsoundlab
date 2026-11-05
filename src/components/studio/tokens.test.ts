@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  BRAND,
   STUDIO,
   STUDIO_BUTTON,
   STUDIO_FADER,
@@ -47,6 +48,10 @@ describe('shared studio control spec parity', () => {
     expect(dbToFraction(-60)).toBe(0);
     expect(dbToFraction(0)).toBe(1);
     expect(dbToFraction(-30)).toBeCloseTo(0.5, 5);
+  });
+
+  it('mirrors the Overlay365 brand chrome', () => {
+    expect(BRAND).toEqual(spec.brand);
   });
 
   it('uses the Pro Tools zone colours', () => {

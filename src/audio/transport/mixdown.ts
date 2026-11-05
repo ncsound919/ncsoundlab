@@ -26,6 +26,8 @@ export interface MixdownOptions {
   /** Full layer list so mixdown can locate each cell's audio buffer by id. */
   layers?: SoundLayer[];
   sampleRate?: number;
+  /** Extra seconds rendered after the last step for releases/sample tails. */
+  tailSec?: number;
 }
 
 const secPer16th = (bpm: number) => 60 / bpm / 4;
@@ -136,7 +138,11 @@ export function scheduleMixdownCell(
 export async function renderMixdown(opts: MixdownOptions): Promise<AudioBuffer> {
   const plan = planMixdown(opts);
   const sampleRate = opts.sampleRate ?? 44100;
-  const offlineCtx = new OfflineAudioContext(2, Math.ceil(sampleRate * Math.max(0.05, plan.durationSec)), sampleRate);
+  // A hit on the last step, a sample longer than one step, and every release
+  // used to be cut off exactly at the loop boundary.
+  const tailSec = Math.max(0, opts.tailSec ?? 1);
+  const renderSec = Math.max(0.05, plan.durationSec + tailSec);
+  const offlineCtx = new OfflineAudioContext(2, Math.ceil(sampleRate * renderSec), sampleRate);
   const master = offlineCtx.createGain();
   master.gain.value = 1;
   master.connect(offlineCtx.destination);

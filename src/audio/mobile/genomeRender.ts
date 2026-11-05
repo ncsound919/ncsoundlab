@@ -219,11 +219,17 @@ export function pitchShift(samples: Float32Array, cents: number): void {
   const ratio = Math.pow(2, cents / 1200);
   const shifted = resample(samples, ratio);
   const out = new Float32Array(samples.length);
-  out.set(shifted.subarray(0, Math.min(shifted.length, samples.length)));
-  // Pad the tail with the last sample rather than silence, so a downward shift
-  // does not end in a gap.
-  const padValue = shifted.length > 0 ? shifted[shifted.length - 1] : 0;
-  for (let i = shifted.length; i < out.length; i++) out[i] = padValue;
+  const copied = Math.min(shifted.length, samples.length);
+  out.set(shifted.subarray(0, copied));
+  // An upward shift produces a shorter buffer. Holding the last sample across
+  // the rest of the frame created a long DC plateau (up to 75% of the buffer
+  // at +2400 cents): silence plus a short fade is the correct tail.
+  const end = Math.min(copied, out.length);
+  const fadeLen = Math.min(64, end);
+  for (let i = 0; i < fadeLen; i++) {
+    const gain = 0.5 + 0.5 * Math.cos((Math.PI * i) / fadeLen);
+    out[end - 1 - i] *= gain;
+  }
   samples.set(out);
 }
 

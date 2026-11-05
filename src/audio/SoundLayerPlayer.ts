@@ -83,13 +83,15 @@ export class SoundLayerPlayer {
     if (!ctx) return;
 
     if (ctx.state === 'suspended') {
-      ctx.resume();
+      void ctx.resume();
     }
 
     // Sample-accurate scheduling: accept an audio-clock time so sequenced
     // notes can be scheduled ahead (Tone transport step time + swing offset)
     // instead of firing immediately on the JS thread. Defaults to now.
-    const startTime = when ?? ctx.currentTime;
+    // A stale `when` from a late callback must never schedule in the past
+    // (some backends throw) — clamp forward to now.
+    const startTime = Math.max(when ?? ctx.currentTime, ctx.currentTime);
 
     // A sample layer with no decoded buffer can't play — don't silently
     // synthesize a tone for it (mirrors audioEngine.triggerLayer).
@@ -183,14 +185,19 @@ export class SoundLayerPlayer {
       this.releaseEnvelope(noteGainNode, sustainGain, relStart, safeRelease);
     }
 
-    // Filter FX
+    // Filter FX (clamp so a bad preset can never throw on the audio thread).
     filter.type = fx.filterType || 'lowpass';
-    filter.frequency.setValueAtTime(fx.filterFreq ?? 20000, startTime);
-    filter.Q.setValueAtTime(fx.filterRes ?? 1, startTime);
+    filter.frequency.setValueAtTime(
+      Math.max(10, Math.min(22000, safeAudioValue(fx.filterFreq, 20000))),
+      startTime,
+    );
+    filter.Q.setValueAtTime(Math.max(0.1, Math.min(20, safeAudioValue(fx.filterRes, 1))), startTime);
 
     sourceNode.connect(filter);
     filter.connect(panNode);
-    panNode.pan.setValueAtTime(layer.pan, startTime);
+    // StereoPanner pan is -1..1; an out-of-range preset value throws on some
+    // backends and would kill the note. Clamp instead of trusting storage.
+    panNode.pan.setValueAtTime(Math.max(-1, Math.min(1, safeAudioValue(layer.pan, 0))), startTime);
     panNode.connect(noteGainNode);
 
     // Connect to SharedAudioEngine's module gain node (ducking/analyser) or destination

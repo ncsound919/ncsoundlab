@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { makeSlot } from './catalog';
 import { renderChain } from './chain';
 import { TruePeakLimiterModule } from './modulesDynamics';
-import { Db } from './primitives';
+import { BiquadCascade, Db } from './primitives';
 
 /**
  * Objective measurements, mirroring `FxDspMeasurementTest.kt` in
@@ -168,6 +168,46 @@ describe('studio FX objective measurements', () => {
       0.02 * tube1,
     );
     expect(tube3).toBeGreaterThan(0);
+  });
+
+  /**
+   * The SSL/Neve console HPF is labelled 18 dB/oct. It used to be two
+   * 2nd-order sections (24 dB/oct) with Q=0.5 in the second one, which put a
+   * 6 dB notch at the dialled frequency. Measure the real response: -3 dB at
+   * the cutoff and 18 dB per octave in the stopband.
+   */
+  it('keeps the console HPF at 18 dB/oct without a notch at cutoff', () => {
+    const cutoff = 500;
+
+    const gainAt = (freq: number): number => {
+      const cascade = new BiquadCascade(SAMPLE_RATE, 2);
+      cascade.setThirdOrderHighPass(cutoff);
+      const tone = sine(freq, 0.5);
+      let inputPower = 0;
+      let outputPower = 0;
+      for (let i = 0; i < tone.length; i++) {
+        const y = cascade.process(tone[i]);
+        if (i >= SETTLE) {
+          inputPower += tone[i] * tone[i];
+          outputPower += y * y;
+        }
+      }
+      return Math.sqrt(outputPower / inputPower);
+    };
+
+    const atCutoffDb = 20 * Math.log10(gainAt(cutoff));
+    expect(
+      Math.abs(atCutoffDb + 3),
+      `cutoff gain is ${atCutoffDb.toFixed(2)} dB; a 3rd-order Butterworth must be -3 dB, ` +
+        'and a 6 dB notch means a Q=0.5 second stage came back',
+    ).toBeLessThan(0.5);
+
+    const octaveDb = 20 * Math.log10(gainAt(cutoff / 4) / gainAt(cutoff / 8));
+    expect(
+      octaveDb,
+      `stopband slope is ${octaveDb.toFixed(2)} dB/octave; the label and the SSL/Neve presets promise 18`,
+    ).toBeGreaterThan(16.5);
+    expect(octaveDb).toBeLessThan(19.5);
   });
 
   /**

@@ -54,6 +54,26 @@ export const STUDIO_METER = {
   peakHoldDecayPerTick: 0.006,
 } as const;
 
+/**
+ * Overlay365 brand chrome (marketing-studio DESIGN-KIT + brand/tokens).
+ * Studio surfaces keep STUDIO.* above; BRAND.* is for app chrome, headers,
+ * primary CTAs and cross-app identity. Studio accent #00E5FF and brand
+ * cyan-elec #22D3EE are intentionally paired, not merged: meters and
+ * control states stay on the studio ramp so mix reads never shift hue.
+ */
+export const BRAND = {
+  midnight: '#05060A',
+  graphite: '#0E1117',
+  slate: '#141924',
+  cyanElec: '#22D3EE',
+  gold: '#F5C451',
+  goldSoft: '#F7D983',
+  softWhite: '#F6F7F9',
+  fontDisplay: 'Bricolage Grotesque',
+  fontBody: 'Plus Jakarta Sans',
+  fontMono: 'JetBrains Mono',
+} as const;
+
 export const STUDIO_BUTTON = {
   minHeightDp: 48,
   cornerRadiusDp: 8,

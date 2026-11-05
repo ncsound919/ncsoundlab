@@ -184,7 +184,9 @@ describe('CompareEngine', () => {
     expect(Number.isFinite(meters.refPeak)).toBe(true);
     expect(Number.isFinite(meters.refRms)).toBe(true);
     expect(Number.isFinite(meters.mixPeak)).toBe(true);
-    expect(meters.refCorr).toBeGreaterThan(0);
-    expect(meters.refWidth).toBe(100);
+    // Correlation/width have no stereo splitter behind them, so they must
+    // stay unknown (NaN -> panel shows "—") rather than fake constants.
+    expect(Number.isFinite(meters.refCorr)).toBe(false);
+    expect(Number.isFinite(meters.mixCorr)).toBe(false);
   });
 });

@@ -13,6 +13,7 @@ import {
   slotValue,
   type FxSlot,
 } from '../../audio/studioFx/catalog';
+import { UNIMPLEMENTED_KINDS } from '../../audio/studioFx/chain';
 
 interface StudioSuiteSettings {
   chain?: FxSlot[];
@@ -38,6 +39,9 @@ export const StudioSuiteEditor: React.FC<Props> = ({ settings, onChange }) => {
   const grouped = useMemo(() => {
     const map = new Map<string, typeof FX_KINDS>();
     for (const kind of FX_KINDS) {
+      // Do not offer a module the renderer cannot build; selecting it would
+      // add a slot that silently passes audio through.
+      if (UNIMPLEMENTED_KINDS.has(kind.id)) continue;
       const list = map.get(kind.category) ?? [];
       list.push(kind);
       map.set(kind.category, list);
