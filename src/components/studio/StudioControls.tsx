@@ -18,6 +18,7 @@ import {
   STUDIO_FADER,
   STUDIO_KNOB,
   STUDIO_METER,
+  STUDIO_WAVEFORM,
   dbToFraction,
   formatStudioValue,
   meterColorForDb,
@@ -684,5 +685,129 @@ export function StudioButton({
       {label}
       {selected && <span aria-hidden="true">✓</span>}
     </button>
+  );
+}
+
+export interface StudioWaveformPeaksProps {
+  /** Interleaved lo/hi pairs per column, each in -1..1 (mirrors the shared Compose painter). */
+  peaks: ArrayLike<number>;
+  accent?: string;
+  /** Trim window as 0..1 fractions; the cut regions render shaded. */
+  trimStart?: number;
+  trimEnd?: number;
+  /** Slice/onset markers as 0..1 fractions. */
+  slices?: number[];
+  height?: number;
+  label?: string;
+  className?: string;
+}
+
+/**
+ * Web mirror of the shared Compose `StudioWaveformPeaks`: the one peak
+ * painter for simple web waveform displays (timelines, clip previews).
+ * Interactive editors (slice dragging, pinch zoom) stay in their bespoke
+ * components — this covers display only, so every surface reads the same.
+ */
+export function StudioWaveformPeaks({
+  peaks,
+  accent = STUDIO.accent,
+  trimStart = 0,
+  trimEnd = 1,
+  slices = [],
+  height = 96,
+  label = 'Waveform',
+  className = '',
+}: StudioWaveformPeaksProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width || 300;
+    const h = height;
+    canvas.width = Math.max(1, Math.round(w * dpr));
+    canvas.height = Math.max(1, Math.round(h * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const mid = h / 2;
+    ctx.clearRect(0, 0, w, h);
+
+    // Grid: 8 vertical divisions + center line, like the Compose painter.
+    ctx.strokeStyle = `${STUDIO.border}8C`;
+    ctx.lineWidth = 1;
+    for (let g = 0; g <= STUDIO_WAVEFORM.gridDivisions; g++) {
+      const x = (w * g) / STUDIO_WAVEFORM.gridDivisions;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = STUDIO.border;
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(w, mid);
+    ctx.stroke();
+
+    // Peaks: one vertical line per column, 94% of half-height.
+    const cols = Math.floor(peaks.length / 2);
+    if (cols > 0 && w > 0) {
+      const step = w / cols;
+      ctx.strokeStyle = `${accent}E6`;
+      ctx.lineWidth = Math.max(1, step * 0.9);
+      ctx.beginPath();
+      for (let c = 0; c < cols; c++) {
+        const lo = Math.max(-1, Math.min(1, peaks[c * 2]));
+        const hi = Math.max(-1, Math.min(1, peaks[c * 2 + 1]));
+        const x = c * step + step / 2;
+        const y1 = mid - hi * mid * 0.94;
+        const y2 = mid - lo * mid * 0.94;
+        ctx.moveTo(x, y1);
+        ctx.lineTo(x, Math.max(y1 + 1, y2));
+      }
+      ctx.stroke();
+    }
+
+    // Trim shade outside the [trimStart, trimEnd] window.
+    const a = Math.max(0, Math.min(1, trimStart));
+    const b = Math.max(a, Math.min(1, trimEnd));
+    ctx.fillStyle = `rgba(0, 0, 0, ${STUDIO_WAVEFORM.trimShadeOpacity})`;
+    if (a > 0.001) ctx.fillRect(0, 0, w * a, h);
+    if (b < 0.999) ctx.fillRect(w * b, 0, w * (1 - b), h);
+
+    // Slice markers: vertical line + dot, clamped inside the canvas.
+    ctx.fillStyle = accent;
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.5;
+    for (const frac of [...slices].sort((x, y) => x - y)) {
+      const x = Math.max(0, Math.min(1, frac)) * w;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(Math.max(6, Math.min(w - 6, x)), 8, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, [peaks, accent, trimStart, trimEnd, slices, height]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      role="img"
+      aria-label={label}
+      className={className}
+      style={{
+        width: '100%',
+        height,
+        borderRadius: STUDIO_WAVEFORM.cornerRadiusDp,
+        background: STUDIO.inset,
+        display: 'block',
+      }}
+    />
   );
 }

@@ -7,7 +7,7 @@ import { ReferenceTrack } from '../types';
 import { safeAudioValue } from '../lib/audioUtils';
 import { analyzeLoudness, type LoudnessResult } from 'bravoh-loudness';
 
-class CompareEngine {
+export class CompareEngine {
   private ctx: AudioContext | null = null;
   private refSourceNode: AudioBufferSourceNode | null = null;
   private mixSourceNode: AudioBufferSourceNode | null = null;
@@ -23,6 +23,16 @@ class CompareEngine {
   private refAnalyser: AnalyserNode | null = null;
   private mixAnalyser: AnalyserNode | null = null;
 
+  // Per-channel taps for real stereo correlation/width. A ChannelSplitterNode
+  // is a pure tap — it feeds the L/R analysers without touching the audible
+  // path (the bus analyser still carries the signal to the destination).
+  private refSplitter: ChannelSplitterNode | null = null;
+  private mixSplitter: ChannelSplitterNode | null = null;
+  private refAnalyserL: AnalyserNode | null = null;
+  private refAnalyserR: AnalyserNode | null = null;
+  private mixAnalyserL: AnalyserNode | null = null;
+  private mixAnalyserR: AnalyserNode | null = null;
+
   private activeSource: 'A' | 'B' = 'A';
   private refStartTime = 0;
   private refOffset = 0;
@@ -36,6 +46,8 @@ class CompareEngine {
   private loopB = { start: 0, end: 0, enabled: false };
 
   private analysisBuffer: Float32Array | null = null;
+  private analysisBufferL: Float32Array | null = null;
+  private analysisBufferR: Float32Array | null = null;
 
   constructor() {
     // Lazy audio context setup
@@ -54,8 +66,27 @@ class CompareEngine {
       this.mixAnalyser = this.ctx.createAnalyser();
       this.refAnalyser.fftSize = 1024;
       this.mixAnalyser.fftSize = 1024;
+
+      this.refSplitter = this.ctx.createChannelSplitter(2);
+      this.mixSplitter = this.ctx.createChannelSplitter(2);
+      this.refAnalyserL = this.ctx.createAnalyser();
+      this.refAnalyserR = this.ctx.createAnalyser();
+      this.mixAnalyserL = this.ctx.createAnalyser();
+      this.mixAnalyserR = this.ctx.createAnalyser();
+      this.refAnalyserL.fftSize = 2048;
+      this.refAnalyserR.fftSize = 2048;
+      this.mixAnalyserL.fftSize = 2048;
+      this.mixAnalyserR.fftSize = 2048;
+      this.refGainNode.connect(this.refSplitter);
+      this.mixGainNode.connect(this.mixSplitter);
+      this.refSplitter.connect(this.refAnalyserL, 0);
+      this.refSplitter.connect(this.refAnalyserR, 1);
+      this.mixSplitter.connect(this.mixAnalyserL, 0);
+      this.mixSplitter.connect(this.mixAnalyserR, 1);
       
       this.analysisBuffer = new Float32Array(1024);
+      this.analysisBufferL = new Float32Array(2048);
+      this.analysisBufferR = new Float32Array(2048);
 
       this.refGainNode.connect(this.refAnalyser);
       this.mixGainNode.connect(this.mixAnalyser);
@@ -314,23 +345,78 @@ class CompareEngine {
       }
     }
 
-    // Stereo correlation/width need a splitter + two analysers per bus.
-    // The current graph has one analyser per bus, so there is no real
-    // L/R measurement here. Return NaN (the panel already renders that as
-    // "—") instead of a plausible-looking constant that would mislead a
-    // mix decision.
+    // Real stereo correlation/width from the per-bus splitter taps. NaN only
+    // when there is genuinely nothing to measure (no context/nodes yet) —
+    // the panel renders that as "—".
+    const refStereo = this.stereoStats(this.refAnalyserL, this.refAnalyserR);
+    const mixStereo = this.stereoStats(this.mixAnalyserL, this.mixAnalyserR);
     return {
       refPeak,
       refRms,
       refLufs,
-      refCorr: Number.NaN,
-      refWidth: Number.NaN,
+      refCorr: refStereo.corr,
+      refWidth: refStereo.width,
       mixPeak,
       mixRms,
       mixLufs,
-      mixCorr: Number.NaN,
-      mixWidth: Number.NaN,
+      mixCorr: mixStereo.corr,
+      mixWidth: mixStereo.width,
     };
+  }
+
+  /**
+   * Pearson correlation + stereo width from two channel analysers.
+   * Silence on both channels -> NaN (nothing to measure). Silence on one
+   * channel (mono/dual-mono source) -> perfectly correlated, zero width.
+   * Width is RMS(side)/RMS(mid) clamped to 0..1: 0 mono, ~1 wide.
+   */
+  private stereoStats(
+    analyserL: AnalyserNode | null,
+    analyserR: AnalyserNode | null
+  ): { corr: number; width: number } {
+    const silent = { corr: Number.NaN, width: Number.NaN };
+    if (!analyserL || !analyserR || !this.analysisBufferL || !this.analysisBufferR) return silent;
+    const bufL = this.analysisBufferL;
+    const bufR = this.analysisBufferR;
+    analyserL.getFloatTimeDomainData(bufL);
+    analyserR.getFloatTimeDomainData(bufR);
+    const n = Math.min(bufL.length, bufR.length);
+    let sumL = 0;
+    let sumR = 0;
+    let sumLL = 0;
+    let sumRR = 0;
+    let sumLR = 0;
+    for (let i = 0; i < n; i++) {
+      const l = bufL[i];
+      const r = bufR[i];
+      sumL += l;
+      sumR += r;
+      sumLL += l * l;
+      sumRR += r * r;
+      sumLR += l * r;
+    }
+    const rmsL = Math.sqrt(sumLL / n);
+    const rmsR = Math.sqrt(sumRR / n);
+    if (rmsL <= 1e-9 && rmsR <= 1e-9) return silent;
+    if (rmsL <= 1e-9 || rmsR <= 1e-9) return { corr: 1, width: 0 };
+    const meanL = sumL / n;
+    const meanR = sumR / n;
+    const cov = sumLR / n - meanL * meanR;
+    const varL = sumLL / n - meanL * meanL;
+    const varR = sumRR / n - meanR * meanR;
+    const denom = Math.sqrt(varL * varR);
+    const corr = denom <= 1e-12 ? 1 : Math.max(-1, Math.min(1, cov / denom));
+    // Width via mid/side energy (DC-removed like the correlation above).
+    let sumM = 0;
+    let sumS = 0;
+    for (let i = 0; i < n; i++) {
+      const m = (bufL[i] + bufR[i]) / 2 - (meanL + meanR) / 2;
+      const s = (bufL[i] - bufR[i]) / 2 - (meanL - meanR) / 2;
+      sumM += m * m;
+      sumS += s * s;
+    }
+    const width = sumM <= 1e-18 ? (sumS <= 1e-18 ? 0 : 1) : Math.min(1, Math.sqrt(sumS / sumM));
+    return { corr, width };
   }
 }
 

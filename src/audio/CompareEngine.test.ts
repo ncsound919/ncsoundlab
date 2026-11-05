@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { compareEngine } from './CompareEngine';
+import { CompareEngine, compareEngine } from './CompareEngine';
 import { analyzeLoudness } from 'bravoh-loudness';
 
 vi.mock('bravoh-loudness', () => ({
@@ -64,6 +64,10 @@ class FakeAnalyser {
   connect = vi.fn();
 }
 
+class FakeSplitter {
+  connect = vi.fn();
+}
+
 class FakeAudioContext {
   state = 'running';
   currentTime = 0;
@@ -75,6 +79,9 @@ class FakeAudioContext {
   }
   createAnalyser() {
     return new FakeAnalyser();
+  }
+  createChannelSplitter() {
+    return new FakeSplitter();
   }
   createBufferSource() {
     return new FakeSource();
@@ -184,8 +191,19 @@ describe('CompareEngine', () => {
     expect(Number.isFinite(meters.refPeak)).toBe(true);
     expect(Number.isFinite(meters.refRms)).toBe(true);
     expect(Number.isFinite(meters.mixPeak)).toBe(true);
-    // Correlation/width have no stereo splitter behind them, so they must
-    // stay unknown (NaN -> panel shows "—") rather than fake constants.
+    // The splitter taps feed both channels identical mock data, so the
+    // measured correlation is real and finite (+1, width 0).
+    expect(meters.refCorr).toBeCloseTo(1, 5);
+    expect(meters.mixCorr).toBeCloseTo(1, 5);
+    expect(meters.refWidth).toBeCloseTo(0, 5);
+    expect(meters.mixWidth).toBeCloseTo(0, 5);
+  });
+
+  it('reports unknown correlation before any context exists', () => {
+    const fresh = new CompareEngine();
+    const meters = fresh.getMeterData();
+    expect(meters.refPeak).toBe(-100);
+    // No splitter taps yet: NaN -> panel shows "—", never a fake number.
     expect(Number.isFinite(meters.refCorr)).toBe(false);
     expect(Number.isFinite(meters.mixCorr)).toBe(false);
   });
