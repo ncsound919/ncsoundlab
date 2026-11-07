@@ -51,29 +51,26 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'NC Sound Lab ${{ github.ref_name }}'
           releaseBody: |
-            NC Sound Lab Studio installer (Windows).
-            Auto-update bundle is included in the release assets.
+            NC Sound Lab Studio installer (Windows x64). The auto-update bundle is
+            included in the release assets.
 
-            ## v1.1.0 - Sample-accurate scheduling, stability & monetization
+            ## 1.1.1 — metering, stability and shared chrome
 
-            **Sequencer timing (research-backed)**
-            - Sample-accurate step scheduling: notes + swing/groove/pocket offsets now land on the Web Audio clock instead of JS timers (no more drift under main-thread load)
-            - `latencyHint: 'playback'` on the audio context for glitch-free sustained playback
+            - The Compare Engine now measures stereo correlation and width from a
+              real splitter + L/R analysers instead of returning hard-coded values.
+            - Shimmer + reverb feedback is clamped to 0.88 and every FX target is
+              bounded before render, so a hostile rack cannot self-oscillate.
+            - Late note callbacks can no longer schedule in the past; pan/filter
+              values are clamped and `resume()` is non-blocking on the audio path.
+            - Layer meters update at ~12 fps and only publish meaningful peaks,
+              removing sequencer jank while playing.
+            - Brand tokens mirror the shared studio spec; the shared waveform
+              display is token-driven while the touch field editor stays bespoke.
+            - Session export and autosave metadata read one version constant,
+              pinned to `package.json` by a test.
 
-            **Stability & correctness**
-            - Fixed a Web Audio graph leak: per-trigger FX subgraphs (incl. tape-delay DSP) are now disconnected on end - memory no longer grows per pad hit
-            - Fixed MIDI note-chain leaks and per-layer analyser/gain leaks on project switch
-            - Fixed Add-to-Kit form wiping your edits on re-render
-            - Fixed autosave clobbering the crash-recovery snapshot on slow startups
-            - Guarded against double-fire on Evolve, publish, and chop-send (no more tab freezes)
-            - Recording stop no longer hangs; reverb IR caches bounded; corrupt project cache no longer crashes
-            - Removed dead components; tighter undo/redo (master rack now captured)
-
-            **Monetization / community**
-            - Email capture on the welcome gate + funnel analytics (demo_started / paywall_seen / purchased)
-            - The Kit Builder stays free - premium factory kits now download freely (give-back model)
-            - Paywall now promotes the founder's albums (Im Different / Free Lunch)
-
-            **Deep audit** - passed The Deep 3-engine deterministic audit (244 files); entity IDs hardened to `crypto.randomUUID()`
+            Verified: `tsc --noEmit` clean, engine boundary clean, production
+            build green, and the full Vitest suite passes. The installer remains
+            unsigned during beta.
           releaseDraft: true
           prerelease: false

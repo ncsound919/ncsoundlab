@@ -46,6 +46,7 @@ import {
   FXSettings
 } from './types';
 import { audioEngine } from './lib/audioEngine';
+import { APP_VERSION } from './lib/appVersion';
 import { ControllerHost } from './components/controller/ControllerHost';
 import { useControllerStore } from './store/controllerStore';
 import { synthLayerFor, patternFor, isRecoursePiece } from './lib/recourseBridge';
@@ -686,7 +687,7 @@ export default function App() {
   useEffect(() => {
     const snapshot = {
       title: 'Untitled Session',
-      appVersion: '1.1.0',
+      appVersion: APP_VERSION,
       layers,
       patterns: patternStore.patterns,
       activePatternId: patternStore.activePatternId,
@@ -706,7 +707,7 @@ export default function App() {
       // until the user acts, otherwise a stray autosave of a fresh session
       // would destroy the crash-recovery data before it can be restored.
       if (!hasAutoSave) {
-        scheduleAutosave(snapshot, '1.1.0');
+        scheduleAutosave(snapshot, APP_VERSION);
       }
     }
   }, [layers, masterLevel, patternStore, sequencerStore, rackModules, hasAutoSave]);

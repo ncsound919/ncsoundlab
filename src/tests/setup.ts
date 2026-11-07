@@ -1,5 +1,24 @@
 import { vi } from 'vitest';
 
+// Node 26 ships an experimental global `localStorage` that is unavailable
+// without `--localstorage-file`. It shadows jsdom's implementation, leaving
+// `window.localStorage` undefined, so component setup hooks throw on
+// `localStorage.clear()`. Restore the storage contract jsdom documents with an
+// in-memory implementation when the host swallowed it.
+if (typeof window !== 'undefined' && !window.localStorage) {
+  const store = new Map<string, string>();
+  const storage: Storage = {
+    get length() { return store.size; },
+    clear() { store.clear(); },
+    getItem(key: string) { return store.has(key) ? store.get(key)! : null; },
+    key(index: number) { return Array.from(store.keys())[index] ?? null; },
+    removeItem(key: string) { store.delete(key); },
+    setItem(key: string, value: string) { store.set(key, String(value)); },
+  };
+  Object.defineProperty(window, 'localStorage', { value: storage, configurable: true });
+  Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true });
+}
+
 // Mock AudioContext
 class MockAudioContext {
   createGain = vi.fn(() => ({

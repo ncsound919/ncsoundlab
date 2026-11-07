@@ -28,9 +28,9 @@ import {
   downloadExport,
 } from '../lib/rating/export';
 import { trackEvent } from '../lib/analytics';
+import { APP_VERSION } from '../lib/appVersion';
 import type { Confidence, DimensionTags, RatingPair } from '../lib/rating/types';
 
-const APP_VERSION = '1.1.0';
 const MAX_SKIPS = 2;
 
 interface SetupScreenProps {
