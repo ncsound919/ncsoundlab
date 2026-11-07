@@ -7,13 +7,40 @@ import { vi } from 'vitest';
 // in-memory implementation when the host swallowed it.
 if (typeof window !== 'undefined' && !window.localStorage) {
   const store = new Map<string, string>();
+  // A test that swaps `Storage.prototype.setItem` to simulate a quota error
+  // only reaches the app through the prototype chain, which the plain object
+  // below does not use. Forward to the prototype method whenever it stops
+  // matching the one captured here, so the shim keeps jsdom's spy semantics.
+  const proto = typeof Storage !== 'undefined' ? Storage.prototype : null;
+  const captured = proto && {
+    clear: proto.clear,
+    getItem: proto.getItem,
+    key: proto.key,
+    removeItem: proto.removeItem,
+    setItem: proto.setItem,
+  };
   const storage: Storage = {
     get length() { return store.size; },
-    clear() { store.clear(); },
-    getItem(key: string) { return store.has(key) ? store.get(key)! : null; },
-    key(index: number) { return Array.from(store.keys())[index] ?? null; },
-    removeItem(key: string) { store.delete(key); },
-    setItem(key: string, value: string) { store.set(key, String(value)); },
+    clear() {
+      if (proto && captured && proto.clear !== captured.clear) { proto.clear.call(storage); return; }
+      store.clear();
+    },
+    getItem(key: string) {
+      if (proto && captured && proto.getItem !== captured.getItem) return proto.getItem.call(storage, key);
+      return store.has(key) ? store.get(key)! : null;
+    },
+    key(index: number) {
+      if (proto && captured && proto.key !== captured.key) return proto.key.call(storage, index);
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      if (proto && captured && proto.removeItem !== captured.removeItem) { proto.removeItem.call(storage, key); return; }
+      store.delete(key);
+    },
+    setItem(key: string, value: string) {
+      if (proto && captured && proto.setItem !== captured.setItem) { proto.setItem.call(storage, key, value); return; }
+      store.set(String(key), String(value));
+    },
   };
   Object.defineProperty(window, 'localStorage', { value: storage, configurable: true });
   Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true });
