@@ -1,33 +1,62 @@
 @import "tailwindcss";
 
-/* Overlay365 brand chrome (brand/tokens + marketing-studio DESIGN-KIT).
+/* Overlay365 brand chrome under the Overlay UI Protocol
+   (Downloads/ov/ui protocol/). Near-black warm surfaces, one amber accent.
    Studio surfaces keep the shared studio-ui ramp (see
    src/components/studio/tokens.ts); these tokens are for app chrome,
    headers and cross-app identity. */
 :root {
-  --brand-midnight: #05060a;
-  --brand-graphite: #0e1117;
-  --brand-slate: #141924;
-  --brand-cyan-elec: #22d3ee;
-  --brand-gold: #f5c451;
-  --brand-gold-soft: #f7d983;
-  --brand-soft-white: #f6f7f9;
-  --brand-font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
-  --brand-font-body: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-  --brand-font-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  --brand-canvas: #08080a;
+  --brand-shell: #0e0e11;
+  --brand-panel: #141417;
+  --brand-raised: #1a1a1f;
+  --brand-accent: #ff8a00;
+  --brand-accent-hot: #ffc98a;
+  --brand-accent-dim: rgba(255, 138, 0, 0.14);
+  --brand-accent-line: rgba(255, 138, 0, 0.34);
+  --brand-mod: #35d0d8;
+  --brand-ok: #55d18b;
+  --brand-danger: #ff5a4a;
+  --brand-gr: #e0567a;
+  --brand-font-display: 'Archivo Variable', Archivo, 'Segoe UI', ui-sans-serif, sans-serif;
+  --brand-font-body: 'Archivo Variable', Archivo, 'Segoe UI', ui-sans-serif, sans-serif;
+  --brand-font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
 }
 
 @theme {
-  --color-brand-midnight: #05060a;
-  --color-brand-graphite: #0e1117;
-  --color-brand-slate: #141924;
-  --color-brand-cyan: #22d3ee;
-  --color-brand-gold: #f5c451;
-  --color-brand-gold-soft: #f7d983;
-  --color-brand-soft-white: #f6f7f9;
-  --font-brand-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
-  --font-brand-body: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-brand-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  --color-brand-canvas: #08080a;
+  --color-brand-shell: #0e0e11;
+  --color-brand-panel: #141417;
+  --color-brand-raised: #1a1a1f;
+  --color-brand-accent: #ff8a00;
+  --color-brand-accent-hot: #ffc98a;
+  --color-brand-mod: #35d0d8;
+  --color-brand-ok: #55d18b;
+  --color-brand-danger: #ff5a4a;
+  --color-brand-gr: #e0567a;
+  --font-brand-display: 'Archivo Variable', Archivo, 'Segoe UI', ui-sans-serif, sans-serif;
+  --font-brand-body: 'Archivo Variable', Archivo, 'Segoe UI', ui-sans-serif, sans-serif;
+  --font-brand-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+
+/* Overlay protocol fonts — self-hosted woff2 only, font-display: swap. */
+@font-face {
+  font-family: 'Archivo Variable';
+  src: url('/fonts/archivo-latin-variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-latin-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-latin-500.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
 }
 
 /* Local brand display font (FAST BLAZE) served from /fonts */

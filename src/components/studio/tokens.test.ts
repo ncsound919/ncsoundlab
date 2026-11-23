@@ -23,7 +23,7 @@ import {
 } from './tokens';
 
 // Vitest runs with the app directory as cwd; the spec lives at the repo root.
-const specPath = resolve(process.cwd(), '..', 'shared', 'studio-ui', 'spec', 'studio-ui.v1.json');
+const specPath = resolve(process.cwd(), '..', 'shared', 'studio-ui', 'spec', 'studio-ui.v2.json');
 const spec = JSON.parse(readFileSync(specPath, 'utf8')) as Record<string, Record<string, unknown>>;
 
 describe('shared studio control spec parity', () => {

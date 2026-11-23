@@ -286,7 +286,7 @@ export function StudioKnob({
               top: '12%',
               width: 2.5,
               height: '34%',
-              background: '#FFFFFF',
+              background: '#FFD9A8',
               boxShadow: `0 0 6px ${color}`,
             }}
           />
@@ -307,7 +307,7 @@ export function StudioKnob({
           onChange={(e) => setInputValue(e.target.value)}
           onBlur={commitEdit}
           onKeyDown={handleInputKeyDown}
-          className="w-14 text-center text-[10px] font-mono font-bold bg-[#070A0F] px-1 py-0.5 rounded border outline-none"
+          className="w-14 text-center text-[10px] font-mono font-bold bg-[#0A0A0C] px-1 py-0.5 rounded border outline-none"
           style={{ color, borderColor: `${color}66` }}
         />
       ) : (
@@ -484,7 +484,7 @@ export function StudioFader({
             top: trackPadding,
             bottom: trackPadding,
             width: 7,
-            background: '#04060A',
+            background: STUDIO.inset,
             border: `1px solid ${STUDIO.border}`,
           }}
         />
@@ -508,7 +508,7 @@ export function StudioFader({
           style={{
             height: handleHeight,
             bottom: Math.max(0, handleBottom),
-            background: 'linear-gradient(180deg, #4A4A5A 0%, #2A2A36 48%, #20202A 100%)',
+            background: 'linear-gradient(180deg, #2D2D34 0%, #1B1B20 48%, #101014 100%)',
             border: `1px solid ${isDragging ? color : STUDIO.border}`,
             boxShadow: '0 4px 10px rgba(0,0,0,0.7)',
             transition: 'border-color 80ms ease',
